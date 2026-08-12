@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/nanorix-io/nanorix-verify/blob/main/CONTRIBUTING.md#security
+    about: Do not open a public issue. Email security@nanorix.io.
+  - name: Citation, incorporation, standards or IPR
+    url: https://github.com/nanorix-io/nanorix-verify/blob/main/STANDARDS_POSTURE.md
+    about: What you may do with this material, and who to write to.

@@ -5,7 +5,7 @@
 // permanent. New failure modes ship as ADDITIVE variants. Existing variants
 // NEVER renamed, NEVER removed, NEVER repurposed.
 //
-// Wire form: `{"type": "<snake_case>",...payload}` — must serialize
+// Wire form: `{"type": "<snake_case>", ...payload}` — must serialize
 // byte-identical to the Rust serde-tag dispatch. The variant catalog is the
 // cryptographic-attestation contract auditors rely on.
 //
@@ -138,7 +138,7 @@ const (
 
 // FailureReason is the closed-set tagged-union mirror of the Rust enum
 // `nanorix_verify_types::FailureReason`. Marshals/unmarshals to/from
-// `{"type": "...",...payload}` matching serde's `tag = "type"` dispatch.
+// `{"type": "...", ...payload}` matching serde's `tag = "type"` dispatch.
 //
 // Field semantics per variant:
 //

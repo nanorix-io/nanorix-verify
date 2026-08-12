@@ -154,11 +154,11 @@ pub struct SingleVerificationFailure {
 
 /// Result of a chain verification walk. Recursive structure mirrors the
 /// chain shape: a leaf with no parent is `Genesis`; a leaf with a verified
-/// parent is `Linked { this, parent:... }`.
+/// parent is `Linked { this, parent: ... }`.
 ///
 /// The caller can recurse the result tree to render a top-down audit view:
 /// "this AuditProof composed output from its parent, which composed from
-/// grandparent,...".
+/// grandparent, ...".
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChainVerification {
     /// Pipeline-genesis capsule — chain terminates here. The leaf's
@@ -222,7 +222,7 @@ pub enum ChainVerificationError {
     /// A per-link `verify_self()` returned a failure. Chain-walk fails closed
     /// at the failed link; the caller receives the wrapped failure for
     /// audit-trail rendering.
-    #[error("single verification failed for capsule {}: {:?}",.0.capsule_id,.0.reason)]
+    #[error("single verification failed for capsule {}: {:?}", .0.capsule_id, .0.reason)]
     SingleVerificationFailed(SingleVerificationFailure),
 
     /// `fetch_parent_fn` could not resolve a declared parent reference.
@@ -437,7 +437,7 @@ mod tests {
     //!
     //! 1. **Genesis path** — leaf with `parent_audit_proof_id: None` returns
     //!    `Genesis(...)`.
-    //! 2. **Linear chain** — N-step chain returns nested `Linked {... }`.
+    //! 2. **Linear chain** — N-step chain returns nested `Linked { ... }`.
     //! 3. **Cycle detection** — self-reference, two-node, N-node cycles all
     //!    return `Err(CycleDetected)`.
     //! 4. **Depth limit** — chain of `max_depth + 1` returns
@@ -843,7 +843,7 @@ mod tests {
     /// at index N-1) where node i has parent i-1 (genesis has parent=None),
     /// then optionally inject a cycle by re-pointing the GENESIS node's
     /// parent at some later node (index in `[1, len-1]`). The walk descends
-    /// from leaf →... → cap_001 → cap_000 → cap_{cycle_to}, and
+    /// from leaf → ... → cap_001 → cap_000 → cap_{cycle_to}, and
     /// cap_{cycle_to} is already in `visited` by the time genesis attempts
     /// to fetch it.
     ///

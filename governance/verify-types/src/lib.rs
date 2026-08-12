@@ -32,7 +32,7 @@ use serde::{Deserialize, Serialize};
 /// Closed-enum verification failure reason emitted by AuditProof
 /// verification paths. **Forever-stable per the Forever-Standard wire discipline** — additive only.
 ///
-/// Wire form: `{"type": "<snake_case>",...payload}` via serde tag dispatch.
+/// Wire form: `{"type": "<snake_case>", ...payload}` via serde tag dispatch.
 ///
 /// ## Variant catalog (alphabetical by snake_case wire tag)
 ///

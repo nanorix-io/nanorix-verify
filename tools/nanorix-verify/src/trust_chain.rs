@@ -18,12 +18,11 @@
 //!   `https://nanorix.io/.well-known/identity.txt` and on every GitHub
 //!   release.
 //!
-//! Provides the data model, key lookup, and (trust-chain anchoring) manifest-signature
-//! verification + the assemble-and-sign tool. The live
-//! `https://nanorix.io/.well-known/trust-chain.json` fetch and the real
-//! HSM-rooted identity key are provisioned just-in-time at first-client
-//! onboarding; until then the verifier consumes a manifest via `--trust-chain`
-//! and pins the identity fingerprint via `--identity-fingerprint`.
+//! Provides the data model, key lookup, manifest-signature verification, and
+//! an assemble-and-sign helper for a party running its own trust root. This
+//! crate has no HTTP client: a manifest is supplied as a file via
+//! `--trust-chain`, and the identity fingerprint is pinned with
+//! `--identity-fingerprint`.
 
 use base64::Engine;
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
@@ -271,11 +270,12 @@ impl TrustChainManifest {
             .map_err(|_| ManifestError::SignatureInvalid)
     }
 
-    /// Assemble + sign a manifest with a long-term identity key — the
-    /// "sign tool". For pre-build / test the key is an in-process `SigningKey`;
-    /// at first-client JIT provisioning the identity key lives in an HSM and
-    /// signing goes through the HSM/KMS sign API. Either way the payload
-    /// contract is `signed_payload()`.
+    /// Assemble and sign a manifest with a long-term identity key.
+    ///
+    /// A verifier does not need this; it is here so that a party running its
+    /// own trust root can produce a manifest this verifier will accept, given
+    /// the corresponding `--identity-fingerprint`. Whatever holds the key,
+    /// the signed payload is whatever `signed_payload()` returns.
     pub fn build_and_sign(
         schema_version: &str,
         issued_at: &str,

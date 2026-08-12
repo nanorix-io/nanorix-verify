@@ -457,7 +457,7 @@ func runFixtureCorpus(root string, policy auditproof.VerifierPolicy, jsonOutput 
 		if info.IsDir() {
 			return nil
 		}
-		// Skip expected.json fixtures; only walk the.json proof files.
+		// Skip expected.json fixtures; only walk the .json proof files.
 		if strings.HasSuffix(path, ".expected.json") {
 			return nil
 		}

@@ -23,7 +23,7 @@
 //! ```json
 //! {
 //!   "valid":         true | false,
-//!   "failure_reason": null | { "type": "<snake_case_variant>",... },
+//!   "failure_reason": null | { "type": "<snake_case_variant>", ... },
 //!   "stage_reached":  1..=8,
 //!   "policy":         { "required_region": "...",
 //!                       "required_authority_id": "..." },   // optional

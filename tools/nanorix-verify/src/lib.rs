@@ -1626,7 +1626,7 @@ mod tests {
 
     /// Fixture 1 — policy pins customer-HSM, AuditProof has no
     /// `signing_authority` field. Reject with
-    /// `AuthorityIdMismatch { claimed: None, reason:...DemandsCustomerHsmAuditProofHasNone }`.
+    /// `AuthorityIdMismatch { claimed: None, reason: ...DemandsCustomerHsmAuditProofHasNone }`.
     #[test]
     fn policy_pin_customer_hsm_audit_proof_none_rejected() {
         let proof = make_minimal_v1_proof();
@@ -1659,7 +1659,7 @@ mod tests {
 
     /// Fixture 2 — policy pins customer-HSM, AuditProof has
     /// `signing_authority.authority_id` that disagrees. Reject with
-    /// `AuthorityIdMismatch { reason:...AuthorityIdMismatch }`.
+    /// `AuthorityIdMismatch { reason: ...AuthorityIdMismatch }`.
     #[test]
     fn policy_pin_customer_hsm_audit_proof_wrong_authority_rejected() {
         let mut proof = make_minimal_v1_proof();

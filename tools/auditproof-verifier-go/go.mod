@@ -21,7 +21,7 @@
 // `encoding/json` does not provide it. Ed25519 is `crypto/ed25519`. SHA-512 is
 // `crypto/sha512`.
 //
-// MSRV: Go 1.21. The module compiles clean on `go build./...` against
+// MSRV: Go 1.21. The module compiles clean on `go build ./...` against
 // 1.21+ toolchains.
 module github.com/nanorix-io/nanorix-verify/tools/auditproof-verifier-go
 
