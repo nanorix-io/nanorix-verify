@@ -1,0 +1,10 @@
+{
+  "failure_reason": {
+    "step_idx": 0,
+    "subsystem": "eee_namespace",
+    "type": "step_hash_mismatch"
+  },
+  "note": "destroyed_at is the chain timestamp, so this drift is caught at stage 3 by the chain walk — earlier than the signature stage.",
+  "stage_reached": 3,
+  "valid": false
+}

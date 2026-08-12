@@ -1,0 +1,9 @@
+{
+  "failure_reason": {
+    "step_idx": 1,
+    "subsystem": "eee_tmpfs",
+    "type": "step_hash_mismatch"
+  },
+  "stage_reached": 3,
+  "valid": false
+}

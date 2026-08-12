@@ -1,0 +1,9 @@
+{
+  "failure_reason": {
+    "step_idx": 3,
+    "subsystem": "rzl_audit",
+    "type": "step_hash_mismatch"
+  },
+  "stage_reached": 3,
+  "valid": false
+}

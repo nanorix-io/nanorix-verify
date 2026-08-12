@@ -1,0 +1,29 @@
+[package]
+name = "nanorix-verify-types"
+description = "Shared verification result types — FailureReason wire-form ground truth between services/api and tools/nanorix-verify (trust-chain anchoring)"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "nanorix_verify_types"
+path = "src/lib.rs"
+
+[dependencies]
+# Pure-types crate — only serde + thiserror. No runtime deps. No tokio,
+# no SDK transitives. Forever-Standard wire-form ground truth lives here;
+# services/api and tools/nanorix-verify both import from this crate to
+# stay byte-identical on the FailureReason JSON shape.
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+# Property-based testing for the specification chain-walk invariants. Aurora-class
+# P0 prevention surface per `feedback_canonical_hash_under_fault.md` —
+# chain-walk's cycle / depth-limit / customer-id binding / cache invariants
+# are exhausted at >=10k iterations each. Pinned at major-version 1; patch
+# updates auto. Rust 1.85 ceiling honored (proptest 1.x MSRV is 1.65).
+proptest = { workspace = true }

@@ -1,0 +1,12 @@
+{
+  "failure_reason": {
+    "actual": "us-west1",
+    "required": "europe-north1",
+    "type": "region_mismatch"
+  },
+  "policy": {
+    "required_region": "europe-north1"
+  },
+  "stage_reached": 2,
+  "valid": false
+}

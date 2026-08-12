@@ -1,0 +1,13 @@
+{
+  "failure_reason": {
+    "claimed_authority_id": "deprecated-authority-2024",
+    "expected_authority_id": "us-kms-nanorix-v1",
+    "reason": "verifier_policy_authority_id_mismatch",
+    "type": "authority_id_mismatch"
+  },
+  "policy": {
+    "required_authority_id": "us-kms-nanorix-v1"
+  },
+  "stage_reached": 2,
+  "valid": false
+}

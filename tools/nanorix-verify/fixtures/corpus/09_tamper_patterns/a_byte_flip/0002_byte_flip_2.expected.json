@@ -1,0 +1,9 @@
+{
+  "failure_reason": {
+    "claimed": "sha512:d21030f23d04006db2b5e35d7964891c0de43c4a43e8a757a43ecf4a4068514c389a9435ac83623e7c0929ef74bf89d228b231eae044108c7ffd416121d0fe4e",
+    "computed": "sha512:d21930f23d04006db2b5e35d7964891c0de43c4a43e8a757a43ecf4a4068514c389a9435ac83623e7c0929ef74bf89d228b231eae044108c7ffd416121d0fe4e",
+    "type": "final_hash_mismatch"
+  },
+  "stage_reached": 4,
+  "valid": false
+}

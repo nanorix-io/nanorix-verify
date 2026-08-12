@@ -1,0 +1,490 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schema.nanorix.com/audit-proof/v2_1.json",
+  "title": "Nanorix AuditProof v2.1",
+  "description": "JSON Schema for the Nanorix AuditProof document — the cryptographically signed, ephemeral capsule destruction record. Two physical shapes are described: VerificationCdp (shareable, public-facing, the auditor moment-of-truth artifact) and FullCdp (operational record, customer-only). Both shapes share the 8-step SHA-512 hash chain anchor and Ed25519 attestation envelope; FullCdp carries the activity trail and reserved attestation slots. This schema covers cdp_version 2.1 — the current Forever-Standard surface. Future minor-bump versions will add Optional fields per the Forever-Standard wire discipline; existing shape is permanent. Schema scaffold ships with the verifier crate; the published copy at schema.nanorix.com is release-event-gated.",
+  "type": "object",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/VerificationCdp"
+    },
+    {
+      "$ref": "#/$defs/FullCdp"
+    }
+  ],
+  "$defs": {
+    "VerificationCdp": {
+      "type": "object",
+      "title": "VerificationCdp — shareable AuditProof",
+      "description": "Public-facing AuditProof projection. Contains zero operational details — no filenames, no commands, no capsulefile metadata. Auditor moment-of-truth artifact. AuditProof = VerificationCdp; AuditRecord = FullCdp (per the published brand mapping external-brand split).",
+      "additionalProperties": false,
+      "required": [
+        "cdp_version",
+        "capsule_id",
+        "signing_key_version",
+        "environment",
+        "data_ingested",
+        "data_extracted",
+        "residency",
+        "destruction",
+        "document_hash",
+        "attestation",
+        "verify"
+      ],
+      "properties": {
+        "cdp_version": {
+          "type": "string",
+          "enum": ["2.1"],
+          "description": "AuditProof schema version. Pinned at \"2.1\" for current Forever-Standard surface. Future minor-bumps add Optional fields per the Forever-Standard wire discipline; existing variants permanent."
+        },
+        "capsule_id": {
+          "type": "string",
+          "pattern": "^cap_[0-9a-f]{32}$",
+          "description": "Capsule identifier, lowercase-hex 32-char suffix. Stable across destroy."
+        },
+        "signing_key_version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Identifies which signing key version produced this AuditProof. Resolved against the trust-chain manifest at the auditor's machine. Values like \"local-ephemeral\" (dev/test), KMS version number (production), or \"none\" (unsigned partial)."
+        },
+        "environment": {
+          "$ref": "#/$defs/Environment"
+        },
+        "data_ingested": {
+          "$ref": "#/$defs/DataSummary"
+        },
+        "data_extracted": {
+          "$ref": "#/$defs/DataSummary"
+        },
+        "residency": {
+          "$ref": "#/$defs/Residency"
+        },
+        "destruction": {
+          "$ref": "#/$defs/Destruction"
+        },
+        "document_hash": {
+          "type": "string",
+          "pattern": "^(sha512:)?[0-9a-f]{128}$",
+          "description": "SHA-512 hex of the canonical AuditRecord document — the value Ed25519-signed. Enables independent signature verification without the full record. The optional \"sha512:\" prefix is the canonical wire form; verifiers strip the prefix before hex compare."
+        },
+        "attestation": {
+          "$ref": "#/$defs/Attestation"
+        },
+        "verify": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Human-readable verification hint string — usually a URL where an auditor can verify the AuditProof in a browser. Not cryptographically bound; advisory only."
+        },
+        "parent_audit_proof_id": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "string",
+              "pattern": "^cap_[0-9a-f]{32}$"
+            }
+          ],
+          "description": "Customer-declared parent AuditProof reference for multi-step pipeline composition. Optional and additive per Forever-Standard discipline; absent OR null = pipeline-genesis capsule. Verifier chain-walk validates parent reachability + same-org_id binding + per-link signature; semantic truthfulness of the linkage is customer-declared (Nanorix does not validate)."
+        },
+        "metadata": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": { "type": "string" },
+              "description": "Customer-defined business context. Open key-value space. Customer-declared vocabulary; Nanorix prescribes no structured keys. 4 KB total size limit. Reserved prefix \"nanorix:*\" forbidden for customer keys."
+            }
+          ],
+          "description": "Open metadata bag. Optional; absent or null in AuditProofs without customer-declared business context."
+        }
+      }
+    },
+    "FullCdp": {
+      "type": "object",
+      "title": "FullCdp — operational AuditRecord",
+      "description": "Customer-only operational record. Carries activity trail, reserved attestation slots, destruction outcome, residency, and 8-step chain. Internal struct name `FullCdp`; external brand `AuditRecord` per the published brand mapping naming split.",
+      "additionalProperties": false,
+      "required": [
+        "cdp_version",
+        "capsule_id",
+        "signing_key_version",
+        "activity",
+        "chain",
+        "final_hash",
+        "destroyed_at",
+        "residency",
+        "destruction_trigger",
+        "signing_mode",
+        "jurisdiction",
+        "authority_id",
+        "hash_algorithm",
+        "signature_algorithm",
+        "destruction_state"
+      ],
+      "properties": {
+        "cdp_version": {
+          "type": "string",
+          "enum": ["2.1"]
+        },
+        "capsule_id": {
+          "type": "string",
+          "pattern": "^cap_[0-9a-f]{32}$"
+        },
+        "signing_key_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "activity": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ActivityEvent" },
+          "description": "Customer-declared activity trail. Variant-additive Forever-Standard taxonomy per the Forever-Standard wire discipline."
+        },
+        "chain": {
+          "type": "array",
+          "minItems": 8,
+          "maxItems": 8,
+          "items": { "$ref": "#/$defs/ChainStep" },
+          "description": "Eight-step destruction hash chain. Step count is exactly 8 (Forever-Standard); structural mismatch produces step_count_invalid failure."
+        },
+        "final_hash": {
+          "type": "string",
+          "pattern": "^(sha512:)?[0-9a-f]{128}$",
+          "description": "SHA-512 hex matching the last chain step's chain_hash. The optional \"sha512:\" prefix is the canonical wire form."
+        },
+        "destroyed_at": {
+          "type": "string",
+          "description": "The timestamp every chain step hashes (the chain-timestamp recovery rule). A verifier recomputes each step as SHA-512(prev || 0x00 || subsystem || 0x00 || method || 0x00 || timestamp) and cannot walk the chain without it. Not canonical-hash-bound: adding it does not alter the signed bytes, so proofs issued before it was declared remain valid signatures — they are simply not independently chain-verifiable."
+        },
+        "residency": {
+          "$ref": "#/$defs/Residency"
+        },
+        "destruction_trigger": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Free-form why-the-destroy. Current values: \"user_explicit\" (DELETE /v1/capsules/:id), \"server_restart\" (recovery), reserved future variants. Not canonical-hash-bound."
+        },
+        "attestation": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/Attestation" }
+          ],
+          "description": "Primary Ed25519 attestation from Nanorix signing authority (or customer authority under the customer-authority specification dual-signing). Null on unsigned partial AuditRecords."
+        },
+        "metadata": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": { "type": "string" }
+            }
+          ]
+        },
+        "signing_mode": {
+          "type": "string",
+          "enum": ["nanorix_only", "customer_attested", "dual_signature"],
+          "description": "Authority signing-mode. Canonical-hash-bound — included in canonical view per the AuditProof specification to prevent dual-signature downgrade attack (the specification)."
+        },
+        "jurisdiction": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Customer-declared jurisdiction. Filters which regulatory frameworks the AuditRecord references."
+        },
+        "authority_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Signing authority identifier resolved against the trust-chain manifest. Values like \"us-kms-nanorix-v1\", \"eu-kms-nanorix-v1\", \"customer-hsm-<customer-slug>-v<n>\"."
+        },
+        "org_id": {
+          "type": "string",
+          "description": "Capsule's owning org. Snapshotted at destroy time. Load-bearing for cross-customer parent-chain attack closure during verifier chain-walk."
+        },
+        "runtime_attestation": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/Attestation" }
+          ],
+          "description": "Hardware-rooted runtime attestation slot. Reserved; null in current shape; future TEE/SGX integration."
+        },
+        "timestamp_attestation": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/Attestation" }
+          ],
+          "description": "RFC 3161 trusted-timestamp attestation slot. Reserved; null in current shape."
+        },
+        "attestation_chain_fingerprint": {
+          "type": "string",
+          "description": "SHA-512 fingerprint of the authority attestation chain document. Empty string until an authority attestation chain is issued."
+        },
+        "hash_algorithm": {
+          "type": "string",
+          "enum": ["SHA-512"],
+          "description": "Hash algorithm pin. Locked to SHA-512 in current shape."
+        },
+        "signature_algorithm": {
+          "type": "string",
+          "enum": ["Ed25519"],
+          "description": "Signature algorithm pin. Locked to Ed25519 in current shape; future PQC variants require schema minor-bump."
+        },
+        "customer_attestation": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/Attestation" }
+          ],
+          "description": "Customer-attested signature slot for dual-signature signing-mode. Null when signing-mode is \"nanorix_only\"."
+        },
+        "per_event_attestations": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "array",
+              "items": { "$ref": "#/$defs/EventAttestation" }
+            }
+          ],
+          "description": "Per-event customer attestations slot. Reserved per the specification + the specification; null in current shape."
+        },
+        "policy_attestation": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/Attestation" }
+          ]
+        },
+        "third_party_attestation": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/Attestation" }
+          ]
+        },
+        "retention_policy_attestation": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/Attestation" }
+          ]
+        },
+        "witness_signatures": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "array",
+              "items": { "$ref": "#/$defs/Attestation" }
+            }
+          ]
+        },
+        "pqc_attestation": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/Attestation" }
+          ],
+          "description": "Reserved post-quantum signature slot. Null in current shape; future PQC migration."
+        },
+        "customer_pqc_attestation": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/Attestation" }
+          ]
+        },
+        "destruction_state": {
+          "type": "string",
+          "enum": ["complete", "incomplete_destruction", "aborted"],
+          "description": "Terminal destruction outcome. Canonical-hash-bound; single character drift invalidates every AuditRecord."
+        },
+        "destruction_failure_step": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 8
+            }
+          ],
+          "description": "Step number 1..8 when destruction_state is \"incomplete_destruction\"; null for \"complete\" and \"aborted\". Canonical-hash-bound."
+        },
+        "parent_audit_proof_id": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "string",
+              "pattern": "^cap_[0-9a-f]{32}$"
+            }
+          ]
+        }
+      }
+    },
+    "Environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sealed", "encryption", "network"],
+      "properties": {
+        "sealed": {
+          "type": "boolean",
+          "description": "True when the capsule ran with no outbound network. False when an egress profile permitted outbound traffic."
+        },
+        "encryption": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Encryption posture description. Free-form; current values reflect the at-rest + in-transit envelope."
+        },
+        "network": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Network posture description. Values like \"sealed\" (no outbound), \"egress-filtered\" (allowlist), or named profile."
+        }
+      }
+    },
+    "DataSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file_count", "total_bytes", "content_hash"],
+      "properties": {
+        "file_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "content_hash": {
+          "type": "string",
+          "description": "Aggregate content hash over all files. Empty string permitted when file_count is 0."
+        }
+      }
+    },
+    "Residency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["started", "destroyed", "total_seconds"],
+      "properties": {
+        "started": {
+          "type": "string",
+          "format": "date-time",
+          "description": "RFC 3339 timestamp when the capsule was created."
+        },
+        "destroyed": {
+          "type": "string",
+          "format": "date-time",
+          "description": "RFC 3339 timestamp when the capsule was destroyed."
+        },
+        "total_seconds": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "Destruction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trigger", "chain", "chain_hash"],
+      "properties": {
+        "trigger": {
+          "type": "string",
+          "minLength": 1
+        },
+        "chain": {
+          "type": "string",
+          "description": "Chain summary — typically a count or pretty-printed step list. Advisory; not canonical-hash-bound."
+        },
+        "chain_hash": {
+          "type": "string",
+          "pattern": "^(sha512:)?[0-9a-f]{128}$"
+        }
+      }
+    },
+    "ChainStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["step", "subsystem", "operation", "evidence_hash", "chain_hash"],
+      "properties": {
+        "step": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8
+        },
+        "subsystem": {
+          "type": "string",
+          "enum": [
+            "eee_namespace",
+            "eee_tmpfs",
+            "eee_memory",
+            "dire_keys",
+            "dire_identity",
+            "fgx_forensic",
+            "rzl_audit",
+            "capsule_destroy"
+          ],
+          "description": "Subsystem label. Forever-Standard; the eight subsystem strings are immutable per the Forever-Standard wire discipline."
+        },
+        "operation": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence_hash": {
+          "type": "string",
+          "pattern": "^(sha512:)?[0-9a-f]{128}$"
+        },
+        "chain_hash": {
+          "type": "string",
+          "pattern": "^(sha512:)?[0-9a-f]{128}$"
+        }
+      }
+    },
+    "Attestation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "public_key", "signature"],
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "enum": ["Ed25519"]
+        },
+        "public_key": {
+          "type": "string",
+          "pattern": "^(base64:)?[A-Za-z0-9+/]+={0,2}$",
+          "description": "Public key bytes, base64. Optional \"base64:\" prefix is the canonical wire form."
+        },
+        "signature": {
+          "type": "string",
+          "pattern": "^(base64:)?[A-Za-z0-9+/]+={0,2}$",
+          "description": "Ed25519 signature over the canonical hex-string of the document hash. Base64. Optional \"base64:\" prefix is the canonical wire form."
+        },
+        "key_id": {
+          "type": "string",
+          "description": "Optional key identifier. Forms like \"nrx-verify-<destroyed_at>-<capsule_id_prefix>\"."
+        }
+      }
+    },
+    "EventAttestation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "public_key", "signature", "event_id"],
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "enum": ["Ed25519"]
+        },
+        "public_key": {
+          "type": "string",
+          "pattern": "^(base64:)?[A-Za-z0-9+/]+={0,2}$"
+        },
+        "signature": {
+          "type": "string",
+          "pattern": "^(base64:)?[A-Za-z0-9+/]+={0,2}$"
+        },
+        "event_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "ActivityEvent": {
+      "type": "object",
+      "description": "Customer-declared activity event. Variant-additive Forever-Standard taxonomy with serde tag dispatch (key \"type\", snake_case values). Open shape — concrete variants are documented in the verifier crate; auditor tooling treats unknown variants as \"needs follow-up\" rather than rejecting the AuditRecord.",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "activity_commitment": "sha512:ed11da07af53a9c2477595f1390f5c41cabffa2db3e720644802a346b2f9e27cab4008556fd7b81374063c997bc3effab7c67f3f7f3e47ffd2056091638157ba",
+  "activity_event_count": 2,
+  "attestation": {
+    "pqc_signature": null,
+    "public_key": "base64:GX9rI+FshTLGq8g4+s1ep4m+DHaykgM0A5v6iz02jWE=",
+    "signature": "base64:lEbb59ju+432q7LGCYlgl2vA4+ylBeca8MtpMuxUACMuXxjYybNYqW1+dzPkHHRb7HVPw7qAiMBPAN9ut13yBw=="
+  },
+  "attestation_index": 1,
+  "authority_id": "us-kms-nanorix-v1",
+  "boundary_evidence": [
+    {
+      "method": "procfs_observation",
+      "observed": true,
+      "surface": "namespace"
+    },
+    {
+      "method": "mountinfo_observation",
+      "observed": true,
+      "surface": "tmpfs"
+    },
+    {
+      "method": "cgroup_v2_observation",
+      "observed": true,
+      "surface": "cgroup_v2"
+    }
+  ],
+  "canonical_hash": "sha512:7f8bc8f0cae035fffa2bf405495789ddbfa06216ae7284db319be3446fb42770f97d75a7d881c58a1f09cbe8d4d73c2e74468ef051b0e0c7a7c86af631ced975",
+  "capsule_id": "cap_bnd_fixture_0001",
+  "continuation": "The capsule remained live at cutoff_ts; this attestation records observations up to that instant and is NOT a destruction claim.",
+  "cutoff_ts": "2026-08-08T12:00:00Z",
+  "hash_algorithm": "sha512",
+  "key_id": "nrx-boundary-2026-08-08T12-00-00Z-cap_bnd0",
+  "kind": "boundary_attestation",
+  "prev_attestation_hash": "sha512:cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e",
+  "signature_algorithm": "Ed25519",
+  "signing_key_version": "1",
+  "version": "1.0"
+}

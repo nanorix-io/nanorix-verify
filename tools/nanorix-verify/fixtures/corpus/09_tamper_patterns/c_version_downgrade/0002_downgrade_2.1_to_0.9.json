@@ -1,0 +1,80 @@
+{
+  "activity": [],
+  "attestation": {
+    "algorithm": "Ed25519",
+    "key_id": "nrx-verify-2026-05-08T00-00-00Z-cap_0000",
+    "public_key": "base64:GVHak/xHE0xBsS1K/zXf3f5XTSdINLQ568meFsvQvCw=",
+    "signature": "base64:l80EvweDOhkKs/OLWHBNSvk8M9lfEUzfgpoGrYWwtnC8ajJK3yq/9eh7wiJteKKCX7ciyXo8hM0Alpwmcn44BQ=="
+  },
+  "authority_id": "us-kms-nanorix-v1",
+  "capsule_id": "cap_00000000000000000000000000000336",
+  "cdp_version": "0.9",
+  "chain": [
+    {
+      "chain_hash": "sha512:dd8b771ee228b936131127f029c2f937380f2053cb6e70b4ee36a30faf1dd31116b501b3a700e2c798b31e036c137ccc93d74b87ec94c10661a70cf5a03e872e",
+      "evidence_hash": "sha512:00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "operation": "eee_namespace_op",
+      "step": 1,
+      "subsystem": "eee_namespace"
+    },
+    {
+      "chain_hash": "sha512:bce49344e13e886c4030ac6d590d7fc8dce0873da3f474d7ac04443dfc6a3f07512c1aedcd25399306a1dde1ae85acb05a79f248b7bf024121ccf1c9c80a8d5c",
+      "evidence_hash": "sha512:00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "operation": "eee_tmpfs_op",
+      "step": 2,
+      "subsystem": "eee_tmpfs"
+    },
+    {
+      "chain_hash": "sha512:a2010b1362cc901b347b1ab3437e264d9ca2f41fb44475ce0daad0c988a224d642218c7dcba49699fc2d04659c80bdacb3dd06672ef62fb8e3e7686fbe2bae91",
+      "evidence_hash": "sha512:00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "operation": "eee_memory_op",
+      "step": 3,
+      "subsystem": "eee_memory"
+    },
+    {
+      "chain_hash": "sha512:47a8bfb7ebb99353054c23795147efcf126b1ca19e8855fed5d36f482d557c1af615a9ad51330ea5c59c86093e448cc7b3822a78441b246ea982bb53094c5f79",
+      "evidence_hash": "sha512:00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "operation": "dire_keys_op",
+      "step": 4,
+      "subsystem": "dire_keys"
+    },
+    {
+      "chain_hash": "sha512:6f7c9a8ad04fa13f76659844268515e388f7a7fc91c44ab7084d1635bc8be6d250e5365b43960613c72715cb90d541f5a4894b7cee4b6808ac353e7cdc94b0ea",
+      "evidence_hash": "sha512:00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "operation": "dire_identity_op",
+      "step": 5,
+      "subsystem": "dire_identity"
+    },
+    {
+      "chain_hash": "sha512:43c71de947d469f44f498ccf7b6d67f4c172957bcacf7b2d6882e4403598b1471dbacfebd396266eb999f093df9a821b40b61082148cc24cd50e1c7005dc1456",
+      "evidence_hash": "sha512:00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "operation": "fgx_forensic_op",
+      "step": 6,
+      "subsystem": "fgx_forensic"
+    },
+    {
+      "chain_hash": "sha512:0cd08def99a48670a9e2da767588526913cba469d5214d4ef9ee20491a680a938d5c6223cd1ab20c19988e18de821ce1b85ba03207672b34d847dbd59bd63c0c",
+      "evidence_hash": "sha512:00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "operation": "rzl_audit_op",
+      "step": 7,
+      "subsystem": "rzl_audit"
+    },
+    {
+      "chain_hash": "sha512:d21930f23d04006db2b5e35d7964891c0de43c4a43e8a757a43ecf4a4068514c389a9435ac83623e7c0929ef74bf89d228b231eae044108c7ffd416121d0fe4e",
+      "evidence_hash": "sha512:00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "operation": "capsule_destroy_op",
+      "step": 8,
+      "subsystem": "capsule_destroy"
+    }
+  ],
+  "destroyed_at": "2026-05-08T00:00:00Z",
+  "destruction_state": "complete",
+  "final_hash": "sha512:d21930f23d04006db2b5e35d7964891c0de43c4a43e8a757a43ecf4a4068514c389a9435ac83623e7c0929ef74bf89d228b231eae044108c7ffd416121d0fe4e",
+  "hash_algorithm": "SHA-512",
+  "jurisdiction": "us",
+  "org_id": "00000000-0000-0000-0000-000000000001",
+  "region": "us-central1",
+  "signature_algorithm": "Ed25519",
+  "signing_key_version": "1",
+  "signing_mode": "nanorix_only"
+}

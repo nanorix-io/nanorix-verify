@@ -1,0 +1,9 @@
+{
+  "failure_reason": {
+    "reason": "does_not_verify",
+    "type": "signature_mismatch"
+  },
+  "note": "Signature lifted verbatim from a different, genuinely signed AuditProof.",
+  "stage_reached": 7,
+  "valid": false
+}

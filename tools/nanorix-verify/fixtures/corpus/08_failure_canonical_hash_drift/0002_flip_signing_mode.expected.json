@@ -1,0 +1,9 @@
+{
+  "failure_reason": {
+    "found": "signing_mode=dual_signature",
+    "type": "algorithm_unsupported"
+  },
+  "note": "CLOSED 2026-08-11. Flipping signing_mode to a mode this build cannot verify is a REJECTION, not 'chain verified, signature NOT checked'. signing_mode is inside the canonical hash and is attacker-controllable, so an unrecognised mode yielding a partial success was a downgrade oracle: flip the field, turn a rejection into reassurance. 'I have no signature to check' and 'I cannot perform the verification this document requires' are different conditions and get different verdicts. Reported as the existing Forever-Standard algorithm_unsupported rather than a new variant — the resolution (upgrade the verifier) is identical.",
+  "stage_reached": 4,
+  "valid": false
+}

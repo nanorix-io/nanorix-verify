@@ -1,0 +1,8 @@
+{
+  "failure_reason": {
+    "reason": "malformed",
+    "type": "signature_mismatch"
+  },
+  "stage_reached": 7,
+  "valid": false
+}

@@ -1,0 +1,9 @@
+{
+  "failure_reason": {
+    "reason": "does_not_verify",
+    "type": "signature_mismatch"
+  },
+  "note": "Supported version, so the version gate passes; the downgrade is caught at the signature stage because the signed message differs per version.",
+  "stage_reached": 7,
+  "valid": false
+}

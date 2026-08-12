@@ -1,0 +1,49 @@
+{
+  "schema_version": "1",
+  "issued_at": "2026-05-06T00:00:00Z",
+  "identity_fingerprint": "sha256:placeholder_long_term_identity_key_fingerprint_lands_with_eo7_subB",
+  "manifest_signature": "base64:placeholder_signature_over_canonical_jcs_form_minus_this_field",
+  "authorities": {
+    "us-kms-nanorix-v1": {
+      "display_name": "Nanorix US production KMS — primary signing authority",
+      "active_versions": [
+        {
+          "signing_key_version": "7",
+          "public_key_b64": "BASE64_ED25519_PUBKEY_V7_PLACEHOLDER_REPLACE_WITH_REAL_KEY_AT_IDENTITY_CEREMONY",
+          "public_key_fingerprint": "sha256:placeholder_v7_fingerprint_32_bytes_hex",
+          "effective_from": "2026-04-01T00:00:00Z"
+        }
+      ],
+      "archived_versions": [
+        {
+          "signing_key_version": "6",
+          "public_key_b64": "BASE64_ED25519_PUBKEY_V6_PLACEHOLDER",
+          "public_key_fingerprint": "sha256:placeholder_v6_fingerprint",
+          "effective_from": "2025-10-01T00:00:00Z",
+          "archived_at": "2026-04-01T00:00:00Z"
+        },
+        {
+          "signing_key_version": "5",
+          "public_key_b64": "BASE64_ED25519_PUBKEY_V5_PLACEHOLDER",
+          "public_key_fingerprint": "sha256:placeholder_v5_fingerprint",
+          "effective_from": "2025-04-01T00:00:00Z",
+          "archived_at": "2025-10-01T00:00:00Z"
+        }
+      ],
+      "revoked": false
+    },
+    "eu-kms-nanorix-v1": {
+      "display_name": "EXAMPLE ONLY — illustrative EU authority entry; no Nanorix EU entity or EU KMS exists",
+      "active_versions": [
+        {
+          "signing_key_version": "1",
+          "public_key_b64": "BASE64_ED25519_PUBKEY_EU_V1_PLACEHOLDER",
+          "public_key_fingerprint": "sha256:placeholder_eu_v1_fingerprint",
+          "effective_from": "2026-05-01T00:00:00Z"
+        }
+      ],
+      "archived_versions": [],
+      "revoked": false
+    }
+  }
+}

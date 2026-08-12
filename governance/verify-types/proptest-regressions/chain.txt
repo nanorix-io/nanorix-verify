@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 321e9dc9507e1c91b4ad03abed9ae1a22926ecee7e16ac78924d39ff45534448 # shrinks to (nodes, cycle_target) = ([TestNode { capsule_id: "cap_000", org_id: "org_x", parent: None, signature_verified: true, canonical_hash_verified: true, signing_key_version: "1", verify_self_fails_with: None }, TestNode { capsule_id: "cap_001", org_id: "org_x", parent: Some("cap_000"), signature_verified: true, canonical_hash_verified: true, signing_key_version: "1", verify_self_fails_with: None }], Some(0))

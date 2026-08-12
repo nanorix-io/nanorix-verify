@@ -1,0 +1,9 @@
+{
+  "failure_reason": {
+    "reason": "does_not_verify",
+    "type": "signature_mismatch"
+  },
+  "note": "Canonical-view drift is detected as a signature failure over the recomputed canonical hash; the FailureReason enum has no separate canonical_hash_mismatch variant.",
+  "stage_reached": 7,
+  "valid": false
+}

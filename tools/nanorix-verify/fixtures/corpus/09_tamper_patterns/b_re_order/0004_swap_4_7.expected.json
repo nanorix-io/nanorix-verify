@@ -1,0 +1,9 @@
+{
+  "failure_reason": {
+    "step_idx": 4,
+    "subsystem": "capsule_destroy",
+    "type": "step_hash_mismatch"
+  },
+  "stage_reached": 3,
+  "valid": false
+}

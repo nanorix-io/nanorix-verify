@@ -1,0 +1,41 @@
+cff-version: 1.2.0
+message: >-
+  If you use this verifier, or cite the Signed Containment Evidence
+  specification it implements, please cite it using the metadata below.
+title: >-
+  Signed Containment Evidence: specification and reference verifiers
+abstract: >-
+  A specification and four byte-equivalent reference implementations for
+  verifying that a compute workload was contained and destroyed, offline and
+  without contacting the party that produced the evidence. Each AuditProof
+  carries an eight-step SHA-512 hash chain over the destruction sequence and an
+  Ed25519 attestation over the canonical form of the document. A verifier
+  separates two questions that are usually conflated: whether the document is
+  internally consistent and unmodified (integrity, checkable from the document
+  alone), and whether the key that signed it belongs to the party it names
+  (authenticity, which requires an external trust anchor). Implementations in
+  Rust, Go, Python and TypeScript agree byte-for-byte across a 100-case
+  conformance corpus.
+type: software
+authors:
+  - family-names: Arra
+    given-names: Chaitanya Kumar
+    affiliation: Nanorix Inc.
+repository-code: "https://github.com/nanorix-io/nanorix-verify"
+url: "https://nanorix.io"
+license: Apache-2.0
+# Keep `version` and `date-released` equal to the git tag this release carries.
+# Zenodo mints one DOI per release and reads both fields from this file.
+version: 1.0.0
+date-released: "2026-08-12"
+keywords:
+  - audit evidence
+  - tamper-evident logging
+  - hash chain
+  - Ed25519
+  - RFC 8785
+  - canonicalization
+  - non-repudiation
+  - agent security
+  - regulated data
+  - offline verification

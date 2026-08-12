@@ -1,0 +1,69 @@
+{
+  "anchor_signing_seed_sha256": {
+    "_note": "Public anchor for cross-impl reproducibility. The seed itself is constant in source.",
+    "value": "cc0f5fb7007ebdbbc8069dde701dd0fd84bf614135873e297fe0fd68686ee3c534e0d39f4056bd06bbcc72e422a4323b3675263471671015c636cf546daf833f"
+  },
+  "anchor_timestamp": "2026-05-08T00:00:00Z",
+  "categories": [
+    {
+      "fixture_count": 10,
+      "path": "01_single_capsule_success"
+    },
+    {
+      "fixture_count": 10,
+      "path": "02_multi_step_pipeline"
+    },
+    {
+      "fixture_count": 10,
+      "path": "03_failure_chain_mismatch"
+    },
+    {
+      "fixture_count": 10,
+      "path": "04_failure_signature_invalid"
+    },
+    {
+      "fixture_count": 10,
+      "path": "05_failure_region_mismatch"
+    },
+    {
+      "fixture_count": 10,
+      "path": "06_failure_authority_unknown"
+    },
+    {
+      "fixture_count": 10,
+      "path": "07_failure_version_unsupported"
+    },
+    {
+      "fixture_count": 10,
+      "path": "08_failure_canonical_hash_drift"
+    },
+    {
+      "fixture_count": 5,
+      "path": "09_tamper_patterns/a_byte_flip"
+    },
+    {
+      "fixture_count": 5,
+      "path": "09_tamper_patterns/b_re_order"
+    },
+    {
+      "fixture_count": 5,
+      "path": "09_tamper_patterns/c_version_downgrade"
+    },
+    {
+      "fixture_count": 5,
+      "path": "09_tamper_patterns/d_signature_substitution"
+    }
+  ],
+  "expected_verdict_schema": {
+    "failure_reason": "null on success; otherwise the FailureReason wire object, tag key `type`",
+    "note": "optional — prose for verdicts that are not the obvious guess from the category name",
+    "policy": "optional — VerifierPolicy pins REQUIRED to reach this verdict; absent means defaults",
+    "stage_reached": "1..=8; 7 is the success stage without a trust-chain manifest",
+    "valid": "bool — the verifier's accept/reject decision"
+  },
+  "generator": "the Rust verifierfixtures/generator.rs",
+  "purpose": "Cross-implementation byte-equivalence corpus for the nanorix-verify reference verifier.",
+  "schema_version": "2",
+  "signed_message": "v1.0 signs final_hash; v2.0 signs document_hash; v2.1 nanorix_only signs the the specification Part-3 canonical-view hash (hex(sha512(jcs(view))))",
+  "total_fixtures": 100
+}

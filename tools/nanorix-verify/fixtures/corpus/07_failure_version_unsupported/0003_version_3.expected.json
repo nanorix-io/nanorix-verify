@@ -1,0 +1,8 @@
+{
+  "failure_reason": {
+    "found": "2.99",
+    "type": "cdp_version_unsupported"
+  },
+  "stage_reached": 2,
+  "valid": false
+}

@@ -1,0 +1,44 @@
+[package]
+name = "nanorix-verify"
+description = "Standalone AuditProof verifier — auditor moment-of-truth artifact (Nanorix the verifier work)"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "nanorix-verify"
+path = "src/main.rs"
+
+# Fixture corpus generator (Scaffold #3 of verification surface).
+# Runs `cargo run --bin nanorix-verify-fixtures-gen` to populate
+# the conformance corpus with 100+ AuditProof JSON
+# fixtures spanning happy-path, failure-modes, and tamper-patterns.
+# Cross-implementation byte-equivalence anchor: Rust + Python +
+# TypeScript verifiers all assert byte-identical verdicts on the
+# corpus. The generator is deterministic — fixed signing seed +
+# constant timestamp = byte-stable corpus across regenerations.
+[[bin]]
+name = "nanorix-verify-fixtures-gen"
+path = "fixtures/generator.rs"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_jcs = { workspace = true }
+sha2 = { workspace = true }
+ed25519-dalek = { workspace = true }
+hex = { workspace = true }
+clap = { workspace = true }
+colored = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }
+base64 = "0.22"
+# Shared verification result types (trust-chain anchoring); single source of truth
+# for FailureReason wire-form between services/api + tools/nanorix-verify.
+nanorix-verify-types = { path = "../../governance/verify-types" }
+
+[dev-dependencies]
+tempfile = "3"
