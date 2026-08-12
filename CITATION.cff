@@ -6,12 +6,21 @@ title: >-
   Signed Containment Evidence: specification and reference verifiers
 abstract: >-
   This is the specification and reference implementation set for Signed
-  Containment Evidence, a document format that records that a compute workload
-  ran in a contained environment and was then destroyed. The evidence can be
-  checked offline, by a party with no relationship to whoever produced it. An
-  AuditProof carries an eight-step SHA-512 hash chain over the destruction
-  sequence, together with an Ed25519 attestation over a fixed canonical view of
-  the document serialised under RFC 8785.
+  Containment Evidence, a document format for evidence that anyone can check.
+
+  A regulated organisation running someone else's software has to show its
+  regulator what that software did with its data, and normally the only record
+  is one the operator produced about itself. Signed Containment Evidence is
+  built so that the party the evidence concerns is not the party attesting to
+  it, and so that checking it requires no relationship with, permission from, or
+  network call to whoever issued it. An auditor, a regulator, a counterparty, or
+  an opposing expert can reach the same verdict about the same document, offline,
+  years later.
+
+  The document records that a compute workload ran inside a sealed execution
+  boundary and was then destroyed. It carries an eight-step SHA-512 hash chain
+  over the destruction sequence, together with an Ed25519 attestation over a
+  fixed canonical view of the document serialised under RFC 8785.
 
   A verifier answers two separate questions. Integrity is whether the document
   is internally consistent and unmodified, which can be established from the

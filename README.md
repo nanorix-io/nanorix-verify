@@ -2,9 +2,17 @@
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21901019.svg)](https://doi.org/10.5281/zenodo.21901019)
 
-An AuditProof is a document saying that a compute workload ran in a contained
-environment and was then destroyed. It carries enough evidence that someone who
-wasn't there can check the claim.
+An AuditProof is a document saying that a compute workload ran inside a sealed
+execution boundary and was then destroyed. The point of the format is that
+someone who wasn't there, and who has no relationship with whoever produced it,
+can check the claim for themselves.
+
+That is the part worth being precise about. A regulated organisation running
+someone else's software has to show its regulator what that software did with
+its data, and normally the only available record is one the operator wrote about
+itself. This format is built so the party the evidence concerns is not the party
+attesting to it, and so that checking it needs no permission, no account, and no
+network call.
 
 This repository holds the specification and four verifiers that implement it.
 Everything here is Apache-2.0.
@@ -12,7 +20,7 @@ Everything here is Apache-2.0.
 None of them contacts Nanorix, or anything else. A verifier reads a file from
 disk and answers using what's in the file, plus one published trust anchor if
 you supply it. There's no HTTP client in any of the four implementations, so
-this isn't a policy we're asking you to trust.
+offline verification isn't a policy we're asking you to trust.
 
 ## What a proof contains
 
