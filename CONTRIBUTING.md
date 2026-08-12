@@ -1,64 +1,73 @@
 # Contributing
 
-Contributions are welcome, with one hard boundary described below.
+Contributions are welcome. There's one hard boundary, described first because
+it's the one that gets pull requests closed.
 
-## The wire form does not change
+## The wire form doesn't change
 
-The following are fixed. A pull request that changes any of them will be closed,
-regardless of how it improves the code:
+These are fixed:
 
-- the eight chain steps — their count, their order, and their names
-- the chain construction, including the `0x00` separators and the literal
+- the eight chain steps, their count, their order, and their names
+- how the chain is constructed, including the `0x00` separators and the literal
   `"destroy"` operation token
 - SHA-512 as the hash, Ed25519 as the signature
 - the genesis value `SHA-512("")`
-- the 15-field canonical view, its RFC 8785 JCS serialisation, and the fact
-  that the signature is over the ASCII-hex form of the digest rather than its
-  bytes
-- the failure-reason taxonomy in `governance/verify-types` — reasons may be
-  added, never renamed or removed
+- the 15-field canonical view, its RFC 8785 serialisation, and the fact that the
+  signature covers the ASCII-hex form of the digest rather than its bytes
+- the failure reasons in `governance/verify-types`. New reasons can be added.
+  Existing ones can't be renamed or removed.
 
-This is not a preference about code style. Proofs already issued are verified by
-this algorithm for as long as they are retained, which for regulated records is
-measured in years. A change to the wire form does not produce a new version; it
-produces a body of evidence nobody can check any more. Anything that would
-require such a change belongs in a successor format with its own version field,
-proposed as a specification change first and implemented second.
+A pull request that changes any of them will be closed, however much it improves
+the code otherwise.
 
-If you believe you have found a case where an implementation deviates from the
-specification, that is a bug in the implementation and a very welcome report —
-open an issue with the document that reproduces it.
+This isn't about taste. Proofs that have already been issued get verified by
+this algorithm for as long as they're kept, which for regulated records means
+years. Changing the wire form doesn't produce a new version of the format, it
+produces a pile of evidence nobody can check any more. If something genuinely
+needs one of these to change, it belongs in a successor format with its own
+version field, proposed as a specification change before any code is written.
 
-## What is genuinely wanted
+If you think an implementation deviates from the specification, that's a bug in
+the implementation and we want to hear about it. Open an issue with the document
+that reproduces it.
 
-- **Additional implementations.** A fifth language is the strongest possible
-  evidence that the specification is complete. If you write one, the bar is the
-  conformance corpus: all 100 cases, matching verdicts.
-- **Conformance cases.** A document that two implementations disagree about is
-  more valuable than a feature. Include the document, both verdicts, and what
-  you believe the correct verdict is.
-- **Specification defects.** Ambiguity, an under-specified edge, a case where
-  the prose and the reference implementation diverge.
-- **Bug fixes** that bring an implementation back into agreement with the
-  specification, with a corpus case that fails before and passes after.
-- **Documentation**, particularly anything that makes the integrity/authenticity
-  distinction harder to misread.
+## What's actually wanted
+
+**Another implementation.** A fifth language is the best evidence that the
+specification is complete enough to work from. The bar is the conformance
+corpus: all 100 cases, matching verdicts.
+
+**Conformance cases.** A document that two implementations disagree about is
+worth more than a feature. Include the document, both verdicts, and which one
+you think is right.
+
+**Specification defects.** Ambiguity, an under-specified edge case, or a place
+where the prose and the reference implementation don't agree.
+
+**Bug fixes** that bring an implementation back in line with the specification.
+Include a corpus case that fails before your change and passes after.
+
+**Documentation**, especially anything that makes the integrity/authenticity
+distinction harder to misread.
 
 ## Ground rules
 
-- Every behavioural change carries a test that fails without it. A guard that
-  has never been observed to fire is a comment.
-- Cross-implementation changes land together. If a fix changes a verdict, all
-  four implementations change in the same pull request, or the corpus catches it
-  and CI fails — which is the corpus working as intended.
-- Do not add network calls to a verifier's default path. Offline verification is
-  a property of the design, not an optimisation.
-- Contributions are accepted under Apache-2.0, including its patent grant in
-  section 3. By opening a pull request you are licensing your contribution under
-  those terms.
+Every behavioural change needs a test that fails without it. A guard nobody has
+watched fire isn't a guard.
+
+Cross-implementation changes land together. If a fix changes a verdict, all four
+implementations change in the same pull request. If they don't, the corpus will
+catch it and CI will fail, which is the corpus doing its job.
+
+Don't add network calls to a verifier's default path. Offline verification is
+part of the design, not an optimisation.
+
+Contributions are accepted under Apache-2.0, including the patent grant in
+section 3. Opening a pull request means you're licensing your contribution under
+those terms.
 
 ## Security
 
-Do not open a public issue for a vulnerability in the verification logic —
-particularly anything that would let a modified document verify. Write to
+Don't open a public issue for a vulnerability in the verification logic,
+particularly anything that would let a modified document verify. Email
 `security@nanorix.io`. Include the document if you have one.

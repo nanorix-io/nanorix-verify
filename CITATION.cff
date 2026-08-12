@@ -5,31 +5,31 @@ message: >-
 title: >-
   Signed Containment Evidence: specification and reference verifiers
 abstract: >-
-  A specification and four byte-equivalent reference implementations for
-  independently verifying that a compute workload was contained and destroyed —
-  offline, and without contacting the party that produced the evidence. Each
-  AuditProof carries an eight-step SHA-512 hash chain over the destruction
-  sequence and an Ed25519 attestation over the canonical form of the document,
-  serialised under RFC 8785.
+  A specification and four reference implementations for checking, independently
+  and offline, that a compute workload was contained and then destroyed. Nothing
+  has to be asked of whoever produced the evidence. An AuditProof carries an
+  eight-step SHA-512 chain over the destruction sequence and an Ed25519
+  attestation over a fixed canonical view of the document, serialised with
+  RFC 8785.
 
-  A verifier separates two questions that are usually conflated: whether the
-  document is internally consistent and unmodified (integrity, checkable from
-  the document alone), and whether the key that signed it belongs to the party
-  it names (authenticity, which requires an external trust anchor). A document
-  can have perfect integrity and no authenticity, and the exit codes keep those
-  answers apart. Implementations in Rust, Go, Python and TypeScript agree
-  byte-for-byte across a 100-case conformance corpus, which is generated from a
-  committed generator so its expected verdicts can be reproduced rather than
-  trusted.
+  A verifier answers two questions that often get treated as one. Integrity asks
+  whether the document is internally consistent and unmodified, which can be
+  answered from the document alone. Authenticity asks whether the key that signed
+  it belongs to the party it names, which cannot. A document can be perfectly
+  self-consistent and signed by a key nobody vouches for, so the exit codes keep
+  the two answers apart. The implementations in Rust, Go, Python and TypeScript
+  agree byte for byte across a 100-case conformance corpus, which is generated
+  from a committed generator so its expected verdicts can be reproduced instead
+  of trusted.
 
-  Three properties are requirements rather than intentions. No implementation
-  carries a network dependency, so offline verification is a property of the
-  code and not a promise about it. A verifier that does not implement a
-  document's declared signing mode must reject the document rather than report a
-  partial result, closing a downgrade an attacker would otherwise select. And
-  the wire form — the eight steps, their order, the hash and signature
-  algorithms, and the canonical view — does not change, because evidence
-  retained for years has to stay checkable by the algorithm that produced it.
+  Three properties are requirements rather than intentions. None of the four
+  implementations carries a network dependency, so offline verification is a
+  property of the code and not a promise about it. A verifier that does not
+  implement a document's declared signing mode has to reject the document rather
+  than report a partial result, which closes a downgrade an attacker would
+  otherwise pick. And the wire form, meaning the eight steps, their order, the
+  two algorithms and the canonical view, does not change, because evidence kept
+  for years has to stay checkable by the algorithm that produced it.
 type: software
 authors:
   - family-names: Arra
