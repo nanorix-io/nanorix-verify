@@ -219,6 +219,24 @@ control; most entries below are bounded or evidenced, not prevented.
 - Public corpus with expected verdicts, including failure fixtures.
 - Threat model and boundary statement, published alongside the implementation.
 
+### 8.1 Normative references
+
+An implementation of this document depends on the following. Where this document and one of
+them appear to disagree, the referenced standard governs.
+
+| | |
+|---|---|
+| **RFC 8785** | JSON Canonicalization Scheme (JCS). Defines the serialisation of the canonical view in §2.1. Two implementations that canonicalise differently produce different hashes over identical documents, so this reference is load-bearing rather than advisory. |
+| **RFC 8032** | Edwards-Curve Digital Signature Algorithm (EdDSA), §5.1 Ed25519. The signature algorithm of §4. |
+| **FIPS 180-4** | Secure Hash Standard. SHA-512, used for every hash in §2.1 and §3. |
+| **RFC 4648** | Base16 and Base64 encodings. Base16 (hex) for the message encoding in §4 and for chain hashes; Base64 for key and signature transport. |
+
+### 8.2 Informative references
+
+| | |
+|---|---|
+| **OWASP Top 10 for Agentic Applications (2026)** | The risk taxonomy §7 maps against. That mapping is a citation, not a claim of coverage — see the "Partial" and "No" rows. |
+
 ---
 
 ## 9. Open items in this draft

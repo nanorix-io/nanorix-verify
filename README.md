@@ -100,6 +100,15 @@ It is not the capsule runtime, the destruction mechanism, or the trust root that
 identifies signing authorities. Those stay closed. Publishing a verifier is what
 makes evidence checkable; publishing the issuer would make it forgeable.
 
+## Citing this work
+
+`CITATION.cff` at the repository root carries the machine-readable record — GitHub renders a
+"Cite this repository" button from it, and reference managers read it directly.
+
+If you are writing a specification, a standards document, or a paper that incorporates this
+format, cite the archived release rather than the repository URL. A repository moves; an
+archived release does not.
+
 ## License
 
 Apache-2.0. Copyright 2026 Nanorix Inc. See `LICENSE`.
