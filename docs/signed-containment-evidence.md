@@ -217,7 +217,9 @@ control; most entries below are bounded or evidenced, not prevented.
 
 - Reference implementation, verifier CLI and shared result types: Apache-2.0.
 - Public corpus with expected verdicts, including failure fixtures.
-- Threat model and boundary statement, published alongside the implementation.
+- Threat model and boundary statement: <https://docs.nanorix.io/threat-model/>. It is
+  published separately from this repository rather than inside it, and says what the
+  evidence does not establish.
 
 ### 8.1 Normative references
 
