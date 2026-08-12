@@ -1,11 +1,11 @@
 //! Nanorix AuditProof verifier — standalone library.
 //!
 //! Implements the 8-step AuditProof specification verification pipeline against an AuditProof
-//! JSON document. Designed to be independent of any Nanorix SaaS dependency:
-//! all verification is local; only the trust-chain manifest is fetched (and
-//! the manifest is itself signed).
+//! JSON document. Independent of any Nanorix service: this crate has no HTTP
+//! client, so every verification is local. The trust-chain manifest, when one
+//! is used, is supplied as a local file and is itself signed.
 //!
-//! Per Nanorix the verifier work : "auditor
+//! Per the verifier specification : "auditor
 //! verification CLI — the literal moment-of-truth artifact when an OCR
 //! auditor walks in."
 //!
@@ -14,10 +14,10 @@
 //! The verifier needs ONE thing the customer cannot tamper with: a trusted
 //! public key for the AuditProof's signing authority. Two paths:
 //!
-//! 1. **Trust-chain manifest** — fetched from `https://nanorix.io/.well-known/
-//!    trust-chain.json` (or local file via `--trust-chain`). The manifest is
-//!    signed by Nanorix's long-term identity key, fingerprint published at
-//!    `https://nanorix.io/.well-known/identity.txt` + GitHub release notes.
+//! 1. **Trust-chain manifest** — supplied as a local file via `--trust-chain`,
+//!    and pinned with `--identity-fingerprint`. The manifest is itself signed
+//!    by a long-term identity key. Nothing is retrieved over the network; if
+//!    you obtain a manifest from a published location, you fetch it yourself.
 //! 2. **Direct override** (`--public-key`) — for offline / sovereign-auditor
 //!    use cases where customer brings the public key themselves.
 //!
@@ -33,7 +33,7 @@
 //! 7. Ed25519 signature verification
 //! 8. Authority status (active / revoked / fingerprint stale)
 //!
-//! Each stage emits a typed `FailureReason` on failure (per Nanorix the specification).
+//! Each stage emits a typed `FailureReason` on failure (per the verifier specification).
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha512};
@@ -181,7 +181,7 @@ pub struct TrustedAuthority {
 /// Top-level verify entrypoint. Loads AuditProof JSON, runs 8-stage
 /// verification per the AuditProof specification, returns structured result.
 ///
-/// **NOTE:** This is the V1 implementation scaffold. Per the verifier work ship plan, the
+/// **NOTE:** This is the V1 implementation scaffold. Per the verifier specification ship plan, the
 /// full the AuditProof specification stage 5 (canonical_hash recompute) and stage 6 (signing
 /// key resolution from trust chain) need the shared verification crate
 /// extracted from the AuditProof document builder to avoid divergence.
@@ -803,7 +803,7 @@ pub fn strip_base64_prefix(s: &str) -> &str {
 //
 // Mirrors the reference chain implementation to keep the verifier independent of any
 // service-side dependency (the verifier ships as a standalone auditor
-// artifact per the verifier work). The hash primitives are byte-identical to the
+// artifact per the verifier specification). The hash primitives are byte-identical to the
 // service-side implementation — pinned by the cross-impl byte-equivalence
 // test in the property-test suite.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1632,7 +1632,7 @@ mod tests {
         let proof = make_minimal_v1_proof();
         // AuditProof is the v1 minimal shape; no `signing_authority` field.
         let policy = VerifierPolicy {
-            required_authority_id: Some("customer-hsm-mayo-clinic-v1".into()),
+            required_authority_id: Some("customer-hsm-example-org-v1".into()),
             ..Default::default()
         };
 
@@ -1647,7 +1647,7 @@ mod tests {
                 reason,
             }) => {
                 assert_eq!(claimed_authority_id, None);
-                assert_eq!(expected_authority_id, "customer-hsm-mayo-clinic-v1");
+                assert_eq!(expected_authority_id, "customer-hsm-example-org-v1");
                 assert_eq!(
                     reason,
                     AuthorityIdMismatchReason::VerifierPolicyDemandsCustomerHsmAuditProofHasNone
@@ -1668,7 +1668,7 @@ mod tests {
         });
 
         let policy = VerifierPolicy {
-            required_authority_id: Some("customer-hsm-mayo-clinic-v1".into()),
+            required_authority_id: Some("customer-hsm-example-org-v1".into()),
             ..Default::default()
         };
 
@@ -1683,7 +1683,7 @@ mod tests {
                 reason,
             }) => {
                 assert_eq!(claimed_authority_id, Some("customer-hsm-other-v1".into()));
-                assert_eq!(expected_authority_id, "customer-hsm-mayo-clinic-v1");
+                assert_eq!(expected_authority_id, "customer-hsm-example-org-v1");
                 assert_eq!(
                     reason,
                     AuthorityIdMismatchReason::VerifierPolicyAuthorityIdMismatch
@@ -1700,11 +1700,11 @@ mod tests {
     fn policy_pin_customer_hsm_audit_proof_matches_authority_accepted() {
         let mut proof = make_minimal_v1_proof();
         proof["signing_authority"] = serde_json::json!({
-            "authority_id": "customer-hsm-mayo-clinic-v1",
+            "authority_id": "customer-hsm-example-org-v1",
         });
 
         let policy = VerifierPolicy {
-            required_authority_id: Some("customer-hsm-mayo-clinic-v1".into()),
+            required_authority_id: Some("customer-hsm-example-org-v1".into()),
             ..Default::default()
         };
 
@@ -1809,7 +1809,7 @@ mod tests {
     fn policy_none_audit_proof_some_accepted() {
         let mut proof = make_minimal_v1_proof();
         proof["signing_authority"] = serde_json::json!({
-            "authority_id": "customer-hsm-mayo-clinic-v1",
+            "authority_id": "customer-hsm-example-org-v1",
         });
 
         let policy = VerifierPolicy::default();
@@ -1841,7 +1841,7 @@ mod tests {
         };
 
         let auth_id_pool = [
-            "customer-hsm-mayo-clinic-v1",
+            "customer-hsm-example-org-v1",
             "customer-hsm-other-v1",
             "us-kms-nanorix-v1",
             "europe-west1.daemon.nanorix.io",
@@ -1914,7 +1914,7 @@ mod tests {
         };
 
         let auth_id_pool = [
-            "customer-hsm-mayo-clinic-v1",
+            "customer-hsm-example-org-v1",
             "customer-hsm-other-v1",
             "customer-hsm-acme-prod-2026-q2",
             "us-kms-nanorix-v1",

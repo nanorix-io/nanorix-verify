@@ -1,7 +1,7 @@
 """
 Portable Receipt Bundle (.prb.json) — Wave B Item 7 surface, Python port.
 
-Pure Python port of `the Rust verifiersrc/bundle.rs``. Cross-impl
+Pure Python port of ``tools/nanorix-verify/src/bundle.rs``. Cross-impl
 byte-equivalence with Rust/Go/TypeScript on the canonical reference vectors.
 
 Per feedback_narrowness_is_the_moat_resist_receipt_enrichment.md: this is a
@@ -49,7 +49,7 @@ PORTABLE_RECEIPT_BUNDLE_DISCLAIMER = (
     "record's structural execution. Verifying party uses the audit_proof_anchors "
     "to verify the receipt's merkle inclusion + outer Ed25519 signature. "
     "Control framework references are NOT included in this bundle; consult "
-    "the the specification mapping artifact at "
+    "the specification mapping artifact at "
     "schema.nanorix.com/control-map/{framework_version}.json to apply current "
     "control mappings at consumption time."
 )

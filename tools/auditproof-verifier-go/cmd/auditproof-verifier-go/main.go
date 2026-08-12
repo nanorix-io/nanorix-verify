@@ -1,7 +1,7 @@
 // Command auditproof-verifier-go — standalone CLI for AuditProof verification.
 //
 // This is the Go reference implementation, peer to the Rust `nanorix-verify`
-// CLI at the Rust verifier. The literal moment-of-truth artifact for an
+// CLI at `tools/nanorix-verify/`. The literal moment-of-truth artifact for an
 // auditor receiving a Nanorix AuditProof who needs to confirm authenticity
 // without any Nanorix SaaS dependency.
 //
@@ -19,7 +19,7 @@
 //   $ auditproof-verifier-go --json path/to/auditproof.json
 //   {"valid":true,"failure_reason":null,"stage_reached":7,"metadata":{...}}
 //
-//   $ auditproof-verifier-go --fixture-dir the Rust verifierfixtures/corpus
+//   $ auditproof-verifier-go --fixture-dir tools/nanorix-verify/fixtures/corpus
 //   100 fixtures · 41 verified · 59 failed
 //
 // Exit codes:
@@ -75,7 +75,7 @@ func main() {
 	jsonOutput := flag.Bool("json", false, "Output result as JSON instead of human-readable text.")
 	rejectDiagnostic := flag.Bool("reject-diagnostic", false, "Refuse AuditProofs in diagnostic mode (the specification).")
 	requiredRegion := flag.String("required-region", "", "Required region (e.g., 'europe-west1'). When set, AuditProofs whose region disagrees fail.")
-	requiredAuthorityID := flag.String("required-authority-id", "", "Required signing-authority id (e.g., 'customer-hsm-mayo-clinic-v1').")
+	requiredAuthorityID := flag.String("required-authority-id", "", "Required signing-authority id (e.g., 'customer-hsm-example-org-v1').")
 	fixtureDir := flag.String("fixture-dir", "", "Path to fixture corpus root; runs verification on every fixture and reports pass/fail counts.")
 	versionFlag := flag.Bool("version", false, "Print version and exit.")
 	helpFlag := flag.Bool("help", false, "Print help and exit.")

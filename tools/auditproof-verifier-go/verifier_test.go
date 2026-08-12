@@ -1,7 +1,7 @@
 // Test suite for the Go reference verifier.
 //
 // **Cross-impl byte-equivalence (binding contract):** every fixture in
-// the conformance corpus must produce a Go-side verification
+// `tools/nanorix-verify/fixtures/corpus/` must produce a Go-side verification
 // output that is byte-identical to the Rust verifier output. Divergence on
 // even one fixture is a P0 finding per the Forever-Standard wire discipline + the specification release framing
 // + `feedback_canonical_hash_under_fault.md`.
@@ -28,7 +28,7 @@ import (
 
 const (
 	// FixtureCorpusRelative is the corpus path relative to this Go module.
-	// The corpus is shipped at the conformance corpus from
+	// The corpus is shipped at `tools/nanorix-verify/fixtures/corpus/` from
 	// the published corpus (an earlier release verification-surface scaffolds).
 	FixtureCorpusRelative = "../nanorix-verify/fixtures/corpus"
 
@@ -210,7 +210,7 @@ func TestVerifyMismatchedFinalHashFailsAtStage4(t *testing.T) {
 // `policy_pin_customer_hsm_audit_proof_none_rejected`.
 func TestPolicyPinCustomerHsmAuditProofNoneRejected(t *testing.T) {
 	proof := makeMinimalV1Proof("2026-05-06T12:00:00Z")
-	policy := VerifierPolicy{RequiredAuthorityID: "customer-hsm-mayo-clinic-v1"}
+	policy := VerifierPolicy{RequiredAuthorityID: "customer-hsm-example-org-v1"}
 	r := VerifyValue(proof, policy)
 	if r.Valid {
 		t.Fatalf("expected reject; got %+v", r)
@@ -224,7 +224,7 @@ func TestPolicyPinCustomerHsmAuditProofNoneRejected(t *testing.T) {
 	if r.FailureReason.ClaimedAuthorityID != nil {
 		t.Errorf("expected nil claimed; got %v", r.FailureReason.ClaimedAuthorityID)
 	}
-	if r.FailureReason.ExpectedAuthorityID != "customer-hsm-mayo-clinic-v1" {
+	if r.FailureReason.ExpectedAuthorityID != "customer-hsm-example-org-v1" {
 		t.Errorf("expected_authority_id = %q", r.FailureReason.ExpectedAuthorityID)
 	}
 	if r.FailureReason.AuthIDReason != AuthIDPolicyDemandsCustomerHSMHasNone {
@@ -239,7 +239,7 @@ func TestPolicyPinCustomerHsmAuditProofWrongAuthorityRejected(t *testing.T) {
 	proof["signing_authority"] = map[string]interface{}{
 		"authority_id": "customer-hsm-other-v1",
 	}
-	policy := VerifierPolicy{RequiredAuthorityID: "customer-hsm-mayo-clinic-v1"}
+	policy := VerifierPolicy{RequiredAuthorityID: "customer-hsm-example-org-v1"}
 	r := VerifyValue(proof, policy)
 	if r.Valid {
 		t.Fatalf("expected reject; got %+v", r)
@@ -257,9 +257,9 @@ func TestPolicyPinCustomerHsmAuditProofWrongAuthorityRejected(t *testing.T) {
 func TestPolicyPinCustomerHsmAuditProofMatchesAuthorityAccepted(t *testing.T) {
 	proof := makeMinimalV1Proof("2026-05-06T12:00:00Z")
 	proof["signing_authority"] = map[string]interface{}{
-		"authority_id": "customer-hsm-mayo-clinic-v1",
+		"authority_id": "customer-hsm-example-org-v1",
 	}
-	policy := VerifierPolicy{RequiredAuthorityID: "customer-hsm-mayo-clinic-v1"}
+	policy := VerifierPolicy{RequiredAuthorityID: "customer-hsm-example-org-v1"}
 	r := VerifyValue(proof, policy)
 	if !r.Valid {
 		t.Fatalf("expected valid; got %+v", r)
@@ -267,7 +267,7 @@ func TestPolicyPinCustomerHsmAuditProofMatchesAuthorityAccepted(t *testing.T) {
 }
 
 // TestFixtureCorpusByteEquivalentWithRust walks the 100-fixture corpus shipped
-// at the conformance corpus, runs the Go verifier on each
+// at `tools/nanorix-verify/fixtures/corpus/`, runs the Go verifier on each
 // proof JSON, runs the Rust verifier (via the binary at
 // `target/debug/nanorix-verify` if present), and asserts byte-identical JSON
 // output.
@@ -495,7 +495,7 @@ func TestPropertyFault10kIterations(t *testing.T) {
 		// Run with random policy too.
 		policy := VerifierPolicy{}
 		if rng.Intn(4) == 0 {
-			policy.RequiredAuthorityID = "customer-hsm-mayo-clinic-v1"
+			policy.RequiredAuthorityID = "customer-hsm-example-org-v1"
 		}
 
 		r := Verify(bytes, policy)

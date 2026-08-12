@@ -1,7 +1,7 @@
 // Tests for the canonical-hash recompute, the signature stage, and the chain-timestamp recovery rule
 // chain-timestamp recovery — the Go peers of the test module in
-// the Rust verifiersrc/canonical_recompute.rs` and the chain-timestamp recovery rule block in
-// the Rust verifiersrc/lib.rs`.
+// `tools/nanorix-verify/src/canonical_recompute.rs` and the chain-timestamp recovery rule block in
+// `tools/nanorix-verify/src/lib.rs`.
 //
 // The corpus sweep covers the signature stage end-to-end on 100 fixtures, but
 // no corpus fixture omits `destroyed_at`, so the recovery path needs its own

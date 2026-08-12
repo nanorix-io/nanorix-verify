@@ -1,7 +1,7 @@
 // Cross-implementation fixture-corpus sweep — the Go peer of
-// the Rust verifiertests/corpus_sweep.rs`.
+// `tools/nanorix-verify/tests/corpus_sweep.rs`.
 //
-// The corpus at the conformance corpus is the public
+// The corpus at `tools/nanorix-verify/fixtures/corpus/` is the public
 // byte-equivalence artifact: it is what a skeptic runs first, and it is the
 // oracle both verifiers are held to. Every fixture must produce the same
 // `valid` / `stage_reached` / `failure_reason` in Go as the committed verdict

@@ -5,7 +5,7 @@
 > auditor receives a Nanorix AuditProof and needs to confirm authenticity
 > without any Nanorix SaaS dependency.
 
-Per Nanorix the verifier work.
+Per the verifier specification.
 
 ## Install
 
@@ -99,11 +99,11 @@ V1 (this build) verifies stages 1-4 (schema + chain integrity + final-hash bindi
 The verifier needs ONE thing the customer cannot tamper with: a trusted public
 key for the AuditProof's signing authority. Two paths:
 
-1. **Trust-chain manifest** — fetched from
-   `https://nanorix.io/.well-known/trust-chain.json` (or local file via
-   `--trust-chain`). The manifest is itself signed by Nanorix's long-term
-   identity key whose fingerprint is published statically at
-   `https://nanorix.io/.well-known/identity.txt` + GitHub release notes.
+1. **Trust-chain manifest** — supplied as a local file via `--trust-chain`,
+   pinned with `--identity-fingerprint`. The manifest is itself signed by a
+   long-term identity key. The verifier has no HTTP client and retrieves
+   nothing; if you obtain a manifest from a published location, you fetch it
+   yourself and hand it over.
 2. **Direct override** (`--public-key`) — for offline / sovereign-auditor
    use cases where the auditor brings the public key themselves.
 

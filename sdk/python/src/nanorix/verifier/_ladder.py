@@ -1,9 +1,9 @@
 """
 The AuditProof verification stage ladder — the single Python implementation.
 
-Python mirror of the Rust verifiersrc/lib.rs::verify_auditproof`, which is
+Python mirror of `tools/nanorix-verify/src/lib.rs::verify_auditproof`, which is
 the reference verifier and the spec. Agreement is enforced against the 100
-pinned documents in the conformance corpus, which are the
+pinned documents in `tools/nanorix-verify/fixtures/corpus/`, which are the
 public cross-implementation contract; a disagreement with the corpus is a
 defect in this file, never in the corpus.
 

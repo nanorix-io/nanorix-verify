@@ -60,7 +60,7 @@ use crate::{strip_base64_prefix, strip_hash_prefix};
 ///
 /// Vocabulary discipline per `regulatory_context` rules + CONVENTIONS.md:
 /// forbidden words include `COMPLIANT`, `SATISFIED`, `PASSED`, `MEETS`.
-pub const PORTABLE_RECEIPT_BUNDLE_DISCLAIMER: &str = "This Portable Receipt Bundle carries cryptographic evidence of one record's structural execution. Verifying party uses the audit_proof_anchors to verify the receipt's merkle inclusion + outer Ed25519 signature. Control framework references are NOT included in this bundle; consult the the specification mapping artifact at schema.nanorix.com/control-map/{framework_version}.json to apply current control mappings at consumption time.";
+pub const PORTABLE_RECEIPT_BUNDLE_DISCLAIMER: &str = "This Portable Receipt Bundle carries cryptographic evidence of one record's structural execution. Verifying party uses the audit_proof_anchors to verify the receipt's merkle inclusion + outer Ed25519 signature. Control framework references are NOT included in this bundle; consult the specification mapping artifact at schema.nanorix.com/control-map/{framework_version}.json to apply current control mappings at consumption time.";
 
 /// `signature_target` value for the legacy CDP v1.0/v2.0 signing model:
 /// the outer Ed25519 signature covers the ASCII-hex bytes of
@@ -481,7 +481,7 @@ pub fn bundle_verdict_text(bundle: &PortableReceiptBundle) -> String {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Local hash primitives (mirror the reference chain implementation to keep the
-// verifier independent of the service-side crate per the verifier work standalone artifact)
+// verifier independent of the service-side crate per the verifier specification standalone artifact)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// `pattern_tag_wire` follows the server's conditional-append rule

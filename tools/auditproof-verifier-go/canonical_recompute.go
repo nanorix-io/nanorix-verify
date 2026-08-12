@@ -1,5 +1,5 @@
 // Canonical-hash recompute + Ed25519 signature verification — the Go mirror of
-// the Rust verifiersrc/canonical_recompute.rs`.
+// `tools/nanorix-verify/src/canonical_recompute.rs`.
 //
 // This is what makes stages 5-7 real. Reproducing the 8-step chain (stages 1-4)
 // proves the chain is internally consistent; it says nothing about whether the

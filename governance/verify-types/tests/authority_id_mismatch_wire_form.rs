@@ -41,11 +41,11 @@ use nanorix_verify_types::{AuthorityIdMismatchReason, FailureReason};
 fn authority_id_mismatch_audit_proof_none_byte_pin() {
     let reason = FailureReason::AuthorityIdMismatch {
         claimed_authority_id: None,
-        expected_authority_id: "customer-hsm-mayo-clinic-v1".into(),
+        expected_authority_id: "customer-hsm-example-org-v1".into(),
         reason: AuthorityIdMismatchReason::VerifierPolicyDemandsCustomerHsmAuditProofHasNone,
     };
     let json = serde_json::to_string(&reason).expect("serialize");
-    let expected = r#"{"type":"authority_id_mismatch","claimed_authority_id":null,"expected_authority_id":"customer-hsm-mayo-clinic-v1","reason":"verifier_policy_demands_customer_hsm_audit_proof_has_none"}"#;
+    let expected = r#"{"type":"authority_id_mismatch","claimed_authority_id":null,"expected_authority_id":"customer-hsm-example-org-v1","reason":"verifier_policy_demands_customer_hsm_audit_proof_has_none"}"#;
     assert_eq!(
         json, expected,
         "AuthorityIdMismatch wire-form (None claimed) drifted"
@@ -63,11 +63,11 @@ fn authority_id_mismatch_audit_proof_none_byte_pin() {
 fn authority_id_mismatch_wrong_id_byte_pin() {
     let reason = FailureReason::AuthorityIdMismatch {
         claimed_authority_id: Some("customer-hsm-other-v1".into()),
-        expected_authority_id: "customer-hsm-mayo-clinic-v1".into(),
+        expected_authority_id: "customer-hsm-example-org-v1".into(),
         reason: AuthorityIdMismatchReason::VerifierPolicyAuthorityIdMismatch,
     };
     let json = serde_json::to_string(&reason).expect("serialize");
-    let expected = r#"{"type":"authority_id_mismatch","claimed_authority_id":"customer-hsm-other-v1","expected_authority_id":"customer-hsm-mayo-clinic-v1","reason":"verifier_policy_authority_id_mismatch"}"#;
+    let expected = r#"{"type":"authority_id_mismatch","claimed_authority_id":"customer-hsm-other-v1","expected_authority_id":"customer-hsm-example-org-v1","reason":"verifier_policy_authority_id_mismatch"}"#;
     assert_eq!(
         json, expected,
         "AuthorityIdMismatch wire-form (Some claimed) drifted"
@@ -300,7 +300,7 @@ fn authority_id_mismatch_fault_injection_roundtrip_10k() {
     };
 
     let auth_id_pool = [
-        "customer-hsm-mayo-clinic-v1",
+        "customer-hsm-example-org-v1",
         "customer-hsm-acme-prod-2026-q2",
         "customer-hsm-other-v1",
         "us-kms-nanorix-v1",

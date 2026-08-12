@@ -1,5 +1,5 @@
 // AuditProof 8-stage verification pipeline. Mirrors the Rust verifier in
-// the Rust verifiersrc/lib.rs::verify_auditproof`.
+// `tools/nanorix-verify/src/lib.rs::verify_auditproof`.
 //
 // **Forever-Standard discipline (the Forever-Standard wire discipline):** the stage numbering, the
 // failure-reason emission shapes, the policy-pin gate ordering, and the
@@ -64,7 +64,7 @@ var supportedCdpVersions = map[string]bool{
 // `policy`. Returns the structured verification result.
 //
 // This is the public entry point for consumers. The result matches
-// the Rust verifiersrc/lib.rs::verify_auditproof` on the fixture corpus.
+// `tools/nanorix-verify/src/lib.rs::verify_auditproof` on the fixture corpus.
 func Verify(jsonBytes []byte, policy VerifierPolicy) AuditProofVerificationResult {
 	return verifyCore(jsonBytes, policy, false)
 }

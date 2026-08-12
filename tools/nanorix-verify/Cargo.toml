@@ -1,6 +1,6 @@
 [package]
 name = "nanorix-verify"
-description = "Standalone AuditProof verifier — auditor moment-of-truth artifact (Nanorix the verifier work)"
+description = "Standalone AuditProof verifier — auditor moment-of-truth artifact (the verifier specification)"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -13,7 +13,7 @@ path = "src/main.rs"
 
 # Fixture corpus generator (Scaffold #3 of verification surface).
 # Runs `cargo run --bin nanorix-verify-fixtures-gen` to populate
-# the conformance corpus with 100+ AuditProof JSON
+# `tools/nanorix-verify/fixtures/corpus/` with 100+ AuditProof JSON
 # fixtures spanning happy-path, failure-modes, and tamper-patterns.
 # Cross-implementation byte-equivalence anchor: Rust + Python +
 # TypeScript verifiers all assert byte-identical verdicts on the

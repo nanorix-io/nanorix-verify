@@ -1,7 +1,7 @@
 /**
  * Portable Pubkey Bundle (.ppb.json) — Wave B Item 8 surface, TypeScript port.
  *
- * Pure TypeScript port of the Rust verifiersrc/pubkey_bundle.rs`.
+ * Pure TypeScript port of `tools/nanorix-verify/src/pubkey_bundle.rs`.
  * Cross-impl byte-equivalence with Rust/Go/Python on the canonical reference
  * vectors.
  *

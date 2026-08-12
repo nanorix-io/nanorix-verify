@@ -9,7 +9,7 @@
 //!
 //! 1. Resolves the customer's published Ed25519 public key — either
 //!    fetched from the customer's published URL OR resolved through the
-//!    Nanorix trust-chain manifest (per the specification + the verifier work ext) which records
+//!    Nanorix trust-chain manifest (per the verifier specification) which records
 //!    bounded customer-authority registrations as additional manifest
 //!    entries.
 //! 2. Verifies the AuditProof's signature against that customer-authority
@@ -78,7 +78,7 @@ pub enum AuthorityKind {
     /// `eu-kms-nanorix-v1`, etc.). Resolves through the standard
     /// trust-chain manifest path.
     NanorixSelf,
-    /// Customer-attested authority (`customer-hsm-mayo-clinic-v1`,
+    /// Customer-attested authority (`customer-hsm-example-org-v1`,
     /// `customer-kms-acme-v3`, etc.). Resolves through the
     /// bounded-customer-manifest path with G15 chain-walk semantics.
     CustomerAttested,
@@ -172,7 +172,7 @@ pub struct AuthorityWalkResolution {
 /// 3. Look up the authority entry in the bounded `manifest`.
 /// 4. Resolve `signing_key_version` against the entry's
 ///    `active_versions` and `archived_versions` (archive-forever
-///    discipline per the verifier work ext + this module's "AuditProof signed
+///    discipline per the verifier specification + this module's "AuditProof signed
 ///    under version N still verifies after rotation to N+K"
 ///    invariant).
 /// 5. If the entry is revoked at the authority level, fail with
@@ -310,7 +310,7 @@ mod tests {
 
         // Customer-attested authority (G15 surface).
         authorities.insert(
-            "customer-hsm-mayo-clinic-v1".to_string(),
+            "customer-hsm-example-org-v1".to_string(),
             AuthorityRecord {
                 display_name: "Mayo Clinic HSM".to_string(),
                 active_versions: vec![KeyVersionRecord {
@@ -366,14 +366,14 @@ mod tests {
     fn walk_resolves_active_customer_authority() {
         let manifest = fixture_manifest_with_customer();
         let result = walk_authority_chain(
-            "customer-hsm-mayo-clinic-v1",
+            "customer-hsm-example-org-v1",
             "1",
             AuthorityKind::CustomerAttested,
             "2026-05-09T12:00:00Z",
             &manifest,
         )
         .expect("resolution should succeed");
-        assert_eq!(result.authority_id, "customer-hsm-mayo-clinic-v1");
+        assert_eq!(result.authority_id, "customer-hsm-example-org-v1");
         assert_eq!(result.kind, AuthorityKind::CustomerAttested);
         assert_eq!(result.key_status, KeyStatus::Active);
         assert_eq!(result.signing_key_version, "1");
@@ -384,7 +384,7 @@ mod tests {
     fn walk_resolves_archived_customer_authority_within_window() {
         let manifest = fixture_manifest_with_customer();
         let result = walk_authority_chain(
-            "customer-hsm-mayo-clinic-v1",
+            "customer-hsm-example-org-v1",
             "0",
             AuthorityKind::CustomerAttested,
             "2026-04-15T12:00:00Z", // before archived_at
@@ -439,7 +439,7 @@ mod tests {
     fn walk_rejects_archived_key_after_window() {
         let manifest = fixture_manifest_with_customer();
         let err = walk_authority_chain(
-            "customer-hsm-mayo-clinic-v1",
+            "customer-hsm-example-org-v1",
             "0",
             AuthorityKind::CustomerAttested,
             "2026-05-15T12:00:00Z", // after archived_at = 2026-04-30
@@ -475,7 +475,7 @@ mod tests {
     fn walk_rejects_unknown_signing_key_version() {
         let manifest = fixture_manifest_with_customer();
         let err = walk_authority_chain(
-            "customer-hsm-mayo-clinic-v1",
+            "customer-hsm-example-org-v1",
             "999", // not in active or archived
             AuthorityKind::CustomerAttested,
             "2026-05-09T12:00:00Z",
@@ -583,7 +583,7 @@ mod tests {
         };
 
         let id_pool = [
-            "customer-hsm-mayo-clinic-v1",
+            "customer-hsm-example-org-v1",
             "customer-hsm-revoked-corp-v2",
             "customer-hsm-unknown-v9",
             "us-kms-nanorix-v1",

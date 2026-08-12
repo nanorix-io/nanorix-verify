@@ -3,9 +3,9 @@
 Go reference implementation of the Nanorix AuditProof verifier.
 
 This is the cross-implementation peer of the Rust verifier at
-the Rust verifier and (forthcoming) the TypeScript browser verifier.
+`tools/nanorix-verify/` and (forthcoming) the TypeScript browser verifier.
 Cross-implementation byte-equivalence is the binding contract: every fixture
-in the conformance corpus produces byte-identical
+in `tools/nanorix-verify/fixtures/corpus/` produces byte-identical
 verification output between the Rust verifier and this Go verifier. If a
 single language ecosystem suffers a supply-chain compromise or a runtime bug,
 the alternate-language verifier provides cross-validation.
@@ -60,7 +60,7 @@ auditproof-verifier-go path/to/auditproof.json
 auditproof-verifier-go --json path/to/auditproof.json
 
 # Walk an entire fixture corpus and report aggregate counts
-auditproof-verifier-go --fixture-dir the Rust verifierfixtures/corpus
+auditproof-verifier-go --fixture-dir tools/nanorix-verify/fixtures/corpus
 ```
 
 ### Verifier policy flags
@@ -82,7 +82,7 @@ auditproof-verifier-go --fixture-dir the Rust verifierfixtures/corpus
 ## Cross-implementation byte-equivalence
 
 This Go verifier produces byte-equivalent results to the Rust verifier
-(the Rust verifier) on the 100-fixture reference corpus shipped at
+(`tools/nanorix-verify/`) on the 100-fixture reference corpus shipped at
 commit `ba1d51a` (an earlier release verification-surface scaffolds). Specifically:
 
 - 100/100 fixtures yield identical verdict (valid/invalid)
@@ -115,8 +115,7 @@ fails the build if any fixture diverges.
 ## V1 implementation status
 
 The current implementation matches the Rust verifier's V1 ship: stages 1-4
-(schema, version, chain reproducibility, final-hash binding) plus the
-the customer-authority specification G7 policy-pin gate at stage 2. Stages 5-8 (canonical_hash recompute,
+(schema, version, chain reproducibility, final-hash binding) plus the customer-authority specification G7 policy-pin gate at stage 2. Stages 5-8 (canonical_hash recompute,
 signing-key resolution, Ed25519 signature verification, authority status)
 are scaffolded but not yet wired in V1 — both verifiers stop at stage 4 and
 return `valid: true` for any AuditProof whose chain integrity holds.
@@ -165,11 +164,11 @@ Apache-2.0. Copyright 2026 Nanorix Inc. See `LICENSE` at the repository root.
 
 ## References
 
-- Rust verifier: the Rust verifier
+- Rust verifier: `tools/nanorix-verify/`
 - Verification result types (Rust source of truth):
   `governance/verify-types/src/lib.rs`
-- Fixture corpus: the conformance corpus (100 fixtures, shipped
+- Fixture corpus: `tools/nanorix-verify/fixtures/corpus/` (100 fixtures, shipped
   from sealed an earlier release commit `ba1d51a`)
-- JSON Schema: the Rust verifierschema/audit_proof_v2_1.json`
+- JSON Schema: `tools/nanorix-verify/schema/audit_proof_v2_1.json`
 - ADRs: 006 I0 (Forever-Standard), 027 (trust-chain), 031 (BYO-HSM), 033
   (verifier release framing)

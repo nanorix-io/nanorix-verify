@@ -2,7 +2,7 @@
 the receipt pipeline (the per-record receipt specification + the receipt-batching specification) per-record receipt + parent-proof verification.
 
 Pure Python port of the reference chain implementation plus the verifier-side
-extension in the Rust verifiersrc/lib.rs`. Cross-impl byte-equivalent
+extension in `tools/nanorix-verify/src/lib.rs`. Cross-impl byte-equivalent
 with Rust + Go ports on the 110-fixture extended corpus.
 
 **Forever-Standard discipline (the Forever-Standard wire discipline):** every primitive here is part
@@ -11,7 +11,7 @@ canonical Rust output is a P0 finding.
 
 **Distinct from `nanorix._merkle`**: that module implements RFC 6962 binary
 Merkle (leaf prefix 0x00 + inner prefix 0x01) used by `Capsule.batch()`.
-the receipt pipeline uses the the per-record receipt specification canonical pair-hash form:
+the receipt pipeline uses the per-record receipt specification canonical pair-hash form:
 `SHA-512(left_hex_bytes || \\x00 || right_hex_bytes)` with NO domain prefix,
 because the children are themselves already SHA-512 outputs serialized as hex.
 
@@ -193,7 +193,7 @@ def compute_record_receipts_merkle_root(
     """Public the per-record receipt specification surface for the receipt Merkle root.
 
     Returns `None` for empty input (field skip-serializes in canonical JSON);
-    otherwise returns `sha512:{hex}` matching the the per-record receipt specification wire form.
+    otherwise returns `sha512:{hex}` matching the per-record receipt specification wire form.
     """
     if not receipts:
         return None

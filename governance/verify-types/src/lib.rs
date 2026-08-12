@@ -5,7 +5,7 @@
 //!
 //! 1. `services/api` — at `POST /v1/verify` (server-side typed-failure
 //!    response per the specification)
-//! 2. `tools/nanorix-verify` — offline auditor CLI (per the verifier work)
+//! 2. `tools/nanorix-verify` — offline auditor CLI (per the verifier specification)
 //!
 //! Before trust-chain anchoring (this crate), each side maintained its own
 //! definition with a "must stay in lockstep" comment — easy to drift,
@@ -294,7 +294,7 @@ mod tests {
             (
                 FailureReason::AuthorityIdMismatch {
                     claimed_authority_id: None,
-                    expected_authority_id: "customer-hsm-mayo-clinic-v1".into(),
+                    expected_authority_id: "customer-hsm-example-org-v1".into(),
                     reason:
                         AuthorityIdMismatchReason::VerifierPolicyDemandsCustomerHsmAuditProofHasNone,
                 },
@@ -303,7 +303,7 @@ mod tests {
             (
                 FailureReason::AuthorityIdMismatch {
                     claimed_authority_id: Some("customer-hsm-other-v1".into()),
-                    expected_authority_id: "customer-hsm-mayo-clinic-v1".into(),
+                    expected_authority_id: "customer-hsm-example-org-v1".into(),
                     reason: AuthorityIdMismatchReason::VerifierPolicyAuthorityIdMismatch,
                 },
                 "authority_id_mismatch",
@@ -395,13 +395,13 @@ mod tests {
             },
             FailureReason::AuthorityIdMismatch {
                 claimed_authority_id: None,
-                expected_authority_id: "customer-hsm-mayo-clinic-v1".into(),
+                expected_authority_id: "customer-hsm-example-org-v1".into(),
                 reason:
                     AuthorityIdMismatchReason::VerifierPolicyDemandsCustomerHsmAuditProofHasNone,
             },
             FailureReason::AuthorityIdMismatch {
                 claimed_authority_id: Some("customer-hsm-other-v1".into()),
-                expected_authority_id: "customer-hsm-mayo-clinic-v1".into(),
+                expected_authority_id: "customer-hsm-example-org-v1".into(),
                 reason: AuthorityIdMismatchReason::VerifierPolicyAuthorityIdMismatch,
             },
             FailureReason::Reserved,

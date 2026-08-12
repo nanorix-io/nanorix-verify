@@ -1,6 +1,6 @@
 // Portable Pubkey Bundle (.ppb.json) — Wave B Item 8 surface, Go port.
 //
-// Mirrors the Rust verifiersrc/pubkey_bundle.rs` byte-for-byte.
+// Mirrors `tools/nanorix-verify/src/pubkey_bundle.rs` byte-for-byte.
 // Cross-impl byte-equivalence with Rust/Python/TypeScript bundle JSON on the
 // canonical reference vectors.
 //

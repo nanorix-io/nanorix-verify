@@ -4,7 +4,7 @@
 //! auditor receives a Nanorix AuditProof and needs to confirm authenticity
 //! without any Nanorix SaaS dependency.
 //!
-//! Per Nanorix the verifier work :
+//! Per the verifier specification :
 //! ```text
 //! $ brew install nanorix-verify
 //! $ nanorix-verify auditproof.json
@@ -49,16 +49,16 @@ struct Cli {
     json: bool,
 
     /// Refuse AuditProofs whose attestation indicates `diagnostic_mode: true`
-    /// (per Nanorix the specification verifier policy).
+    /// (per the verifier specification verifier policy).
     #[arg(long)]
     reject_diagnostic: bool,
 
     /// Required region (e.g., `europe-west1`). When set, AuditProofs whose
-    /// region disagrees fail with `RegionMismatch` (per Nanorix the specification G1).
+    /// region disagrees fail with `RegionMismatch` (per the verifier specification).
     #[arg(long)]
     required_region: Option<String>,
 
-    /// Required signing-authority id (e.g., `customer-hsm-mayo-clinic-v1`).
+    /// Required signing-authority id (e.g., `customer-hsm-example-org-v1`).
     /// When set, AuditProofs whose `signing_authority.authority_id` is
     /// absent (Nanorix-default signing path) OR differs from this value
     /// fail with `AuthorityIdMismatch` (per the customer-authority specification G7 / VP Security
@@ -229,7 +229,7 @@ enum PubkeyBundleOp {
         /// Authority key identifier of the publisher (nrx-bundle-publisher-*).
         #[arg(long)]
         signer_key_id: String,
-        /// Opaque issuer organization tag (e.g., "vendor:banjo-health").
+        /// Opaque issuer organization tag (e.g., "vendor:example-health").
         #[arg(long)]
         issuer_org: String,
     },
@@ -1323,7 +1323,7 @@ fn pubkey_bundle_verify(
 }
 
 fn print_trust_chain() -> Result<()> {
-    println!("{}", "Trust-chain manifest (the verifier work + the verifier work ext):".bold());
+    println!("{}", "Trust-chain manifest (the verifier specification):".bold());
     println!();
     println!(
         "  {} Source: pass a local manifest via --trust-chain (offline / air-gap). The live https://nanorix.io/.well-known/trust-chain.json fetch is provisioned at first-client onboarding.",
@@ -1334,7 +1334,7 @@ fn print_trust_chain() -> Result<()> {
         "•".dimmed()
     );
     println!(
-        "  {} {} discipline: archived_versions are forever-retained per the verifier work ext (G2 long-term verifiability). Healthcare retention is 7-30 years; AuditProof signed under version N must verify after we rotate to version N+K. Archived keys are NEVER removed.",
+        "  {} {} discipline: archived_versions are forever-retained per the verifier specification (G2 long-term verifiability). Healthcare retention is 7-30 years; AuditProof signed under version N must verify after we rotate to version N+K. Archived keys are NEVER removed.",
         "•".dimmed(),
         "Archive-forever".bold()
     );

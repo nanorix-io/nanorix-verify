@@ -1,7 +1,7 @@
 """
 Portable Pubkey Bundle (.ppb.json) — Wave B Item 8 surface, Python port.
 
-Pure Python port of `the Rust verifiersrc/pubkey_bundle.rs``. Cross-impl
+Pure Python port of ``tools/nanorix-verify/src/pubkey_bundle.rs``. Cross-impl
 byte-equivalence with Rust/Go/TypeScript on the canonical reference vectors.
 
 Per feedback_open_verifier_bounded_manifest.md: the bundle algorithm is open

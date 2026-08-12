@@ -56,8 +56,28 @@ Every behavioural change needs a test that fails without it. A guard nobody has
 watched fire isn't a guard.
 
 Cross-implementation changes land together. If a fix changes a verdict, all four
-implementations change in the same pull request. If they don't, the corpus will
-catch it and CI will fail, which is the corpus doing its job.
+implementations change in the same pull request. Run the corpus sweep against
+each one you touched and say in the pull request that you did. There is no CI in
+this repository yet, so right now that check is yours and a reviewer's rather
+than a machine's.
+
+## Language rules
+
+These apply to code, comments, documentation, commit messages, issues and pull
+requests.
+
+The words **COMPLIANT**, **SATISFIED**, **PASSED** and **MEETS** are not used to
+say that a regulation, control framework or certification requirement has been
+met. An AuditProof records what happened structurally. Whether that discharges
+an obligation is an adjudication, and it belongs to an auditor or a regulator,
+never to the format or to whoever issued the document. Use `applies_to`,
+`references` or `related_to` instead. A field or output that maps to a control
+framework is named `regulatory_context`, never `compliance_report`, and carries
+both a disclaimer and the `framework_version` it was written against.
+
+The public names for the two artifacts are **AuditProof** and **AuditRecord**.
+Internal struct names may differ in the source; documentation and anything a
+reader sees uses the public names.
 
 Don't add network calls to a verifier's default path. Offline verification is
 part of the design, not an optimisation.

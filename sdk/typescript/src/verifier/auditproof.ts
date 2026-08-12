@@ -1,6 +1,6 @@
 /**
  * Offline AuditProof verification core — byte-equivalent with the Rust
- * reference verifier at the Rust verifiersrc/`.
+ * reference verifier at `tools/nanorix-verify/src/`.
  *
  * This module is the single TypeScript implementation of the 8-stage pipeline.
  * `./index.ts` (legacy `verify()`) and `../debug.ts` (`verifyAuditProof()`)
@@ -8,7 +8,7 @@
  * walks is how the SDK came to ship one surface that rejected every genuine
  * proof and another that accepted forged signatures.
  *
- * Held to the conformance corpus (100 fixtures, committed
+ * Held to `tools/nanorix-verify/fixtures/corpus/` (100 fixtures, committed
  * `.expected.json` verdicts) by `tests/verifier_corpus.test.ts`.
  *
  * Two facts the wire format does not make obvious, and that every

@@ -17,7 +17,7 @@ Usage:
 
 `verify()` and `nanorix.debug.verify_auditproof()` are two surfaces over one
 implementation (`_ladder.py`), held to the 100-document reference corpus at
-the conformance corpus — the same contract as the Rust
+`tools/nanorix-verify/fixtures/corpus/` — the same contract as the Rust
 verifier. `verify()` returns a flat result with an `.ok` that requires a verified
 signature; `verify_auditproof()` returns the staged wire verdict
 (`valid` / `failure_reason` / `stage_reached`) and takes a `VerifierPolicy`.
@@ -33,7 +33,7 @@ The stages:
    `chain_hash`.
 
 3. **Ed25519 attestation** — verify `signature` over the message that version
-   signs: `final_hash` for v1.0, `document_hash` for v2.0, and the the specification
+   signs: `final_hash` for v1.0, `document_hash` for v2.0, and the specification
    Part-3 canonical-view hash for v2.1 `nanorix_only`, which is what
    production emits.
 

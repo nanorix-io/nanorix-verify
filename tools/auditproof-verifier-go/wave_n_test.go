@@ -1,6 +1,6 @@
 // the receipt pipeline (the per-record receipt specification + the receipt-batching specification) test suite — cross-impl byte-equivalence with the
 // canonical Rust verifier at the reference chain implementation and
-// the Rust verifiersrc/lib.rs`.
+// `tools/nanorix-verify/src/lib.rs`.
 //
 // **Forever-Standard discipline (the Forever-Standard wire discipline):** every test here pins a
 // cryptographic-attestation contract. Any divergence from the Rust reference
@@ -748,7 +748,7 @@ func TestVerifyRecordReceiptModeBRejectsBadSignature(t *testing.T) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // buildWaveNProof creates a receipt pipeline AuditProof with N receipts + M parent
-// links, mirroring the Rust verifiertests/wave_n_fixtures.rs::
+// links, mirroring `tools/nanorix-verify/tests/wave_n_fixtures.rs::
 // synthesize_wave_n_proof`.
 func buildWaveNProof(nReceipts int, parentSeeds [][]string) map[string]interface{} {
 	subsystems := []string{

@@ -2,7 +2,7 @@
  * the receipt pipeline (the per-record receipt specification + the receipt-batching specification) per-record receipt + parent-proof verification.
  *
  * Pure TypeScript port of the reference chain implementation plus the verifier-side
- * extension in the Rust verifiersrc/lib.rs`. Cross-impl byte-equivalent
+ * extension in `tools/nanorix-verify/src/lib.rs`. Cross-impl byte-equivalent
  * with Rust + Go + Python ports on the 110-fixture extended corpus.
  *
  * **Forever-Standard discipline (the Forever-Standard wire discipline):** every primitive here is part

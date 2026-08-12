@@ -669,7 +669,7 @@ fn cli_walks_the_full_chain_of_a_captured_api_document() {
     // The pre-the chain-timestamp recovery rule failure mode, named exactly so a regression is unambiguous.
     assert!(
         !stdout.contains("step_hash_mismatch"),
-        "captured document failed chain recomputation — the the chain-timestamp recovery rule regression is back.\n\
+        "captured document failed chain recomputation — the chain-timestamp recovery rule regression is back.\n\
          stdout: {stdout}\nstderr: {stderr}"
     );
     assert!(

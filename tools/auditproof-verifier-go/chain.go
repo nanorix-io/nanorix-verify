@@ -1,6 +1,6 @@
 // 8-step SHA-512 hash chain reproduction. Mirrors the Rust function
 // the chain specification::assemble_cdp` algorithm and the verifier-side
-// the Rust verifiersrc/lib.rs::compute_step_hash` reproduction.
+// `tools/nanorix-verify/src/lib.rs::compute_step_hash` reproduction.
 //
 // Forever-Standard discipline (the Forever-Standard wire discipline): the chain shape, the genesis hash,
 // the per-subsystem method strings, the action constant ("destroy"), and the
@@ -28,7 +28,7 @@ import (
 )
 
 // NanorixGenesisHash is SHA-512 of the empty string. Forever-stable cryptographic
-// anchor; mirrors the Rust verifiersrc/lib.rs::NANORIX_GENESIS_HASH`.
+// anchor; mirrors `tools/nanorix-verify/src/lib.rs::NANORIX_GENESIS_HASH`.
 const NanorixGenesisHash = "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e"
 
 // NanorixChainSteps is the canonical chain step count (forever 8). Any

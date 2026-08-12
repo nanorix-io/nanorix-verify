@@ -1,7 +1,7 @@
 """
 Canonical-view recompute + Ed25519 signature verification.
 
-Python mirror of the Rust verifiersrc/canonical_recompute.rs`, which is
+Python mirror of `tools/nanorix-verify/src/canonical_recompute.rs`, which is
 the reference implementation. Byte-identity with the signer is locked by
 `test_canonical_recompute_matches_server_golden` — the same fixed input the
 server's `cdp_document.rs::golden_canonical_hash` test pins.
@@ -9,7 +9,7 @@ server's `cdp_document.rs::golden_canonical_hash` test pins.
 ## The signed message is version-dependent
 
 A v2.1 `nanorix_only` AuditProof is **not** signed over `final_hash` — that is
-the v1.0 message. It is signed over the the specification Part-3 canonical-view hash,
+the v1.0 message. It is signed over the specification Part-3 canonical-view hash,
 `hex(sha512(jcs(canonical_view)))`.
 
 | `cdp_version` | Signed message |
@@ -129,7 +129,7 @@ def _insert_if_present(view: Dict[str, Any], key: str, proof: Mapping[str, Any])
 
 
 def recompute_canonical_hash(proof: Mapping[str, Any]) -> str:
-    """Rebuild the the specification Part-3 canonical view and return its JCS SHA-512 hex.
+    """Rebuild the specification Part-3 canonical view and return its JCS SHA-512 hex.
 
     Byte-identical to the server's `FullCdp::canonical_hash()`. The AuditProof
     JSON already carries every value in its exact serialized shape, so only the

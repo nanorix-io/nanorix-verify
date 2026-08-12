@@ -1,6 +1,6 @@
 // Portable Receipt Bundle (.prb.json) — Wave B Item 7 surface, Go port.
 //
-// Mirrors the Rust verifiersrc/bundle.rs` byte-for-byte. Cross-impl
+// Mirrors `tools/nanorix-verify/src/bundle.rs` byte-for-byte. Cross-impl
 // byte-equivalence with Rust/Python/TypeScript bundle JSON on the canonical
 // reference vectors.
 //
@@ -28,7 +28,7 @@ import (
 // PortableReceiptBundleDisclaimer — factual language only. Vocabulary discipline
 // per regulatory_context rules: forbidden words include COMPLIANT, SATISFIED,
 // PASSED, MEETS.
-const PortableReceiptBundleDisclaimer = "This Portable Receipt Bundle carries cryptographic evidence of one record's structural execution. Verifying party uses the audit_proof_anchors to verify the receipt's merkle inclusion + outer Ed25519 signature. Control framework references are NOT included in this bundle; consult the the specification mapping artifact at schema.nanorix.com/control-map/{framework_version}.json to apply current control mappings at consumption time."
+const PortableReceiptBundleDisclaimer = "This Portable Receipt Bundle carries cryptographic evidence of one record's structural execution. Verifying party uses the audit_proof_anchors to verify the receipt's merkle inclusion + outer Ed25519 signature. Control framework references are NOT included in this bundle; consult the specification mapping artifact at schema.nanorix.com/control-map/{framework_version}.json to apply current control mappings at consumption time."
 
 // signature_target values — which anchor the outer Ed25519 signature covers.
 // An absent signature_target means SignatureTargetStep8ChainHash (legacy
@@ -405,7 +405,7 @@ func BundleVerdictText(bundle *PortableReceiptBundle) string {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Local hash primitives (mirror the Rust verifiersrc/bundle.rs).
+// Local hash primitives (mirror tools/nanorix-verify/src/bundle.rs).
 // ─────────────────────────────────────────────────────────────────────────────
 
 // computeRecordChainHashLocal mirrors `ComputeRecordChainHash` (wave_n.go) but

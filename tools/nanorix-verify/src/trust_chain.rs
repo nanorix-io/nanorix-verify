@@ -1,6 +1,6 @@
 //! Trust-chain manifest — authority public keys with archive-forever discipline.
 //!
-//! Per Nanorix the verifier work ext (G2 long-term verifiability, addendum 2026-05-06):
+//! Per the verifier specification (G2 long-term verifiability, addendum 2026-05-06):
 //! "An AuditProof signed today with signing_key_version 7 must be verifiable
 //! in 2032 even after we've rotated to version 12. Healthcare retention is
 //! 7-30 years. Without archive-forever discipline encoded now, we ship a

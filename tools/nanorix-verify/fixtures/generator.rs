@@ -68,7 +68,7 @@
 //! cargo run --bin nanorix-verify-fixtures-gen -- <dir>  # write to <dir> instead
 //! ```
 //!
-//! Generated files land at the conformance corpus. The
+//! Generated files land at `tools/nanorix-verify/fixtures/corpus/`. The
 //! generator is idempotent: running it twice produces byte-identical output
 //! (deterministic timestamp, deterministic capsule_id sequence, deterministic
 //! key derivation from a fixed seed). `tests/corpus_sweep.rs` regenerates into
@@ -962,7 +962,7 @@ fn write_index(root: &Path, total: usize) {
     let index = json!({
         "schema_version": "2",
         "total_fixtures": total,
-        "generator": "the Rust verifierfixtures/generator.rs",
+        "generator": "tools/nanorix-verify/fixtures/generator.rs",
         "expected_verdict_schema": {
             "valid": "bool — the verifier's accept/reject decision",
             "failure_reason": "null on success; otherwise the FailureReason wire object, tag key `type`",
@@ -970,7 +970,7 @@ fn write_index(root: &Path, total: usize) {
             "policy": "optional — VerifierPolicy pins REQUIRED to reach this verdict; absent means defaults",
             "note": "optional — prose for verdicts that are not the obvious guess from the category name",
         },
-        "signed_message": "v1.0 signs final_hash; v2.0 signs document_hash; v2.1 nanorix_only signs the the specification Part-3 canonical-view hash (hex(sha512(jcs(view))))",
+        "signed_message": "v1.0 signs final_hash; v2.0 signs document_hash; v2.1 nanorix_only signs the specification Part-3 canonical-view hash (hex(sha512(jcs(view))))",
         "anchor_timestamp": FIXTURE_TIMESTAMP,
         "anchor_signing_seed_sha256": {
             "_note": "Public anchor for cross-impl reproducibility. The seed itself is constant in source.",

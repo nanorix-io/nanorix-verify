@@ -3,7 +3,7 @@ Core verification logic — the convenience wrapper over the stage ladder.
 
 The verification itself lives in `nanorix.verifier._ladder`, the single Python
 implementation, held to the 100-document reference corpus at
-the conformance corpus. This module adds the ergonomic
+`tools/nanorix-verify/fixtures/corpus/`. This module adds the ergonomic
 `verify(proof)` surface: flexible input (dict / JSON string / path / bytes) and
 a flat result object.
 
@@ -24,7 +24,7 @@ the action segment is always the literal `"destroy"`.
 ## The signed message is version-dependent
 
 v1.0 signs `final_hash`. v2.0 signs `document_hash`. v2.1 `nanorix_only` — what
-production emits — signs the the specification Part-3 canonical-view hash. Verifying a
+production emits — signs the specification Part-3 canonical-view hash. Verifying a
 v2.1 proof against `final_hash` never validates. See `_canonical.py`.
 
 The signature covers the ASCII hex characters of that hash (128 bytes), not

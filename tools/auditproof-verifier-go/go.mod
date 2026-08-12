@@ -1,6 +1,6 @@
 // Module auditproof-verifier-go — Go reference implementation of the Nanorix
 // AuditProof verifier, providing cross-implementation byte-equivalence with the
-// Rust verifier (the Rust verifier) on the 100-fixture corpus shipped at
+// Rust verifier (`tools/nanorix-verify/`) on the 100-fixture corpus shipped at
 // the published corpus (an earlier release verification-surface scaffolds).
 //
 // Discipline anchors:
@@ -12,7 +12,7 @@
 // - the specification: verifier release framing.
 //
 // Cross-implementation byte-equivalence is the binding contract: every fixture
-// in the conformance corpus must produce a byte-identical
+// in `tools/nanorix-verify/fixtures/corpus/` must produce a byte-identical
 // `AuditProofVerificationResult` between Rust verifier and Go verifier. If a
 // single fixture diverges, that divergence is a P0 finding.
 //

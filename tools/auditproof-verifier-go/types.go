@@ -34,7 +34,7 @@ import (
 	"fmt"
 )
 
-// AuditProofVerificationResult mirrors the Rust verifiersrc/lib.rs::VerificationResult`.
+// AuditProofVerificationResult mirrors `tools/nanorix-verify/src/lib.rs::VerificationResult`.
 //
 // Wire form is JSON; field order is irrelevant in JSON but the field set is
 // part of the Forever-Standard contract.
@@ -52,7 +52,7 @@ type AuditProofVerificationResult struct {
 	Metadata VerificationMetadata `json:"metadata"`
 }
 
-// VerificationMetadata mirrors the Rust verifiersrc/lib.rs::VerificationMetadata`.
+// VerificationMetadata mirrors `tools/nanorix-verify/src/lib.rs::VerificationMetadata`.
 type VerificationMetadata struct {
 	CdpVersion         *string `json:"cdp_version"`
 	CapsuleID          *string `json:"capsule_id"`
