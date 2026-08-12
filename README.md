@@ -89,11 +89,24 @@ corpus is generated rather than written by hand, and the generator is in the
 repository, so you can regenerate the expected verdicts and diff them instead of
 taking our word for it.
 
-Two sweeps run against the corpus and are in this repository, one for Rust and
-one for Go. The Python and TypeScript verifiers are ports of the Rust
-implementation written to be byte-equivalent to it, but their corpus runners
-aren't here yet, so treat their conformance as asserted rather than
-demonstrated. Adding either runner is the most useful contribution available.
+All four implementations have a corpus runner in this repository, and all four
+produce the expected verdict on every case:
+
+```
+cargo test -p nanorix-verify --test corpus_sweep          # Rust
+go test ./... ./tools/auditproof-verifier-go              # Go
+python -m nanorix.verifier.corpus_sweep <corpus-dir>      # Python
+node --experimental-strip-types --import ./ts-resolve-register.mjs \
+     corpus-sweep.ts <corpus-dir>                         # TypeScript
+```
+
+Worth being precise about what that proves. Rust and Go were written against
+the specification independently, which is the evidence that matters: two
+implementations reaching identical verdicts on 100 cases, including every
+failure and tamper case, is what shows the document is unambiguous enough to
+build from twice. Python and TypeScript are ports of the Rust implementation,
+so their agreement confirms the ports are faithful rather than independently
+confirming the specification.
 
 ## Specification
 

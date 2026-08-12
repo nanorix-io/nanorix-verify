@@ -24,8 +24,12 @@ abstract: >-
   TypeScript, along with a shared failure taxonomy and a conformance corpus of
   100 cases in nine categories. The corpus is produced by a generator that is
   included, so its expected verdicts can be regenerated and compared rather than
-  taken on trust. Corpus test suites for Rust and Go are present; runners for the
-  Python and TypeScript ports are not yet included.
+  taken on trust. All four implementations have a corpus runner in the
+  repository and all four produce the expected verdict on every case. Rust and Go
+  were written against the specification independently, which is the evidence
+  that the document can be built from twice; Python and TypeScript are ports of
+  the Rust implementation, so their agreement confirms the ports rather than the
+  specification.
 
   Three properties hold by construction. None of the implementations has a
   network dependency, so offline verification follows from the code rather than
