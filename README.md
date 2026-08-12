@@ -1,5 +1,7 @@
 # Signed Containment Evidence — specification and reference verifiers
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21901019.svg)](https://doi.org/10.5281/zenodo.21901019)
+
 An AuditProof is a document saying that a compute workload ran in a contained
 environment and was then destroyed. It carries enough evidence that someone who
 wasn't there can check the claim.
