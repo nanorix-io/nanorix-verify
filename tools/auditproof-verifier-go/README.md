@@ -3,7 +3,8 @@
 Go reference implementation of the Nanorix AuditProof verifier.
 
 This is the cross-implementation peer of the Rust verifier at
-`tools/nanorix-verify/` and (forthcoming) the TypeScript browser verifier.
+`tools/nanorix-verify/` and of the TypeScript verifier at
+`sdk/typescript/src/verifier/`.
 Cross-implementation byte-equivalence is the binding contract: every fixture
 in `tools/nanorix-verify/fixtures/corpus/` produces byte-identical
 verification output between the Rust verifier and this Go verifier. If a
@@ -78,6 +79,7 @@ auditproof-verifier-go --fixture-dir tools/nanorix-verify/fixtures/corpus
 | 0 | Verified (or all fixtures passed in `--fixture-dir` mode) |
 | 1 | Verification failed (or any fixture failure) |
 | 2 | Malformed input (file unreadable, not valid JSON, CLI usage error) |
+| 3 | The chain verified, but no signature on the document could be checked. Integrity is not established. |
 
 ## Cross-implementation byte-equivalence
 
@@ -112,16 +114,20 @@ go test -v -run TestFixtureCorpusByteEquivalentWithRust
 The test walks all 100 fixtures, runs each through both verifiers, and
 fails the build if any fixture diverges.
 
-## V1 implementation status
+## Implementation status
 
-The current implementation matches the Rust verifier's V1 ship: stages 1-4
-(schema, version, chain reproducibility, final-hash binding) plus the customer-authority specification G7 policy-pin gate at stage 2. Stages 5-8 (canonical_hash recompute,
-signing-key resolution, Ed25519 signature verification, authority status)
-are scaffolded but not yet wired in V1 — both verifiers stop at stage 4 and
-return `valid: true` for any AuditProof whose chain integrity holds.
+This build implements stages 1-7: schema, version, chain reproducibility,
+final-hash binding, the policy-pin gate at stage 2, canonical-hash recompute,
+and Ed25519 signature verification against the key embedded in the document.
+Stage 7 is therefore the terminal success stage here.
 
-When the Rust verifier extends to stages 5-8, this Go implementation must
-update in lockstep. The cross-impl byte-equivalence test is the structural
+Stage 8, anchoring that key to a trust-chain manifest, is not implemented in
+this build. A document that requires stage 8 needs the Rust verifier. Corpus
+fixtures are verified without a manifest, which is the same path the Rust
+verifier takes when none is supplied, so the two agree on the corpus.
+
+When either verifier changes a verdict, the other must change in lockstep. The
+cross-impl byte-equivalence test is the structural
 backstop that catches drift.
 
 ## Testing
@@ -149,9 +155,9 @@ The test suite includes:
 ## Disclaimer
 
 This verifier reads an AuditProof JSON file off disk and runs offline
-verification. It does NOT contact Nanorix infrastructure. Nothing leaves the
-local machine. The trust-chain manifest (signing-authority public keys + key
-revocation status) ships with the binary — no network fetch.
+verification. It does not contact Nanorix infrastructure, and nothing leaves
+the local machine. No trust-chain manifest ships with this binary and none is
+fetched; stage 8 anchoring is not implemented here.
 
 This verifier is a reference implementation for cross-implementation
 byte-equivalence verification. It is a peer of the Rust verifier and is not
@@ -170,5 +176,4 @@ Apache-2.0. Copyright 2026 Nanorix Inc. See `LICENSE` at the repository root.
 - Fixture corpus: `tools/nanorix-verify/fixtures/corpus/` (100 fixtures, shipped
   from sealed an earlier release commit `ba1d51a`)
 - JSON Schema: `tools/nanorix-verify/schema/audit_proof_v2_1.json`
-- ADRs: 006 I0 (Forever-Standard), 027 (trust-chain), 031 (BYO-HSM), 033
   (verifier release framing)

@@ -40,6 +40,7 @@ authors:
   - family-names: Arra
     given-names: Chaitanya Kumar
     affiliation: Nanorix Inc.
+    orcid: "https://orcid.org/0009-0000-9986-8683"
 repository-code: "https://github.com/nanorix-io/nanorix-verify"
 url: "https://nanorix.io"
 license: Apache-2.0

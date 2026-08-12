@@ -15,7 +15,7 @@
   "$defs": {
     "VerificationCdp": {
       "type": "object",
-      "title": "VerificationCdp — shareable AuditProof",
+      "title": "AuditProof — the shareable projection",
       "description": "Public-facing AuditProof projection. Contains zero operational details — no filenames, no commands, no capsulefile metadata. Auditor moment-of-truth artifact. AuditProof = VerificationCdp; AuditRecord = FullCdp (per the published brand mapping external-brand split).",
       "additionalProperties": false,
       "required": [
@@ -100,7 +100,7 @@
     },
     "FullCdp": {
       "type": "object",
-      "title": "FullCdp — operational AuditRecord",
+      "title": "AuditRecord — the full operational document",
       "description": "Customer-only operational record. Carries activity trail, reserved attestation slots, destruction outcome, residency, and 8-step chain. Internal struct name `FullCdp`; external brand `AuditRecord` per the published brand mapping naming split.",
       "additionalProperties": false,
       "required": [

@@ -45,7 +45,7 @@ use thiserror::Error;
 /// The equality `sha512(work_product) == record_output_hash` is a
 /// Nanorix-**attested** fact only when the hash was computed by Nanorix over the
 /// in-capsule bytes ([`CapsuleComputed`](OutputHashOrigin::CapsuleComputed) —
-/// the EEE batch/exec path). On the public records API path the hash is
+/// the in-capsule batch/exec path). On the public records API path the hash is
 /// **customer-declared** ([`CustomerDeclared`](OutputHashOrigin::CustomerDeclared)):
 /// Nanorix never sees the bytes, so the binding is a customer self-assertion the
 /// verifier MUST NOT treat as Nanorix-attested. Closed enum; additive only.
@@ -53,7 +53,7 @@ use thiserror::Error;
 #[serde(rename_all = "snake_case")]
 pub enum OutputHashOrigin {
     /// `record_output_hash` was computed by Nanorix as `sha512(raw bytes)` over
-    /// the in-capsule work-product (EEE batch/exec). The binding is a
+    /// the in-capsule work-product (in-capsule batch/exec). The binding is a
     /// Nanorix-attested fact.
     CapsuleComputed,
     /// `record_output_hash` was supplied by the customer via the records API;

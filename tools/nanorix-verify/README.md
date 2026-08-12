@@ -24,7 +24,9 @@ Or clone and `cargo build --release -p nanorix-verify`; the binary lands at
 
 ### Prebuilt binaries
 
-Tagged releases carry builds for `x86_64-unknown-linux-gnu`,
+No tagged release carries binaries yet, and the SBOM and signing steps below are
+planned rather than shipped. When a release does carry them, it will have builds
+for `x86_64-unknown-linux-gnu`,
 `aarch64-unknown-linux-gnu`, `x86_64-apple-darwin`, `aarch64-apple-darwin`,
 `x86_64-pc-windows-msvc`, and a `universal-apple-darwin` lipo-merged Mac binary
 that runs on both Intel and Apple Silicon — alongside a CycloneDX SBOM
@@ -77,22 +79,29 @@ $ nanorix-verify print-trust-chain
 
 ## Exit codes
 
-- `0` — verified
-- `1` — verification failed (see stderr / `--json` for `failure_reason`)
-- `2` — usage error
+- `0` — the signature was checked and it verified
+- `1` — verification failed (see stderr, or `--json` for `failure_reason`)
+- `2` — usage or I/O error; nothing was verified
+- `3` — the chain verified, but this build could check no signature on the
+  document, so integrity is not established. Do not accept this in an
+  automated gate.
 
-## Verification stages (per the AuditProof specification)
+## Verification stages
 
 1. Schema validation — required fields present, types correct
 2. cdp_version recognized (`1.0` / `2.0` / `2.1`)
-3. Chain reproducibility — recompute SHA-512 chain from genesis
-4. Final hash binding — `final_hash` matches last step's `chain_hash`
-5. Canonical hash binding — `canonical_hash` recompute matches *(V1: stub; ships in trust-chain anchoring with shared crate extraction)*
-6. Signing key resolution — `signing_key_version` → public key from trust chain *(V1: stub)*
-7. Ed25519 signature verification *(V1: stub)*
-8. Authority status — active / revoked / fingerprint stale *(V1: stub)*
+3. Chain reproducibility — recompute the SHA-512 chain from genesis
+4. Final hash binding — `final_hash` matches the last step's `chain_hash`
+5. Canonical hash binding — recomputed `canonical_hash` matches
+6. Signing key resolution — `signing_key_version` to a public key
+7. Ed25519 signature verification against the embedded key
+8. Authority status — the key is anchored to a trust-chain manifest, and the
+   authority is active rather than revoked or stale
 
-V1 (this build) verifies stages 1-4 (schema + chain integrity + final-hash binding). V2 (trust-chain anchoring) wires the shared verification crate from `services/api` for stages 5-8.
+Stages 1-7 run on every document and establish integrity. Stage 8 establishes
+authenticity and runs only when a manifest is supplied with `--trust-chain`
+and pinned with `--identity-fingerprint`; without one, stage 7 is the terminal
+success stage.
 
 ## Trust model
 
