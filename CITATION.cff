@@ -6,16 +6,30 @@ title: >-
   Signed Containment Evidence: specification and reference verifiers
 abstract: >-
   A specification and four byte-equivalent reference implementations for
-  verifying that a compute workload was contained and destroyed, offline and
-  without contacting the party that produced the evidence. Each AuditProof
-  carries an eight-step SHA-512 hash chain over the destruction sequence and an
-  Ed25519 attestation over the canonical form of the document. A verifier
-  separates two questions that are usually conflated: whether the document is
-  internally consistent and unmodified (integrity, checkable from the document
-  alone), and whether the key that signed it belongs to the party it names
-  (authenticity, which requires an external trust anchor). Implementations in
-  Rust, Go, Python and TypeScript agree byte-for-byte across a 100-case
-  conformance corpus.
+  independently verifying that a compute workload was contained and destroyed —
+  offline, and without contacting the party that produced the evidence. Each
+  AuditProof carries an eight-step SHA-512 hash chain over the destruction
+  sequence and an Ed25519 attestation over the canonical form of the document,
+  serialised under RFC 8785.
+
+  A verifier separates two questions that are usually conflated: whether the
+  document is internally consistent and unmodified (integrity, checkable from
+  the document alone), and whether the key that signed it belongs to the party
+  it names (authenticity, which requires an external trust anchor). A document
+  can have perfect integrity and no authenticity, and the exit codes keep those
+  answers apart. Implementations in Rust, Go, Python and TypeScript agree
+  byte-for-byte across a 100-case conformance corpus, which is generated from a
+  committed generator so its expected verdicts can be reproduced rather than
+  trusted.
+
+  Three properties are requirements rather than intentions. No implementation
+  carries a network dependency, so offline verification is a property of the
+  code and not a promise about it. A verifier that does not implement a
+  document's declared signing mode must reject the document rather than report a
+  partial result, closing a downgrade an attacker would otherwise select. And
+  the wire form — the eight steps, their order, the hash and signature
+  algorithms, and the canonical view — does not change, because evidence
+  retained for years has to stay checkable by the algorithm that produced it.
 type: software
 authors:
   - family-names: Arra
