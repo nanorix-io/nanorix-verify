@@ -89,11 +89,24 @@ failing verifier — that converts a defect into a committed expectation, which
 is precisely how the signed-message bug survived. The byte-identity test exists
 to make that mistake fail loudly.
 
-## Known cross-implementation divergence
+## What is checked against this corpus, and by what
 
-The corpus is the contract; the implementations do not all meet it yet. As of
-the last sweep the Rust verifier agrees with all 100 fixtures. The Go verifier
-(`tools/auditproof-verifier-go`) stops at stage 4 and performs no signature
-verification at all, so it accepts tampered proofs the corpus requires to be
-rejected. Treat any implementation's disagreement with this corpus as a defect
-in that implementation.
+The corpus is the contract. Treat any implementation's disagreement with it as a
+defect in that implementation, not in the corpus.
+
+Two automated sweeps run against it and live in this repository:
+`tools/nanorix-verify/tests/corpus_sweep.rs` and
+`tools/auditproof-verifier-go/corpus_sweep_test.go`. Both compare `valid`,
+`stage_reached` and `failure_reason` against each fixture's committed verdict.
+
+The Python and TypeScript verifiers are ports of the Rust implementation and are
+written to be byte-equivalent to it, but their corpus runners are not yet in
+this repository. Until they are, treat their conformance as asserted rather than
+demonstrated. Adding either runner is a welcome contribution and is the most
+useful one available.
+
+One difference worth stating so it is not mistaken for a divergence: the Go
+build implements stages 1-7 and does not implement stage 8, trust-chain
+anchoring. Corpus fixtures are verified without a manifest, which is the same
+path the Rust verifier takes when none is supplied, so both agree here. A
+document requiring stage 8 needs the Rust verifier.

@@ -5,7 +5,7 @@ environment and was then destroyed. It carries enough evidence that someone who
 wasn't there can check the claim.
 
 This repository holds the specification and four verifiers that implement it.
-Everything here is Apache-2.0. The four agree with each other byte for byte.
+Everything here is Apache-2.0.
 
 None of them contacts Nanorix, or anything else. A verifier reads a file from
 disk and answers using what's in the file, plus one published trust anchor if
@@ -88,6 +88,12 @@ An implementation conforms if it produces the expected verdict on all 100. The
 corpus is generated rather than written by hand, and the generator is in the
 repository, so you can regenerate the expected verdicts and diff them instead of
 taking our word for it.
+
+Two sweeps run against the corpus and are in this repository, one for Rust and
+one for Go. The Python and TypeScript verifiers are ports of the Rust
+implementation written to be byte-equivalent to it, but their corpus runners
+aren't here yet, so treat their conformance as asserted rather than
+demonstrated. Adding either runner is the most useful contribution available.
 
 ## Specification
 

@@ -245,7 +245,7 @@ enum PubkeyBundleOp {
 
 /// Compiled-in pin for the Nanorix long-term identity key (`sha256:<hex>`) —
 /// the trust-chain anchoring trust root. `None` until the HSM identity key is provisioned
-/// just-in-time at first-client onboarding; set it to the published fingerprint
+/// when the identity key is provisioned; set it to the published fingerprint
 /// then (also published at `nanorix.io/.well-known/identity.txt` + GitHub
 /// releases for out-of-band cross-confirmation). While `None`, `--trust-chain`
 /// requires an explicit `--identity-fingerprint`.
@@ -1326,7 +1326,7 @@ fn print_trust_chain() -> Result<()> {
     println!("{}", "Trust-chain manifest (the verifier specification):".bold());
     println!();
     println!(
-        "  {} Source: pass a local manifest via --trust-chain (offline / air-gap). The live https://nanorix.io/.well-known/trust-chain.json fetch is provisioned at first-client onboarding.",
+        "  {} Source: pass a local manifest via --trust-chain (offline / air-gap). This build has no HTTP client and retrieves nothing; obtain a manifest yourself and pass it in.",
         "•".dimmed()
     );
     println!(
@@ -1361,7 +1361,7 @@ fn print_trust_chain() -> Result<()> {
     );
     println!();
     println!(
-        "  {} trust-chain anchoring (WIRED + tested): manifest-signature verification, key resolution, and signature-against-manifest-key. Supply --trust-chain <manifest> + --identity-fingerprint <sha256:...> to verify a proof to stage 8. The live .well-known fetch + the real HSM-rooted identity key are provisioned just-in-time at first-client onboarding.",
+        "  {} trust-chain anchoring (WIRED + tested): manifest-signature verification, key resolution, and signature-against-manifest-key. Supply --trust-chain <manifest> + --identity-fingerprint <sha256:...> to verify a proof to stage 8. This build retrieves nothing over the network; supply the manifest as a file.",
         "✓".green()
     );
     println!();

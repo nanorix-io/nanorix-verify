@@ -17,10 +17,11 @@ abstract: >-
   answered from the document alone. Authenticity asks whether the key that signed
   it belongs to the party it names, which cannot. A document can be perfectly
   self-consistent and signed by a key nobody vouches for, so the exit codes keep
-  the two answers apart. The implementations in Rust, Go, Python and TypeScript
-  agree byte for byte across a 100-case conformance corpus, which is generated
-  from a committed generator so its expected verdicts can be reproduced instead
-  of trusted.
+  the two answers apart. The Rust and Go implementations are checked against a
+  100-case conformance corpus by test suites in the repository, and the Python
+  and TypeScript ports are written to be byte-equivalent to the Rust one. The
+  corpus is generated from a committed generator, so its expected verdicts can
+  be reproduced instead of trusted.
 
   Three properties are requirements rather than intentions. None of the four
   implementations carries a network dependency, so offline verification is a
