@@ -1,0 +1,47 @@
+{
+  "upload_type": "software",
+  "title": "Signed Containment Evidence: specification and reference verifiers",
+  "description": "<p>This is the specification and reference implementation set for Signed Containment Evidence, a document format that records that a compute workload ran in a contained environment and was then destroyed. The evidence can be checked offline, by a party with no relationship to whoever produced it. An AuditProof carries an eight-step SHA-512 hash chain over the destruction sequence, together with an Ed25519 attestation over a fixed canonical view of the document serialised under RFC 8785.</p><p>A verifier answers two separate questions. Integrity is whether the document is internally consistent and unmodified, which can be established from the document alone. Authenticity is whether the key that signed it belongs to the party named in it, which requires an external trust anchor. A document can be internally consistent and still be signed by a key that nobody vouches for, so the two results are reported separately and the exit codes distinguish them.</p><p>The repository contains four implementations, in Rust, Go, Python and TypeScript, along with a shared failure taxonomy and a conformance corpus of 100 cases in nine categories. The corpus is produced by a generator that is included, so its expected verdicts can be regenerated and compared rather than taken on trust. Corpus test suites for Rust and Go are present; runners for the Python and TypeScript ports are not yet included.</p><p>Three properties hold by construction. None of the implementations has a network dependency, so offline verification follows from the code rather than from a policy. A verifier that does not implement a document's declared signing mode rejects the document instead of returning a partial result, which removes a downgrade an attacker could otherwise select. The wire form, meaning the eight steps and their order, the hash and signature algorithms, and the canonical view, does not change, because evidence retained for years must remain checkable by the algorithm that produced it.</p>",
+  "creators": [
+    {
+      "name": "Arra, Chaitanya Kumar",
+      "affiliation": "Nanorix Inc.",
+      "orcid": "0009-0000-9986-8683"
+    }
+  ],
+  "license": "Apache-2.0",
+  "access_right": "open",
+  "version": "1.0.0",
+  "publication_date": "2026-08-12",
+  "keywords": [
+    "audit evidence",
+    "tamper-evident logging",
+    "hash chain",
+    "Ed25519",
+    "RFC 8785",
+    "canonicalization",
+    "non-repudiation",
+    "agent security",
+    "regulated data",
+    "offline verification"
+  ],
+  "language": "eng",
+  "related_identifiers": [
+    {
+      "identifier": "https://github.com/nanorix-io/nanorix-verify",
+      "relation": "isSupplementTo",
+      "scheme": "url",
+      "resource_type": "software"
+    },
+    {
+      "identifier": "https://github.com/nanorix-io/nanorix-sdk",
+      "relation": "isSupplementedBy",
+      "scheme": "url",
+      "resource_type": "software"
+    }
+  ],
+  "references": [
+    "RFC 8785: JSON Canonicalization Scheme (JCS)",
+    "RFC 8032: Edwards-Curve Digital Signature Algorithm (EdDSA)"
+  ]
+}
