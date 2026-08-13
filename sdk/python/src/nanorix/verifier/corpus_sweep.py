@@ -44,9 +44,11 @@ def policy_from_expected(expected: Dict[str, Any]) -> VerifierPolicy:
     every implementation reads the same policy from the same place.
     """
     pins = expected.get("policy") or {}
+    # The policy fields are `str` with "" meaning "accept anything", not
+    # Optional — mirror that rather than passing None through.
     return VerifierPolicy(
-        required_region=pins.get("required_region"),
-        required_authority_id=pins.get("required_authority_id"),
+        required_region=pins.get("required_region") or "",
+        required_authority_id=pins.get("required_authority_id") or "",
     )
 
 
