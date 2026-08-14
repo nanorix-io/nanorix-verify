@@ -27,7 +27,7 @@ four independent implementations that agree byte-for-byte on a public corpus.
 ### 0.1 The property that is actually missing
 
 Most agent-logging today is **repudiable by construction**. The record is generated, held,
-and attested by the same party it exonerates. That is sufficient for debugging and
+and attested by the same party it benefits. That is sufficient for debugging and
 insufficient for evidence: an auditor cannot distinguish "this is what happened" from "this
 is what the operator says happened."
 
