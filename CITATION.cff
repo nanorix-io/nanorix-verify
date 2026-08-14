@@ -60,8 +60,8 @@ url: "https://nanorix.io"
 license: Apache-2.0
 # Keep `version` and `date-released` equal to the git tag this release carries.
 # Zenodo mints one DOI per release and reads both fields from this file.
-version: 1.0.1
-date-released: "2026-08-12"
+version: 1.0.2
+date-released: "2026-08-14"
 keywords:
   - audit evidence
   - tamper-evident logging
