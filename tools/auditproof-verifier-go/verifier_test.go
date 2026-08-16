@@ -628,6 +628,43 @@ func TestJCSCanonicalizeBasic(t *testing.T) {
 	}
 }
 
+// TestJCSCanonicalizeNumbers pins the ECMAScript Number::toString behaviour
+// RFC 8785 §3.2.2.3 requires, and which must stay byte-equivalent to Rust
+// serde_jcs. Each `want` below is what String(x) / serde_jcs produce.
+func TestJCSCanonicalizeNumbers(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		// exponential form: '+' is mandatory on positive exponents...
+		{`{"n":1e21}`, `{"n":1e+21}`},
+		{`{"n":1e30}`, `{"n":1e+30}`},
+		// ...and no leading zero on negative exponents.
+		{`{"n":1e-7}`, `{"n":1e-7}`},
+		{`{"n":5e-324}`, `{"n":5e-324}`},
+		// positional form up to (but not including) 1e21 and down to 1e-6.
+		{`{"n":1e20}`, `{"n":100000000000000000000}`},
+		{`{"n":1.5e19}`, `{"n":15000000000000000000}`},
+		{`{"n":1e-5}`, `{"n":0.00001}`},
+		{`{"n":1e-6}`, `{"n":0.000001}`},
+		// shortest round-trip: the canonical text must parse back to the
+		// same double (0.1 + 0.2 is the classic 17-significant-digit case).
+		{`{"n":0.30000000000000004}`, `{"n":0.30000000000000004}`},
+		{`{"n":123456789012345680.0}`, `{"n":123456789012345680}`},
+		{`{"n":-0.0001}`, `{"n":-0.0001}`},
+	}
+	for _, c := range cases {
+		got, err := JCSCanonicalize([]byte(c.in))
+		if err != nil {
+			t.Errorf("JCSCanonicalize(%q): %v", c.in, err)
+			continue
+		}
+		if string(got) != c.want {
+			t.Errorf("JCSCanonicalize(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 // TestVerifyEd25519SignatureRoundTrip exercises the Ed25519 verify path.
 // V1 verifier doesn't fail on signature-mismatch fixtures (stages 5-8 not
 // wired), so this is unit-level coverage for the helper itself.
