@@ -17,7 +17,7 @@
 //   4. Arrays emit elements in input order.
 //   5. No whitespace, no trailing commas.
 //
-// Forever-Standard discipline (the Forever-Standard wire discipline): the canonical form is the
+// Forever-Standard discipline (ADR-006 I0): the canonical form is the
 // cryptographic-attestation contract. Any future Go-side change to this
 // implementation must produce byte-identical output to the Rust verifier on
 // the 100-fixture corpus, otherwise it's a P0.

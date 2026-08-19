@@ -1,6 +1,6 @@
-// Tests for the canonical-hash recompute, the signature stage, and the chain-timestamp recovery rule
+// Tests for the canonical-hash recompute, the signature stage, and the ADR-047
 // chain-timestamp recovery — the Go peers of the test module in
-// `tools/nanorix-verify/src/canonical_recompute.rs` and the chain-timestamp recovery rule block in
+// `tools/nanorix-verify/src/canonical_recompute.rs` and the ADR-047 block in
 // `tools/nanorix-verify/src/lib.rs`.
 //
 // The corpus sweep covers the signature stage end-to-end on 100 fixtures, but
@@ -17,7 +17,7 @@ import (
 	"testing"
 )
 
-// goldenInput is the wire form of the AuditProof document builder::test_cdp()`
+// goldenInput is the wire form of `services/api/src/cdp_document.rs::test_cdp()`
 // — the fixed input behind the server's `golden_canonical_hash` test. Only the
 // fields the canonical view actually reads are present.
 func goldenInput() map[string]interface{} {
@@ -91,10 +91,10 @@ func TestRoundtripVerifyAndCatchCanonicalDrift(t *testing.T) {
 	}
 }
 
-// ── the chain-timestamp recovery rule — chain-timestamp recovery from attestation key_id ──────────────
+// ── ADR-047 — chain-timestamp recovery from attestation key_id ──────────────
 
 func TestRecoverTimestampFromKeyID(t *testing.T) {
-	// The exact shape the chain specification emits for a production
+	// The exact shape `governance/rzl/src/cdp.rs` emits for a production
 	// `to_rfc3339_opts(SecondsFormat::Millis, true)` timestamp.
 	if got, ok := RecoverTimestampFromKeyID("nrx-verify-2026-03-01T00-05-00.000Z-550e8400"); !ok ||
 		got != "2026-03-01T00:05:00.000Z" {
@@ -137,7 +137,7 @@ func TestRecoveryRefusesOffShapeKeyIDs(t *testing.T) {
 }
 
 // makePreRestorationV1Proof builds a v1.0 proof exactly as production issued it
-// before the chain-timestamp recovery rule: authentic 8-step chain and NO `destroyed_at` key at all.
+// before ADR-047: authentic 8-step chain and NO `destroyed_at` key at all.
 func makePreRestorationV1Proof() map[string]interface{} {
 	const timestamp = "2026-05-06T12:00:00Z"
 	proof := makeMinimalV1Proof(timestamp)

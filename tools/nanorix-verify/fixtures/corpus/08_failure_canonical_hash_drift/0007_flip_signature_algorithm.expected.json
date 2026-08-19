@@ -3,7 +3,7 @@
     "found": "RSA-PSS",
     "type": "algorithm_unsupported"
   },
-  "note": "the specification C.1: algorithm dispatch precedes byte-shape checks. A document declaring a non-Ed25519 signature algorithm fails typed as algorithm_unsupported at stage 4 — this build cannot evaluate what the document declares, so presuming Ed25519 semantics and reporting a mismatch would be dishonest.",
+  "note": "ADR-051 C.1: algorithm dispatch precedes byte-shape checks. A document declaring a non-Ed25519 signature algorithm fails typed as algorithm_unsupported at stage 4 — this build cannot evaluate what the document declares, so presuming Ed25519 semantics and reporting a mismatch would be dishonest.",
   "stage_reached": 4,
   "valid": false
 }

@@ -1,8 +1,8 @@
 // 8-step SHA-512 hash chain reproduction. Mirrors the Rust function
-// the chain specification::assemble_cdp` algorithm and the verifier-side
+// `governance/rzl/src/cdp.rs::assemble_cdp` algorithm and the verifier-side
 // `tools/nanorix-verify/src/lib.rs::compute_step_hash` reproduction.
 //
-// Forever-Standard discipline (the Forever-Standard wire discipline): the chain shape, the genesis hash,
+// Forever-Standard discipline (ADR-006 I0): the chain shape, the genesis hash,
 // the per-subsystem method strings, the action constant ("destroy"), and the
 // 0x00 separator are PERMANENT. They CANNOT change in any future Nanorix
 // release without invalidating every prior AuditProof. This Go implementation
@@ -35,6 +35,24 @@ const NanorixGenesisHash = "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4
 // AuditProof with != 8 steps is structurally invalid.
 const NanorixChainSteps = 8
 
+// CanonicalChain is the canonical 8-step chain identity: the subsystem and its
+// fixed method at each index. Forever-Standard per INVARIANTS #1 / ADR-006 I0 —
+// the order, the count, the subsystem names and each subsystem's method are
+// fixed for the life of the format.
+//
+// The chain walk hashes THESE values, never the ones the document declares. A
+// document cannot choose what a step is; it can only fail to match.
+var CanonicalChain = [NanorixChainSteps]struct{ Subsystem, Method string }{
+	{"eee_namespace", "procfs_verification"},
+	{"eee_tmpfs", "mountinfo_verification"},
+	{"eee_memory", "dod_5220_multipass_wipe"},
+	{"dire_keys", "ed25519_key_destruction"},
+	{"dire_identity", "credential_incineration"},
+	{"fgx_forensic", "merkle_tree_verification"},
+	{"rzl_audit", "hash_chain_validation"},
+	{"capsule_destroy", "capsule_lifecycle_verification"},
+}
+
 // ComputeStepHash reproduces one chain step's SHA-512 hash. Mirrors
 // `nanorix_verify::compute_step_hash` byte-for-byte.
 //
@@ -54,7 +72,7 @@ func ComputeStepHash(prevHash, subsystem, action, method, timestamp string) stri
 }
 
 // LookupMethod returns the canonical method string for a given subsystem
-// (per CLAUDE.md CDP v1.0 chain spec). Forever-stable per the Forever-Standard wire discipline.
+// (per CLAUDE.md CDP v1.0 chain spec). Forever-stable per ADR-006 I0.
 //
 // Returns the empty string for unknown subsystems — same convention as Rust.
 func LookupMethod(subsystem string) string {
@@ -81,7 +99,7 @@ func LookupMethod(subsystem string) string {
 }
 
 // StripHashPrefix removes the canonical "sha512:" prefix from hash fields.
-// the specification forever-stable.
+// ADR-011 I0 forever-stable.
 func StripHashPrefix(s string) string {
 	const p = "sha512:"
 	if len(s) >= len(p) && s[:len(p)] == p {
@@ -91,7 +109,7 @@ func StripHashPrefix(s string) string {
 }
 
 // StripBase64Prefix removes the canonical "base64:" prefix from key/signature
-// fields. the specification forever-stable.
+// fields. ADR-011 I0 forever-stable.
 func StripBase64Prefix(s string) string {
 	const p = "base64:"
 	if len(s) >= len(p) && s[:len(p)] == p {

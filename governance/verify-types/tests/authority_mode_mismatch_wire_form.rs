@@ -1,7 +1,7 @@
 //! Wire-format-locked round-trip tests for `FailureReason::AuthorityModeMismatch`
-//! (the customer-authority specification / VP Security extended-review Area 4).
+//! (ADR-031 Amendment 1 / VP Security extended-review Area 4).
 //!
-//! **Forever-Standard discipline (the Forever-Standard wire discipline).** These tests pin the
+//! **Forever-Standard discipline (ADR-006 I0).** These tests pin the
 //! exact wire form (variant tag + field names + serialization shape) so
 //! that:
 //!
@@ -13,7 +13,7 @@
 //!   years from now must still parse it correctly).
 //!
 //! The variant disambiguates customer-attested authority signature
-//! failures (per the customer-authority specification) from `SignatureMismatch` (which covers
+//! failures (per ADR-031) from `SignatureMismatch` (which covers
 //! Nanorix-authority-signed proof failures).
 //!
 //! Wire form: `{"type": "authority_mode_mismatch", "claimed_authority_id":

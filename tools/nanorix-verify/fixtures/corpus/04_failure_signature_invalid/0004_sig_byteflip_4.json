@@ -1,5 +1,12 @@
 {
-  "activity": [],
+  "activity": [
+    {
+      "encryption": "aes-256-gcm",
+      "event": "capsule_started",
+      "network": "sealed",
+      "region": "us-central1"
+    }
+  ],
   "attestation": {
     "algorithm": "Ed25519",
     "key_id": "nrx-verify-2026-05-08T00-00-00Z-cap_0000",
@@ -73,7 +80,6 @@
   "hash_algorithm": "SHA-512",
   "jurisdiction": "us",
   "org_id": "00000000-0000-0000-0000-000000000001",
-  "region": "us-central1",
   "signature_algorithm": "Ed25519",
   "signing_key_version": "1",
   "signing_mode": "nanorix_only"

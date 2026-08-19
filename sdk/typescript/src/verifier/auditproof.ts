@@ -20,7 +20,7 @@
  *    `method`, no `timestamp`. Reading them off the step yields empty strings
  *    and a chain that reproduces nothing.
  * 2. The signed message depends on the CDP version: v1.0 signs `final_hash`,
- *    v2.0 signs `document_hash`, v2.1 `nanorix_only` signs the specification Part-3
+ *    v2.0 signs `document_hash`, v2.1 `nanorix_only` signs the ADR-011 Part-3
  *    canonical-view hash. Verifying the wrong message accepts a downgraded
  *    proof.
  *
@@ -34,13 +34,14 @@ import {
   computeStep8Amended,
   merkleRootSha512NullSeparated,
 } from "./wave_n.js";
+import { verifyStreamingMerkleRoots } from "./streaming_merkle.js";
 
-/** Genesis hash — SHA-512(""). Forever-stable per the Forever-Standard wire discipline. */
+/** Genesis hash — SHA-512(""). Forever-stable per ADR-006 I0. */
 export const GENESIS_HASH =
   "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce" +
   "47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e";
 
-/** Canonical method strings per subsystem. Forever-stable per the Forever-Standard wire discipline. */
+/** Canonical method strings per subsystem. Forever-stable per ADR-006 I0. */
 export const METHOD_MAP: Record<string, string> = {
   eee_namespace: "procfs_verification",
   eee_tmpfs: "mountinfo_verification",
@@ -71,13 +72,45 @@ export const SUPPORTED_CDP_VERSIONS: ReadonlySet<string> = new Set([
 ]);
 export const CHAIN_STEP_COUNT = 8;
 
-/** Closed-set failure reason wire types. Forever-stable per the Forever-Standard wire discipline. Additive only. */
+/**
+ * Reserved attestation slots outside CanonicalCdpView (ADR-011 I18-I21,
+ * I24-I25 + ADR-012 D2/D3) that no Nanorix signer populates. Every
+ * construction site hard-codes them to None, so the signature never covered
+ * them and a genuine document never carries them; a populated one was added
+ * after signing by someone holding no key, and the signature cannot tell,
+ * because it never covered the field.
+ *
+ * `per_event_attestations` is the ninth reserved slot and is deliberately
+ * absent: the server drains capsule_event_attestations into it at destroy, so
+ * genuine proofs do carry it, and each entry is signed by the customer's own
+ * key. Mirrors the Rust, Go and Python verifiers.
+ */
+export const UNSIGNED_RESERVED_SLOTS: readonly string[] = [
+  "customer_attestation",
+  "policy_attestation",
+  "third_party_attestation",
+  "retention_policy_attestation",
+  "witness_signatures",
+  "pqc_attestation",
+  "customer_pqc_attestation",
+];
+
+const PARENT_ATTRIBUTION_FIELDS: readonly string[] = [
+  "parent_key_id",
+  "parent_signature",
+  "parent_role",
+  "parent_jurisdiction",
+  "parent_organization_tag",
+];
+
+/** Closed-set failure reason wire types. Forever-stable per ADR-006 I0. Additive only. */
 export const FailureReasonType = {
   ALGORITHM_UNSUPPORTED: "algorithm_unsupported",
   AUTHORITY_ID_MISMATCH: "authority_id_mismatch",
   AUTHORITY_MODE_MISMATCH: "authority_mode_mismatch",
   AUTHORITY_REVOKED: "authority_revoked",
   CDP_VERSION_UNSUPPORTED: "cdp_version_unsupported",
+  CHAIN_STEP_IDENTITY_MISMATCH: "chain_step_identity_mismatch",
   DIAGNOSTIC_PROOF_REFUSED: "diagnostic_proof_refused",
   FINAL_HASH_MISMATCH: "final_hash_mismatch",
   GENESIS_HASH_MISMATCH: "genesis_hash_mismatch",
@@ -88,6 +121,8 @@ export const FailureReasonType = {
   SIGNING_KEY_VERSION_UNKNOWN: "signing_key_version_unknown",
   STEP_COUNT_INVALID: "step_count_invalid",
   STEP_HASH_MISMATCH: "step_hash_mismatch",
+  STREAMING_MERKLE_ROOT_MISMATCH: "streaming_merkle_root_mismatch",
+  UNSIGNED_FIELD_POPULATED: "unsigned_field_populated",
 } as const;
 
 export type FailureReasonTypeValue =
@@ -124,6 +159,8 @@ export interface FailureReason {
   actual?: string;
   claimed_authority_id?: string | null;
   expected_authority_id?: string;
+  expected_subsystem?: string;
+  found_subsystem?: string;
   drift_position?: number;
   drift_field?: string;
 }
@@ -139,11 +176,20 @@ export interface VerificationMetadata {
   activityEventCount: number | null;
   /**
    * Set when the document carried no `destroyed_at` and the chain timestamp
-   * was recovered from `attestation.key_id` (the chain-timestamp recovery rule pre-restoration proofs).
+   * was recovered from `attestation.key_id` (ADR-047 pre-restoration proofs).
    * Never silently substituted — an auditor can always tell which route
    * produced the verdict.
    */
   recoveredChainTimestamp?: string | null;
+  /**
+   * Number of parent links carrying attribution the signature does not cover —
+   * parent_key_id, parent_signature, parent_role, parent_jurisdiction,
+   * parent_organization_tag. Only parent_chain_hash feeds the signed Merkle
+   * root, so an outsider can rewrite the rest of a genuine proof's declared
+   * lineage. The lineage UI renders exactly those fields, so a verdict that
+   * stays silent invites them to be read as attested.
+   */
+  unattestedParentAttribution?: number | null;
 }
 
 /** Result of AuditProof verification. */
@@ -160,7 +206,7 @@ export interface VerificationWireForm {
   failure_reason: FailureReason | null;
 }
 
-/** Customer-side policy configuration. Field-additive per the Forever-Standard wire discipline. */
+/** Customer-side policy configuration. Field-additive per ADR-006 I0. */
 export interface VerifierPolicy {
   rejectDiagnostic?: boolean;
   requiredRegion?: string;
@@ -224,7 +270,7 @@ function base64Decode(b64: string): Uint8Array | null {
 }
 
 /**
- * Reproduce one chain step's SHA-512 hash. Forever-stable per the Forever-Standard wire discipline.
+ * Reproduce one chain step's SHA-512 hash. Forever-stable per ADR-006 I0.
  * Formula: SHA-512(prev || 0x00 || subsystem || 0x00 || "destroy" || 0x00 || method || 0x00 || timestamp)
  */
 export async function computeStepHash(
@@ -263,7 +309,7 @@ export function lookupMethod(subsystem: string): string {
   return METHOD_MAP[subsystem] ?? "";
 }
 
-// ─── Chain timestamp resolution (the chain-timestamp recovery rule) ───────────────────────────────────
+// ─── Chain timestamp resolution (ADR-047) ───────────────────────────────────
 
 /**
  * Recover the chain timestamp from an attestation `key_id` of the form
@@ -309,7 +355,7 @@ function isIso8601Shaped(date: string, time: string): boolean {
 
 /**
  * The timestamp the chain walk must use: the document's own `destroyed_at`,
- * or — for pre-the chain-timestamp recovery rule proofs that omit it — the value recovered from
+ * or — for pre-ADR-047 proofs that omit it — the value recovered from
  * `attestation.key_id`. Returns the recovered value separately so the verdict
  * can disclose which route produced it.
  */
@@ -324,10 +370,10 @@ export function resolveChainTimestamp(proof: Record<string, unknown>): {
   return { timestamp: recovered ?? "", recovered };
 }
 
-// ─── the specification Part-3 canonical view ──────────────────────────────────────────
+// ─── ADR-011 Part-3 canonical view ──────────────────────────────────────────
 
 /**
- * Rebuild the specification Part-3 canonical view from a proof and return its
+ * Rebuild the ADR-011 Part-3 canonical view from a proof and return its
  * RFC-8785 JCS SHA-512 hex digest — byte-identical to the server's
  * `canonical_hash()` and to the Rust verifier's `recompute_canonical_hash`.
  *
@@ -557,7 +603,43 @@ function makeEmptyMetadata(): VerificationMetadata {
     stepCount: null,
     activityEventCount: null,
     recoveredChainTimestamp: null,
+    unattestedParentAttribution: null,
   };
+}
+
+/**
+ * First reserved slot carrying anything other than JSON `null`.
+ *
+ * Genuine documents emit these keys with an explicit `null` (the fields have no
+ * `skip_serializing_if`), so absence and `null` are both normal. Anything else —
+ * an empty array included — is a shape no signer produces. Iteration follows
+ * UNSIGNED_RESERVED_SLOTS order so a document with several populated slots
+ * always names the same one, in every language.
+ */
+function populatedUnsignedSlot(proof: Record<string, unknown>): string | null {
+  for (const slot of UNSIGNED_RESERVED_SLOTS) {
+    const v = proof[slot];
+    if (v !== undefined && v !== null) return slot;
+  }
+  return null;
+}
+
+/** Parent links carrying attribution the signed Merkle root does not bind. */
+function countUnattestedParentAttribution(
+  parents: readonly unknown[],
+): number | null {
+  let n = 0;
+  for (const p of parents) {
+    if (!p || typeof p !== "object" || Array.isArray(p)) continue;
+    const link = p as Record<string, unknown>;
+    if (
+      PARENT_ATTRIBUTION_FIELDS.some(
+        (f) => link[f] !== undefined && link[f] !== null,
+      )
+    )
+      n++;
+  }
+  return n === 0 ? null : n;
 }
 
 function strOrEmpty(v: unknown): string {
@@ -661,11 +743,40 @@ export async function verifyAuditProof(
     };
   }
 
+  // Reserved-slot gate. A slot outside the signature carrying a value no
+  // signer emits means the bytes in front of us are not the bytes that were
+  // signed, even though the signature over the covered subset still checks out.
+  // Runs before the policy pins and the chain walk because the document is
+  // structurally impossible on its own terms, independent of what any customer
+  // policy asks for.
+  const populatedSlot = populatedUnsignedSlot(proof);
+  if (populatedSlot !== null) {
+    return {
+      valid: false,
+      failure_reason: {
+        type: FailureReasonType.UNSIGNED_FIELD_POPULATED,
+        field: populatedSlot,
+      },
+      stage_reached: 2,
+      metadata: meta,
+    };
+  }
+
   if (typeof proof["capsule_id"] === "string")
     meta.capsuleId = proof["capsule_id"];
-  const envRegion = pointer(proof, "environment", "region");
-  if (typeof envRegion === "string") meta.region = envRegion;
-  else if (typeof proof["region"] === "string") meta.region = proof["region"];
+  // Region resolves from the SIGNED capsule_started activity event only.
+  // The activity trail is inside CanonicalCdpView, so a region there cannot be
+  // altered without breaking the signature. `environment.region` and top-level
+  // `region` are both outside the canonical hash — reading either let an
+  // outsider satisfy a residency pin by appending a region to a genuine signed
+  // proof, with no key. Mirrors the Rust and Go verifiers.
+  const regionEvents = proof["activity"];
+  if (Array.isArray(regionEvents)) {
+    const started = regionEvents.find(
+      (e) => e && typeof e === "object" && (e as Record<string, unknown>)["event"] === "capsule_started",
+    ) as Record<string, unknown> | undefined;
+    if (started && typeof started["region"] === "string") meta.region = started["region"];
+  }
   const attSkv = pointer(proof, "attestation", "signing_key_version");
   if (typeof attSkv === "string") meta.signingKeyVersion = attSkv;
   else if (typeof proof["signing_key_version"] === "string")
@@ -673,7 +784,7 @@ export async function verifyAuditProof(
   const algo = pointer(proof, "attestation", "algorithm");
   if (typeof algo === "string") meta.algorithm = algo;
 
-  // Policy-pin gate (the customer-authority specification G7 / VP Security F4.3). Runs BEFORE the chain
+  // Policy-pin gate (ADR-031 G7 / VP Security F4.3). Runs BEFORE the chain
   // walk: the policy decision is independent of chain validity, so a customer
   // who pinned the wrong authority learns it without a 7-step SHA-512 walk.
   if (pol.requiredAuthorityId) {
@@ -707,7 +818,7 @@ export async function verifyAuditProof(
     }
   }
 
-  // Residency-pin gate (the specification G1 / the region policy). A proof carrying no region at
+  // Residency-pin gate (EO-03 G1 / ADR-018 D3). A proof carrying no region at
   // all cannot satisfy a residency pin — rejected with an empty `actual`, so
   // the pin fails closed.
   if (pol.requiredRegion !== undefined) {
@@ -760,8 +871,8 @@ export async function verifyAuditProof(
   const { timestamp, recovered } = resolveChainTimestamp(proof);
   meta.recoveredChainTimestamp = recovered;
 
-  // the per-record receipt specification + the receipt-batching specification the receipt pipeline — optional Merkle roots for the Step 8 amendment.
-  // Absent on pre-the receipt pipeline proofs, where both branches collapse to the legacy
+  // ADR-039 + ADR-041 Wave-N — optional Merkle roots for the Step 8 amendment.
+  // Absent on pre-Wave-N proofs, where both branches collapse to the legacy
   // formula (byte-identical chain walk).
   const rrmr =
     typeof proof["record_receipts_merkle_root"] === "string"
@@ -779,16 +890,20 @@ export async function verifyAuditProof(
       stepRaw && typeof stepRaw === "object" && !Array.isArray(stepRaw)
         ? (stepRaw as Record<string, unknown>)
         : {};
-    const subsystem = strOrEmpty(step["subsystem"]);
+    // Canonical-identity walk: hash inputs come from CANONICAL_SUBSYSTEMS by
+    // INDEX, never from the document. A document cannot choose what a step is;
+    // it can only fail to match.
+    const canonicalSubsystem = CANONICAL_SUBSYSTEMS[idx] as string;
+    const declaredSubsystem = strOrEmpty(step["subsystem"]);
     const claimedChainHash = strOrEmpty(step["chain_hash"]);
 
     const recomputed =
-      idx === 7 && subsystem === "capsule_destroy"
+      idx === CHAIN_STEP_COUNT - 1
         ? await computeStep8Amended(prevHash, timestamp, rrmr, ppmr)
         : await computeStepHash(
             prevHash,
-            subsystem,
-            lookupMethod(subsystem),
+            canonicalSubsystem,
+            lookupMethod(canonicalSubsystem),
             timestamp,
           );
 
@@ -798,7 +913,22 @@ export async function verifyAuditProof(
         failure_reason: {
           type: FailureReasonType.STEP_HASH_MISMATCH,
           step_idx: idx,
-          subsystem,
+          subsystem: declaredSubsystem,
+        },
+        stage_reached: 3,
+        metadata: meta,
+      };
+    }
+
+    // Hashes reproduced; the label beside them still has to be the right one.
+    if (declaredSubsystem !== canonicalSubsystem) {
+      return {
+        valid: false,
+        failure_reason: {
+          type: FailureReasonType.CHAIN_STEP_IDENTITY_MISMATCH,
+          step_idx: idx,
+          expected_subsystem: canonicalSubsystem,
+          found_subsystem: declaredSubsystem,
         },
         stage_reached: 3,
         metadata: meta,
@@ -807,7 +937,7 @@ export async function verifyAuditProof(
     prevHash = recomputed;
   }
 
-  // the per-record receipt specification receipt-set verification (Mode A step 3).
+  // ADR-039 receipt-set verification (Mode A step 3).
   const receipts = proof["record_receipts"];
   if (Array.isArray(receipts)) {
     const failure = await verifyRecordReceipts(
@@ -825,10 +955,31 @@ export async function verifyAuditProof(
     }
   }
 
-  // the receipt-batching specification parent-proof-set verification.
+  // ADR-041 parent-proof-set verification.
   const parents = proof["parent_proof_hashes"];
   if (Array.isArray(parents)) {
     const failure = await verifyParentProofs(parents, ppmr);
+    if (failure) {
+      return {
+        valid: false,
+        failure_reason: failure,
+        stage_reached: 3,
+        metadata: meta,
+      };
+    }
+    // The root binds parent_chain_hash and nothing else, so the verdict
+    // carries the count rather than let a reader infer coverage.
+    meta.unattestedParentAttribution = countUnattestedParentAttribution(parents);
+  }
+
+  // Streaming-egress Merkle roots. `streaming_egress_completed.
+  // streaming_merkle_root` commits to the `streaming_egress_chunk` leaves
+  // emitted beside it; it was signed from the day it shipped and read by
+  // nothing. Placed with the other sub-structure Merkle checks and therefore
+  // BEFORE the signature stages, so it also covers the path where a chain
+  // reproduces with no signature to check at all.
+  if (Array.isArray(activity)) {
+    const failure = await verifyStreamingMerkleRoots(activity);
     if (failure) {
       return {
         valid: false,
@@ -860,7 +1011,7 @@ export async function verifyAuditProof(
     };
   }
 
-  // Algorithm dispatch precedes byte-shape checks (the specification C.1): a proof
+  // Algorithm dispatch precedes byte-shape checks (ADR-051 C.1): a proof
   // declaring a non-Ed25519 signature algorithm fails typed as
   // algorithm_unsupported here — it must never fall through to the 64/32-byte
   // decode gates and report as "malformed". Absent or "Ed25519" proceeds
@@ -930,7 +1081,7 @@ export async function verifyAuditProof(
 }
 
 /**
- * Verify the receipt set per the per-record receipt specification Mode A step 3 — each receipt's chain hash
+ * Verify the receipt set per ADR-039 Mode A step 3 — each receipt's chain hash
  * must roundtrip and the Merkle root must match the claimed root. Returns null
  * when every receipt verifies (or no root is claimed).
  */
@@ -939,7 +1090,18 @@ async function verifyRecordReceipts(
   capsuleId: string,
   claimedRoot: string | null,
 ): Promise<FailureReason | null> {
-  if (claimedRoot === null) return null;
+  // A non-empty receipt set with no root is anchored by nothing, and the
+  // emitter never produces one: record_receipts_merkle_root is set iff
+  // record_receipts is. Skipping the check when the root is absent let an
+  // outsider append a whole fabricated set to a genuine proof, since the array
+  // is outside the canonical hash and the signature therefore still verified.
+  if (claimedRoot === null) {
+    if (receipts.length === 0) return null;
+    return {
+      type: FailureReasonType.REQUIRED_FIELD_MISSING,
+      field: "record_receipts_merkle_root",
+    };
+  }
 
   const leaves: string[] = [];
   for (let i = 0; i < receipts.length; i++) {
@@ -985,12 +1147,21 @@ async function verifyRecordReceipts(
   return null;
 }
 
-/** Verify the parent-proof-set Merkle root per the receipt-batching specification. */
+/** Verify the parent-proof-set Merkle root per ADR-041. */
 async function verifyParentProofs(
   parents: readonly unknown[],
   claimedRoot: string | null,
 ): Promise<FailureReason | null> {
-  if (claimedRoot === null) return null;
+  // Same fail-closed reasoning as verifyRecordReceipts: a parent set with no
+  // root is one nothing anchors, and leaving it unchecked made the entire
+  // declared lineage of a genuine proof forgeable by anyone holding it.
+  if (claimedRoot === null) {
+    if (parents.length === 0) return null;
+    return {
+      type: FailureReasonType.REQUIRED_FIELD_MISSING,
+      field: "parent_proofs_merkle_root",
+    };
+  }
 
   const leaves = parents.map((p) =>
     p && typeof p === "object" && !Array.isArray(p)

@@ -1,7 +1,7 @@
 // Package auditproof — verification result types mirroring the Rust
 // `nanorix-verify-types` crate at `governance/verify-types/src/lib.rs`.
 //
-// **Forever-Standard discipline (the Forever-Standard wire discipline):** every variant shipped here is
+// **Forever-Standard discipline (ADR-006 I0):** every variant shipped here is
 // permanent. New failure modes ship as ADDITIVE variants. Existing variants
 // NEVER renamed, NEVER removed, NEVER repurposed.
 //
@@ -12,11 +12,11 @@
 // Variant catalog (alphabetical by snake_case wire tag):
 //
 //   - algorithm_unsupported            V1 only supports Ed25519
-//   - authority_id_mismatch            policy-pin failure (the customer-authority specification G7)
+//   - authority_id_mismatch            policy-pin failure (ADR-031 G7)
 //   - authority_mode_mismatch          customer-authority Ed25519 verify failure
 //   - authority_revoked                trust-chain marks authority revoked
 //   - cdp_version_unsupported          version not in {1.0, 2.0, 2.1}
-//   - diagnostic_proof_refused         policy refuses diagnostic-mode (the diagnostic-proof policy)
+//   - diagnostic_proof_refused         policy refuses diagnostic-mode (ADR-019 D2)
 //   - final_hash_mismatch              final_hash != last step's chain_hash
 //   - genesis_hash_mismatch            first step's prev_hash != SHA-512(empty)
 //   - region_mismatch                  region differs from policy-required
@@ -26,6 +26,7 @@
 //   - signing_key_version_unknown      key version not in trust-chain manifest
 //   - step_count_invalid               chain has != 8 steps
 //   - step_hash_mismatch               step's recompute didn't match
+//   - chain_step_identity_mismatch     a step names a non-canonical subsystem
 package auditproof
 
 import (
@@ -45,7 +46,7 @@ type AuditProofVerificationResult struct {
 	// FailureReason is populated when Valid is false. Closed-set enum.
 	FailureReason *FailureReason `json:"failure_reason"`
 
-	// StageReached: 1..=8 highest stage reached (advisory; matches the AuditProof specification).
+	// StageReached: 1..=8 highest stage reached (advisory; matches ADR-011 I8).
 	StageReached uint8 `json:"stage_reached"`
 
 	// Metadata: structural-only diagnostic data; no payload bytes.
@@ -64,16 +65,24 @@ type VerificationMetadata struct {
 
 	// RecoveredChainTimestamp is set only when the document carried no usable
 	// `destroyed_at` and the chain timestamp was recovered from
-	// `attestation.key_id` (the chain-timestamp recovery rule pre-restoration proofs). Nil means the
+	// `attestation.key_id` (ADR-047 pre-restoration proofs). Nil means the
 	// timestamp came from the document's own field, so an auditor reading a
 	// verdict can always tell which route produced it. Omitted from the wire
 	// form when nil, mirroring the Rust `skip_serializing_if = "Option::is_none"`.
 	RecoveredChainTimestamp *string `json:"recovered_chain_timestamp,omitempty"`
+
+	// UnattestedParentAttribution counts parent links carrying attribution the
+	// signature does not cover -- parent_key_id, parent_signature, parent_role,
+	// parent_jurisdiction, parent_organization_tag. Only parent_chain_hash feeds
+	// the signed Merkle root, so an outsider can rewrite the rest of a genuine
+	// proof's declared lineage. The lineage UI renders exactly those fields, so
+	// a verdict that stays silent invites them to be read as attested.
+	UnattestedParentAttribution *int `json:"unattested_parent_attribution,omitempty"`
 }
 
-// CdpKind is the specification an earlier release-A reserved-slot scope discriminator
-// (2026-05-10). Forever-stable per the Forever-Standard wire discipline. Mirrors the Rust enum
-// the reference chain implementation.
+// CdpKind is the ADR-006 Wave 16-A reserved-slot scope discriminator
+// (2026-05-10). Forever-stable per ADR-006 I0. Mirrors the Rust enum
+// `nanorix_rzl::cdp::CdpKind`.
 //
 // AuditProof scope. V1 always absent in serialized JSON (workload scope is
 // implicit). Future Items 2 (sealed-proxy = "call") and 4 (sealed-middleware
@@ -82,7 +91,7 @@ type VerificationMetadata struct {
 //
 // The Go verifier treats `cdp_kind` as OPAQUE — chain integrity verification
 // is independent of cdp_kind. The field lives at the canonical_hash
-// outer-document layer (the AuditProof document builder), not in the
+// outer-document layer (services/api/src/cdp_document.rs), not in the
 // 8-step destruction chain that this verifier reproduces.
 type CdpKind string
 
@@ -94,7 +103,7 @@ const (
 )
 
 // FailureReasonType is the closed-set wire-form discriminator. Forever-stable
-// per the Forever-Standard wire discipline. Additive only — new variants land here without breaking
+// per ADR-006 I0. Additive only — new variants land here without breaking
 // existing parsers.
 type FailureReasonType string
 
@@ -104,6 +113,7 @@ const (
 	ReasonAuthorityModeMismatch    FailureReasonType = "authority_mode_mismatch"
 	ReasonAuthorityRevoked         FailureReasonType = "authority_revoked"
 	ReasonCdpVersionUnsupported    FailureReasonType = "cdp_version_unsupported"
+	ReasonChainStepIdentity        FailureReasonType = "chain_step_identity_mismatch"
 	ReasonDiagnosticProofRefused   FailureReasonType = "diagnostic_proof_refused"
 	ReasonFinalHashMismatch        FailureReasonType = "final_hash_mismatch"
 	ReasonGenesisHashMismatch      FailureReasonType = "genesis_hash_mismatch"
@@ -114,6 +124,7 @@ const (
 	ReasonSigningKeyVersionUnknown FailureReasonType = "signing_key_version_unknown"
 	ReasonStepCountInvalid         FailureReasonType = "step_count_invalid"
 	ReasonStepHashMismatch         FailureReasonType = "step_hash_mismatch"
+	ReasonUnsignedFieldPopulated   FailureReasonType = "unsigned_field_populated"
 )
 
 // SignatureFailureReason mirrors the Rust sub-enum
@@ -146,6 +157,7 @@ const (
 //   - required_field_missing:     Field
 //   - step_count_invalid:         Expected, Found
 //   - step_hash_mismatch:         StepIdx, Subsystem
+//   - chain_step_identity_mismatch: StepIdx, ExpectedSubsystem, FoundSubsystem
 //   - genesis_hash_mismatch:      (no fields)
 //   - final_hash_mismatch:        Claimed, Computed
 //   - signature_mismatch:         SigReason
@@ -156,17 +168,20 @@ const (
 //   - algorithm_unsupported:      Found
 //   - authority_mode_mismatch:    ClaimedAuthorityID, ExpectedAlgorithm, ActualAlgorithm
 //   - authority_id_mismatch:      ClaimedAuthorityID*, ExpectedAuthorityID, AuthIDReason
+//   - unsigned_field_populated:   Field
 //   - reserved:                   (no fields)
 type FailureReason struct {
 	Type FailureReasonType
 
 	// Per-variant payload fields. Nil/zero values when not applicable.
 	Found               string                    // cdp_version_unsupported, algorithm_unsupported
-	Field               string                    // required_field_missing
+	Field               string                    // required_field_missing, unsigned_field_populated
 	Expected            int                       // step_count_invalid
 	FoundCount          int                       // step_count_invalid (Found is overloaded; use this for int)
-	StepIdx             int                       // step_hash_mismatch
+	StepIdx             int                       // step_hash_mismatch, chain_step_identity_mismatch
 	Subsystem           string                    // step_hash_mismatch
+	ExpectedSubsystem   string                    // chain_step_identity_mismatch
+	FoundSubsystem      string                    // chain_step_identity_mismatch
 	Claimed             string                    // final_hash_mismatch
 	Computed            string                    // final_hash_mismatch
 	SigReason           SignatureFailureReason    // signature_mismatch
@@ -189,7 +204,7 @@ type FailureReason struct {
 // `map[string]interface{}` marshalling sorts keys alphabetically and would
 // drift from Rust's wire form; therefore we hand-emit the bytes here.
 //
-// Forever-Standard discipline (the Forever-Standard wire discipline): the wire form (key ordering, key
+// Forever-Standard discipline (ADR-006 I0): the wire form (key ordering, key
 // names, value encoding) is the cryptographic-attestation contract. Any
 // future change must produce byte-identical output to Rust's `serde_json::
 // to_string(&FailureReason)` on the 100-fixture corpus.
@@ -227,7 +242,7 @@ func (r *FailureReason) MarshalJSON() ([]byte, error) {
 		if err := emit("found", r.Found); err != nil {
 			return nil, err
 		}
-	case ReasonRequiredFieldMissing:
+	case ReasonRequiredFieldMissing, ReasonUnsignedFieldPopulated:
 		if err := emit("field", r.Field); err != nil {
 			return nil, err
 		}
@@ -243,6 +258,16 @@ func (r *FailureReason) MarshalJSON() ([]byte, error) {
 			return nil, err
 		}
 		if err := emit("subsystem", r.Subsystem); err != nil {
+			return nil, err
+		}
+	case ReasonChainStepIdentity:
+		if err := emit("step_idx", r.StepIdx); err != nil {
+			return nil, err
+		}
+		if err := emit("expected_subsystem", r.ExpectedSubsystem); err != nil {
+			return nil, err
+		}
+		if err := emit("found_subsystem", r.FoundSubsystem); err != nil {
 			return nil, err
 		}
 	case ReasonGenesisHashMismatch, ReasonAuthorityRevoked, ReasonDiagnosticProofRefused, ReasonReserved:
@@ -305,7 +330,7 @@ func (r *FailureReason) MarshalJSON() ([]byte, error) {
 			return nil, err
 		}
 	default:
-		return nil, fmt.Errorf("unknown FailureReason type %q (closed-set enum violation; Forever-Standard the Forever-Standard wire discipline)", r.Type)
+		return nil, fmt.Errorf("unknown FailureReason type %q (closed-set enum violation; Forever-Standard ADR-006 I0)", r.Type)
 	}
 	buf.WriteByte('}')
 	return buf.Bytes(), nil
@@ -328,7 +353,7 @@ func (r *FailureReason) UnmarshalJSON(data []byte) error {
 		if v, ok := raw["found"].(string); ok {
 			r.Found = v
 		}
-	case ReasonRequiredFieldMissing:
+	case ReasonRequiredFieldMissing, ReasonUnsignedFieldPopulated:
 		if v, ok := raw["field"].(string); ok {
 			r.Field = v
 		}
@@ -345,6 +370,16 @@ func (r *FailureReason) UnmarshalJSON(data []byte) error {
 		}
 		if v, ok := raw["subsystem"].(string); ok {
 			r.Subsystem = v
+		}
+	case ReasonChainStepIdentity:
+		if v, ok := raw["step_idx"].(float64); ok {
+			r.StepIdx = int(v)
+		}
+		if v, ok := raw["expected_subsystem"].(string); ok {
+			r.ExpectedSubsystem = v
+		}
+		if v, ok := raw["found_subsystem"].(string); ok {
+			r.FoundSubsystem = v
 		}
 	case ReasonFinalHashMismatch:
 		if v, ok := raw["claimed"].(string); ok {

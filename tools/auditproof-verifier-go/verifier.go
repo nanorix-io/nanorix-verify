@@ -1,7 +1,7 @@
 // AuditProof 8-stage verification pipeline. Mirrors the Rust verifier in
 // `tools/nanorix-verify/src/lib.rs::verify_auditproof`.
 //
-// **Forever-Standard discipline (the Forever-Standard wire discipline):** the stage numbering, the
+// **Forever-Standard discipline (ADR-006 I0):** the stage numbering, the
 // failure-reason emission shapes, the policy-pin gate ordering, and the
 // genesis-hash anchor are PERMANENT. Any change to this file that would
 // produce non-byte-equivalent output to the Rust verifier on the 100-fixture
@@ -11,7 +11,7 @@
 //
 //	1  schema — cdp_version present
 //	2  version recognized; the authority-pin and region-pin policy gates
-//	3  chain reproducibility (incl. the per-record receipt specification/041 Step-8 amendment, the
+//	3  chain reproducibility (incl. the ADR-039/041 Step-8 amendment, the
 //	   receipt set, and the parent-proof set)
 //	4  final_hash binding
 //	5  canonical-hash recompute (folded into the signature stage: the
@@ -37,23 +37,23 @@ import (
 )
 
 // VerifierPolicy is the customer-side policy configuration. Field-additive
-// per the Forever-Standard wire discipline + the customer-authority specification G7 — pre-amendment callers passing a zero-value
+// per ADR-006 I0 + ADR-031 G7 — pre-amendment callers passing a zero-value
 // policy continue to behave identically.
 type VerifierPolicy struct {
-	// RejectDiagnostic: refuse AuditProofs with `diagnostic_mode: true` (the specification).
+	// RejectDiagnostic: refuse AuditProofs with `diagnostic_mode: true` (EO-09).
 	RejectDiagnostic bool
 
 	// RequiredRegion: if non-empty, require the AuditProof's `region` to match.
 	RequiredRegion string
 
 	// RequiredAuthorityID: if non-empty, require the AuditProof's
-	// `signing_authority.authority_id` to match. Per the customer-authority specification G7 + VP Security
+	// `signing_authority.authority_id` to match. Per ADR-031 G7 + VP Security
 	// extended-review F4.3.
 	RequiredAuthorityID string
 }
 
 // supportedCdpVersions enumerates the closed-set of recognized AuditProof
-// schema versions. Additive only per the Forever-Standard wire discipline.
+// schema versions. Additive only per ADR-006 I0.
 var supportedCdpVersions = map[string]bool{
 	"1.0": true,
 	"2.0": true,
@@ -70,7 +70,7 @@ func Verify(jsonBytes []byte, policy VerifierPolicy) AuditProofVerificationResul
 }
 
 // verifyCore is the single verification ladder. `enforceParentDepthCap` adds
-// the receipt-batching specification depth-limit check used by the receipt pipeline entry point.
+// the ADR-041 depth-limit check used by the Wave-N entry point.
 //
 // One ladder, not two: a second copy of this logic is how the signature stage
 // came to be missing from one path while present in the other.
@@ -126,10 +126,28 @@ func verifyCore(jsonBytes []byte, policy VerifierPolicy, enforceParentDepthCap b
 	if v, ok := proof["capsule_id"].(string); ok {
 		metadata.CapsuleID = strPtr(v)
 	}
-	metadata.Region = lookupStringPath(proof, "environment", "region")
-	if metadata.Region == nil {
-		if v, ok := proof["region"].(string); ok {
-			metadata.Region = strPtr(v)
+	// Region resolves from the SIGNED capsule_started activity event only.
+	//
+	// The activity trail is inside CanonicalCdpView, so a region carried there
+	// cannot be altered without breaking the signature. The two paths this
+	// replaced -- environment.region and top-level region -- are both outside
+	// the canonical hash: environment is a derived projection whose struct has
+	// no region field at all, and top-level region is emitted by nothing.
+	// Reading either let an outsider satisfy the residency pin by appending a
+	// region to a genuine signed proof, with no key. Mirrors the Rust change.
+	if events, ok := proof["activity"].([]interface{}); ok {
+		for _, e := range events {
+			ev, ok := e.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if tag, _ := ev["event"].(string); tag != "capsule_started" {
+				continue
+			}
+			if v, ok := ev["region"].(string); ok {
+				metadata.Region = strPtr(v)
+			}
+			break
 		}
 	}
 	metadata.SigningKeyVersion = lookupStringPath(proof, "attestation", "signing_key_version")
@@ -140,7 +158,7 @@ func verifyCore(jsonBytes []byte, policy VerifierPolicy, enforceParentDepthCap b
 	}
 	metadata.Algorithm = lookupStringPath(proof, "attestation", "algorithm")
 
-	// Policy-pin gate (the customer-authority specification G7 / VP Security F4.3).
+	// Policy-pin gate (ADR-031 G7 / VP Security F4.3).
 	//
 	// Rust ordering: policy-pin gate fires BEFORE chain integrity checks.
 	// stage_reached = 2.
@@ -176,7 +194,7 @@ func verifyCore(jsonBytes []byte, policy VerifierPolicy, enforceParentDepthCap b
 		// Authority matches policy pin; fall through.
 	}
 
-	// Residency-pin gate (the specification G1 / the region policy).
+	// Residency-pin gate (EO-03 G1 / ADR-018 D3).
 	//
 	// Same shape and rationale as the authority pin above: when the auditor
 	// pins a region, a proof asserting a different region is rejected before
@@ -231,15 +249,15 @@ func verifyCore(jsonBytes []byte, policy VerifierPolicy, enforceParentDepthCap b
 		}
 	}
 
-	// the chain-timestamp recovery rule — proofs issued before `destroyed_at` was restored to the wire
+	// ADR-047 — proofs issued before `destroyed_at` was restored to the wire
 	// document carry the chain timestamp only in `attestation.key_id`. Recover
 	// it there; the recovered value is disclosed in the verdict metadata, never
 	// silently substituted.
 	timestamp, recovered := resolveChainTimestamp(proof)
 	metadata.RecoveredChainTimestamp = recovered
 
-	// the per-record receipt specification + the receipt-batching specification the receipt pipeline — optional Merkle roots for the Step 8
-	// amendment. Absent for pre-the receipt pipeline proofs, where both branches collapse to
+	// ADR-039 + ADR-041 Wave-N — optional Merkle roots for the Step 8
+	// amendment. Absent for pre-Wave-N proofs, where both branches collapse to
 	// the legacy formula → byte-identical chain walk.
 	var rrmrPtr, ppmrPtr *string
 	if v, ok := proof["record_receipts_merkle_root"].(string); ok {
@@ -264,18 +282,21 @@ func verifyCore(jsonBytes []byte, policy VerifierPolicy, enforceParentDepthCap b
 				Metadata:     metadata,
 			}
 		}
-		subsystem := stringOrEmpty(step["subsystem"])
+		// Canonical-identity walk: the hash inputs come from CanonicalChain by
+		// INDEX, never from the document. A document cannot choose what a step
+		// is; it can only fail to match.
+		canonical := CanonicalChain[idx]
+		declaredSubsystem := stringOrEmpty(step["subsystem"])
 		claimedChainHash := stringOrEmpty(step["chain_hash"])
-		method := LookupMethod(subsystem)
 
 		var recomputed string
-		if idx == 7 && subsystem == "capsule_destroy" {
-			// the per-record receipt specification + the receipt-batching specification Step 8 amendment — presence-conditional Merkle-
+		if idx == NanorixChainSteps-1 {
+			// ADR-039 + ADR-041 Step 8 amendment — presence-conditional Merkle-
 			// root incorporation. The (nil, nil) branch returns the legacy
 			// formula bit-for-bit (Forever-Standard).
 			recomputed = ComputeStep8Amended(prevHash, timestamp, rrmrPtr, ppmrPtr)
 		} else {
-			recomputed = ComputeStepHash(prevHash, subsystem, "destroy", method, timestamp)
+			recomputed = ComputeStepHash(prevHash, canonical.Subsystem, "destroy", canonical.Method, timestamp)
 		}
 
 		if recomputed != StripHashPrefix(claimedChainHash) {
@@ -284,7 +305,24 @@ func verifyCore(jsonBytes []byte, policy VerifierPolicy, enforceParentDepthCap b
 				FailureReason: &FailureReason{
 					Type:      ReasonStepHashMismatch,
 					StepIdx:   idx,
-					Subsystem: subsystem,
+					Subsystem: declaredSubsystem,
+				},
+				StageReached: 3,
+				Metadata:     metadata,
+			}
+		}
+
+		// Hashes reproduced; the label beside them still has to be the right
+		// one. Genuine hashes under a forged subsystem name would otherwise
+		// verify clean and read as attesting to a step they do not describe.
+		if declaredSubsystem != canonical.Subsystem {
+			return AuditProofVerificationResult{
+				Valid: false,
+				FailureReason: &FailureReason{
+					Type:              ReasonChainStepIdentity,
+					StepIdx:           idx,
+					ExpectedSubsystem: canonical.Subsystem,
+					FoundSubsystem:    declaredSubsystem,
 				},
 				StageReached: 3,
 				Metadata:     metadata,
@@ -293,7 +331,7 @@ func verifyCore(jsonBytes []byte, policy VerifierPolicy, enforceParentDepthCap b
 		prevHash = recomputed
 	}
 
-	// ── the per-record receipt specification receipt-set verification (Mode A step 3) ──
+	// ── ADR-039 receipt-set verification (Mode A step 3) ──
 	if receipts, ok := proof["record_receipts"].([]interface{}); ok {
 		capsuleID := ""
 		if metadata.CapsuleID != nil {
@@ -309,7 +347,7 @@ func verifyCore(jsonBytes []byte, policy VerifierPolicy, enforceParentDepthCap b
 		}
 	}
 
-	// ── the receipt-batching specification parent-proof set verification ──
+	// ── ADR-041 parent-proof set verification ──
 	if parents, ok := proof["parent_proof_hashes"].([]interface{}); ok {
 		if failure := verifyParentProofsArray(parents, ppmrPtr); failure != nil {
 			return AuditProofVerificationResult{
@@ -354,7 +392,7 @@ func verifyCore(jsonBytes []byte, policy VerifierPolicy, enforceParentDepthCap b
 		}
 	}
 
-	// Algorithm dispatch precedes byte-shape checks (the specification C.1): a proof
+	// Algorithm dispatch precedes byte-shape checks (ADR-051 C.1): a proof
 	// declaring a non-Ed25519 signature algorithm fails typed as
 	// algorithm_unsupported here — it must never fall through to the
 	// 64/32-byte decode gates and report as "malformed". Absent or "Ed25519"

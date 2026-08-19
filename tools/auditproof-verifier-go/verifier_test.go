@@ -3,7 +3,7 @@
 // **Cross-impl byte-equivalence (binding contract):** every fixture in
 // `tools/nanorix-verify/fixtures/corpus/` must produce a Go-side verification
 // output that is byte-identical to the Rust verifier output. Divergence on
-// even one fixture is a P0 finding per the Forever-Standard wire discipline + the specification release framing
+// even one fixture is a P0 finding per ADR-006 I0 + ADR-033 release framing
 // + `feedback_canonical_hash_under_fault.md`.
 //
 // Property-test fault injection (per `feedback_canonical_hash_under_fault.md`):
@@ -29,7 +29,7 @@ import (
 const (
 	// FixtureCorpusRelative is the corpus path relative to this Go module.
 	// The corpus is shipped at `tools/nanorix-verify/fixtures/corpus/` from
-	// the published corpus (an earlier release verification-surface scaffolds).
+	// commit ba1d51a (Wave 6 verification-surface scaffolds).
 	FixtureCorpusRelative = "../nanorix-verify/fixtures/corpus"
 
 	// MinFixturesExpected is the corpus-size invariant. New fixtures may be
@@ -189,6 +189,57 @@ func TestVerifyTamperedStepHashFailsAtStage3(t *testing.T) {
 	}
 }
 
+// TestCanonicalChainIdentityIsEnforced mirrors the Rust B1.4 tests. Eight
+// entries is a count, not an identity: before the canonical-identity walk, a
+// self-consistent chain over any eight subsystem names verified clean.
+func TestCanonicalChainIdentityIsEnforced(t *testing.T) {
+	ts := "2026-05-06T12:00:00Z"
+
+	// Positive control — the canonical eight still verify.
+	if r := VerifyValue(makeMinimalV1Proof(ts), VerifierPolicy{}); !r.Valid {
+		t.Fatalf("canonical chain must verify; got %+v", r.FailureReason)
+	}
+
+	// A self-consistent chain over non-canonical subsystems: the hashes were
+	// computed over the forger's own names, so the canonical recompute
+	// disagrees at step 0.
+	forged := makeMinimalV1Proof(ts)
+	chain := forged["chain"].([]interface{})
+	prev := NanorixGenesisHash
+	for idx := range chain {
+		step := chain[idx].(map[string]interface{})
+		name := fmt.Sprintf("subsystem_%d", idx)
+		step["subsystem"] = name
+		h := ComputeStepHash(prev, name, "destroy", LookupMethod(name), ts)
+		step["chain_hash"] = h
+		prev = h
+	}
+	forged["final_hash"] = prev
+	r := VerifyValue(forged, VerifierPolicy{})
+	if r.Valid {
+		t.Fatal("a self-consistent non-canonical chain must not verify")
+	}
+	if r.FailureReason == nil || r.FailureReason.Type != ReasonStepHashMismatch || r.FailureReason.StepIdx != 0 {
+		t.Errorf("failure_reason = %+v; want step_hash_mismatch at 0", r.FailureReason)
+	}
+
+	// Genuine hashes, forged label — only the explicit identity check sees it.
+	mislabelled := makeMinimalV1Proof(ts)
+	mislabelled["chain"].([]interface{})[3].(map[string]interface{})["subsystem"] = "dire_identity"
+	r = VerifyValue(mislabelled, VerifierPolicy{})
+	if r.Valid {
+		t.Fatal("a forged step label must not verify")
+	}
+	if r.FailureReason == nil || r.FailureReason.Type != ReasonChainStepIdentity {
+		t.Fatalf("failure_reason = %+v; want chain_step_identity_mismatch", r.FailureReason)
+	}
+	if r.FailureReason.StepIdx != 3 ||
+		r.FailureReason.ExpectedSubsystem != "dire_keys" ||
+		r.FailureReason.FoundSubsystem != "dire_identity" {
+		t.Errorf("payload = %+v", r.FailureReason)
+	}
+}
+
 // TestVerifyMismatchedFinalHashFailsAtStage4 mirrors Rust
 // `verify_mismatched_final_hash_fails_at_stage_4`.
 func TestVerifyMismatchedFinalHashFailsAtStage4(t *testing.T) {
@@ -273,7 +324,7 @@ func TestPolicyPinCustomerHsmAuditProofMatchesAuthorityAccepted(t *testing.T) {
 // output.
 //
 // **This is the primary cross-impl byte-equivalence assertion.** Per
-// the Forever-Standard wire discipline + the specification release framing + `feedback_canonical_hash_under_fault.md`,
+// ADR-006 I0 + ADR-033 release framing + `feedback_canonical_hash_under_fault.md`,
 // divergence on even ONE fixture is a P0 finding.
 //
 // If the Rust binary is unavailable (`go test` running in an environment
@@ -397,6 +448,7 @@ func TestPropertyFault10kIterations(t *testing.T) {
 		ReasonAuthorityModeMismatch:    true,
 		ReasonAuthorityRevoked:         true,
 		ReasonCdpVersionUnsupported:    true,
+		ReasonChainStepIdentity:        true,
 		ReasonDiagnosticProofRefused:   true,
 		ReasonFinalHashMismatch:        true,
 		ReasonGenesisHashMismatch:      true,
@@ -534,7 +586,7 @@ func TestPropertyFault10kIterations(t *testing.T) {
 
 // TestComputeStepHashCrossImplAnchor pins the byte-output of ComputeStepHash
 // against a hand-computed anchor. If this drifts, the chain algorithm has
-// been tampered with — Forever-Standard the Forever-Standard wire discipline violation.
+// been tampered with — Forever-Standard ADR-006 I0 violation.
 func TestComputeStepHashCrossImplAnchor(t *testing.T) {
 	// Compute step 1 from genesis: subsystem=eee_namespace, action=destroy,
 	// method=procfs_verification, timestamp=2026-05-08T00:00:00Z.
@@ -558,6 +610,7 @@ func TestFailureReasonWireFormIsLocked(t *testing.T) {
 		{FailureReason{Type: ReasonRequiredFieldMissing, Field: "x"}, "required_field_missing"},
 		{FailureReason{Type: ReasonStepCountInvalid, Expected: 8, FoundCount: 7}, "step_count_invalid"},
 		{FailureReason{Type: ReasonStepHashMismatch, StepIdx: 0, Subsystem: "x"}, "step_hash_mismatch"},
+		{FailureReason{Type: ReasonChainStepIdentity, StepIdx: 3, ExpectedSubsystem: "dire_keys", FoundSubsystem: "rzl_audit"}, "chain_step_identity_mismatch"},
 		{FailureReason{Type: ReasonGenesisHashMismatch}, "genesis_hash_mismatch"},
 		{FailureReason{Type: ReasonFinalHashMismatch, Claimed: "x", Computed: "y"}, "final_hash_mismatch"},
 		{FailureReason{Type: ReasonSignatureMismatch, SigReason: SigDoesNotVerify}, "signature_mismatch"},
@@ -717,7 +770,7 @@ func runRustVerifier(bin, fixture string) ([]byte, error) {
 	return stdout, nil
 }
 
-// ── the specification C.1-2 — algorithm dispatch + additive-evolution tolerance ──
+// ── ADR-051 C.1-2 — algorithm dispatch + additive-evolution tolerance ──
 
 // TestNonEd25519AlgorithmFailsTypedAtStage4: a declared non-Ed25519 algorithm
 // must fail typed as algorithm_unsupported, never fall through to the byte
@@ -750,7 +803,7 @@ func TestNonEd25519TopLevelSignatureAlgorithmFailsTyped(t *testing.T) {
 }
 
 // TestUnknownFieldsDoNotDisturbVerification: additive-evolution insurance
-// (the specification C.2) — unknown fields must be ignored by the ladder.
+// (ADR-051 C.2) — unknown fields must be ignored by the ladder.
 func TestUnknownFieldsDoNotDisturbVerification(t *testing.T) {
 	proof := makeMinimalV1Proof("2026-05-06T12:00:00Z")
 	proof["future_sibling_artifact"] = map[string]interface{}{"anything": []int{1, 2, 3}}

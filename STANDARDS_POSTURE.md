@@ -55,6 +55,60 @@ published corpus" is one you can actually test against. The corpus is generated
 from a committed generator, so its expected verdicts can be reproduced rather
 than taken on trust.
 
+## Relationship to IETF SCITT
+
+The IETF's SCITT working group standardises the transport this format travels on. We conform to it
+rather than compete with it, and the boundary between the two is the clearest statement of what
+this specification is for.
+
+- **RFC 9943**, *An Architecture for Trustworthy and Transparent Digital Supply Chains* —
+  Proposed Standard, June 2026.
+- **RFC 9942**, *CBOR Object Signing and Encryption (COSE) Receipts* — Proposed Standard, 2026.
+- **draft-ietf-scitt-scrapi**, *SCITT Reference APIs* — IESG-approved, in the RFC Editor queue.
+
+Together these define, normatively, the pattern this repository's verifiers implement: an issuer
+publishes a signed statement, and a relying party verifies the receipt **offline**, without calling
+the service that issued it. **An AuditProof is a SCITT Signed Statement.** A Transparency Service is
+an optional place to register one and obtain a non-equivocation receipt. Anyone building a bespoke
+transparency surface for this purpose after June 2026 is building a non-standard version of a
+Proposed Standard, and this project does not.
+
+### Where SCITT stops, and why that is the point
+
+The SCITT charter puts two things explicitly **out of scope**, quoted:
+
+> *"Preventing authenticated issuers from making false claims"*
+
+> *"defining data formats for payload content, such as Bills of Materials data formats"*
+
+SCITT standardises the **envelope, the log, and the receipt**. It deliberately declines to say
+whether a claim is *true*, and deliberately declines to define the payload. **The substance of the
+claim is left to the issuer — and the substance is what this specification defines.**
+
+The claim carried here is a structural execution fact: *this workspace ran, here is the eight-step
+destruction chain, and it was destroyed.* A Transparency Service would carry that claim and would
+never itself produce it. So the two layers compose rather than overlap, and the seam is where a
+standards body would expect it to be.
+
+That boundary is also why the claim stays deliberately narrow. This format never asserts that a
+regulation was satisfied, that a control passed, or that anyone was compliant — see *What this
+format doesn't claim* below. A narrow structural claim is the only kind an issuer can make that a
+transparency layer can carry without inheriting a judgement it was never designed to make.
+
+### Adjacent work, and what it does not cover
+
+Sigstore and Rekor, in-toto, SLSA and C2PA are the nearest neighbours, and the overlap on
+tamper-evidence mechanism is substantial — a fair reading is that the combination covers most of
+it. Three things survive the overlap:
+
+1. Rekor is a **public** log, which constrains what metadata a regulated-data record can carry.
+2. Its subject model is an **artifact digest**. A workspace that existed and then ceased to exist
+   is not artifact-shaped.
+3. **None of them attests to destruction.** Sigstore, in-toto, SLSA, C2PA, and the confidential-
+   computing attestations (Nitro Enclaves, Confidential Space, TDX, SEV-SNP) answer *where did this
+   come from* or *what is running*. Evidence that something **stopped existing** is a different
+   assertion, and it is the one this format is for.
+
 ## What this format doesn't claim
 
 The specification says this in its own scope section. It belongs here too,

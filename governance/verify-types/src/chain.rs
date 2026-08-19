@@ -1,8 +1,8 @@
-//! Verifier chain-walk for the specification — multi-step pipeline composition.
+//! Verifier chain-walk for ADR-030 D2 — multi-step pipeline composition.
 //!
 //! ## What this module is
 //!
-//! the specification (Accepted 2026-05-07) introduces `parent_audit_proof_id` as a
+//! ADR-030 D1 (Accepted 2026-05-07) introduces `parent_audit_proof_id` as a
 //! customer-declared field on FullCdp / VerificationCdp. D2 — this module —
 //! ships the verifier semantics that turn a chain of customer-linked
 //! AuditProofs into a single signed trust DAG: walk from leaf back to genesis,
@@ -40,12 +40,12 @@
 //! returns; cross-walk caching is forbidden by zero-retention discipline
 //! (`feedback_no_post_destroy_cache.md`).
 //!
-//! ## Forever-Standard discipline (the Forever-Standard wire discipline)
+//! ## Forever-Standard discipline (ADR-006 I0)
 //!
 //! Chain-walk semantics are themselves Forever-Standard locked once shipped.
 //! Future ADRs cannot change the cycle-detection algorithm, the depth-limit
 //! default, the customer-id binding enforcement, or the in-walk caching
-//! policy without an specification minor-bump. The cdp_version field is NOT
+//! policy without an ADR-006 minor-bump. The cdp_version field is NOT
 //! modified by this module — chain-walk is an additive verifier capability;
 //! AuditProof shape stays "2.1" per Path A precedent (commit `c32cf37`).
 //!
@@ -77,14 +77,14 @@ use crate::FailureReason;
 /// `verify_chain`. The default defends against DoS via deeply-nested chains;
 /// customer override is a deliberate operational decision.
 ///
-/// **Forever-Standard** — value of 100 is locked at the specification ship; future
-/// changes require the specification minor-bump per the chain-walk semantics lock.
+/// **Forever-Standard** — value of 100 is locked at ADR-030 D2 ship; future
+/// changes require ADR-006 minor-bump per the chain-walk semantics lock.
 pub const DEFAULT_MAX_CHAIN_DEPTH: usize = 100;
 
 /// Trait exposing the minimal AuditProof surface that chain-walk needs.
 ///
 /// Concrete implementations live in
-/// - the AuditProof document builder (impl for `FullCdp` and
+/// - `services/api/src/cdp_document.rs` (impl for `FullCdp` and
 ///   `VerificationCdp`),
 /// - `tools/cli` (impl for the offline-deserialized AuditProof JSON),
 /// - SDK adapters (Python / TypeScript; deferred per SDK 1.0 publish-block).
@@ -101,7 +101,7 @@ pub trait ChainNode {
     /// destroy time. **Load-bearing** for cross-customer attack closure.
     fn org_id(&self) -> &str;
 
-    /// The customer-declared parent AuditProof reference (the specification).
+    /// The customer-declared parent AuditProof reference (ADR-030 D1).
     /// `None` indicates a pipeline-genesis capsule — chain-walk terminates here.
     fn parent_audit_proof_id(&self) -> Option<&str>;
 
@@ -129,10 +129,10 @@ pub struct SingleVerification {
     /// The owning org_id of the verified AuditProof. Matches `ChainNode::org_id()`.
     pub org_id: String,
     /// `true` iff the AuditProof's Ed25519 signature verified against the
-    /// signed canonical_hash bytes per the specification.
+    /// signed canonical_hash bytes per ADR-011.
     pub signature_verified: bool,
     /// `true` iff the AuditProof's `final_hash` recomputed identically from
-    /// the canonical view per the AuditProof specification.
+    /// the canonical view per ADR-011 Part 3.
     pub canonical_hash_verified: bool,
     /// The `signing_key_version` field from the AuditProof — identifies which
     /// signing-authority version produced the signature. Useful for top-level
@@ -142,7 +142,7 @@ pub struct SingleVerification {
 
 /// Per-link verification failure surface — produced by
 /// `ChainNode::verify_self()` when a link does not verify. The `reason` is
-/// the closed `FailureReason` enum (the Forever-Standard wire discipline forever-stable wire-form).
+/// the closed `FailureReason` enum (ADR-006 I0 forever-stable wire-form).
 #[derive(Debug, Clone, PartialEq)]
 pub struct SingleVerificationFailure {
     /// The capsule_id of the failed AuditProof. Lets the auditor pinpoint
@@ -396,7 +396,7 @@ where
 
     // Step 8: customer-id binding — child.org_id MUST equal parent.org_id.
     // **Class-A trust invariant** — cross-customer parent-chain attack
-    // closure. Co-owned with Internal Auditor per the specification runbook.
+    // closure. Co-owned with Internal Auditor per ADR-030 D2 runbook.
     if this_verification.org_id != parent_node.org_id() {
         return Err(ChainVerificationError::CrossCustomerLinkage {
             child_org: this_verification.org_id,
@@ -1031,7 +1031,7 @@ mod tests {
 
     // ── Forever-Standard semantics lock ────────────────────────────────────
 
-    /// **Forever-Standard pin**: chain-walk semantics are locked at the specification
+    /// **Forever-Standard pin**: chain-walk semantics are locked at ADR-030 D2
     /// ship. Future code changes that alter behavior trip this test.
     ///
     /// Construct a synthetic 5-step chain with mixed metadata; assert the

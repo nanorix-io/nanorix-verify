@@ -1,7 +1,7 @@
 //! Wire-format-locked round-trip tests for `FailureReason::AuthorityIdMismatch`
-//! (the customer-authority specification G7 / VP Security extended-review F4.3).
+//! (ADR-031 G7 / VP Security extended-review F4.3).
 //!
-//! **Forever-Standard discipline (the Forever-Standard wire discipline).** These tests pin the
+//! **Forever-Standard discipline (ADR-006 I0).** These tests pin the
 //! exact wire form (variant tag + field names + `Option<String>`
 //! serialization shape + `AuthorityIdMismatchReason` sub-enum tags) so
 //! that:
@@ -13,7 +13,7 @@
 //!   metadata (auditors who persisted a `failure_reason` JSON field
 //!   years from now must still parse it correctly).
 //!
-//! The variant disambiguates verifier-policy-pin failures (per the customer-authority specification G7
+//! The variant disambiguates verifier-policy-pin failures (per ADR-031 G7
 //! customer-side `required_authority_id` policy) from `AuthorityModeMismatch`
 //! (which covers algorithm-level rejection per Amendment 1) and from
 //! `SignatureMismatch` (which covers Nanorix-authority-signed proof failures).

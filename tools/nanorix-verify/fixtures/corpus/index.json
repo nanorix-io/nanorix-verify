@@ -64,6 +64,6 @@
   "generator": "tools/nanorix-verify/fixtures/generator.rs",
   "purpose": "Cross-implementation byte-equivalence corpus for the nanorix-verify reference verifier.",
   "schema_version": "2",
-  "signed_message": "v1.0 signs final_hash; v2.0 signs document_hash; v2.1 nanorix_only signs the specification Part-3 canonical-view hash (hex(sha512(jcs(view))))",
+  "signed_message": "v1.0 signs final_hash; v2.0 signs document_hash; v2.1 nanorix_only signs the ADR-011 Part-3 canonical-view hash (hex(sha512(jcs(view))))",
   "total_fixtures": 100
 }

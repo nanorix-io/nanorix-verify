@@ -7,7 +7,7 @@ implementation, held to the 100-document reference corpus at
 `verify(proof)` surface: flexible input (dict / JSON string / path / bytes) and
 a flat result object.
 
-## The chain hash formula (Forever-Standard, the Forever-Standard wire discipline)
+## The chain hash formula (Forever-Standard, ADR-006 I0)
 
     chain_hash[n] = SHA-512(prev \\x00 subsystem \\x00 "destroy"
                             \\x00 method \\x00 timestamp)
@@ -24,7 +24,7 @@ the action segment is always the literal `"destroy"`.
 ## The signed message is version-dependent
 
 v1.0 signs `final_hash`. v2.0 signs `document_hash`. v2.1 `nanorix_only` — what
-production emits — signs the specification Part-3 canonical-view hash. Verifying a
+production emits — signs the ADR-011 Part-3 canonical-view hash. Verifying a
 v2.1 proof against `final_hash` never validates. See `_canonical.py`.
 
 The signature covers the ASCII hex characters of that hash (128 bytes), not
@@ -66,7 +66,7 @@ def _compute_step_hash(
     method: str,
     timestamp: str,
 ) -> str:
-    """Re-implement compute_step_hash from the chain specification.
+    """Re-implement compute_step_hash from governance/rzl/src/proofs/mod.rs.
 
     `action` is always "destroy" — hardcoded per CDP spec.
     """
@@ -169,6 +169,14 @@ def _prose(wire: Dict[str, Any]) -> str:
         idx = wire.get("step_idx")
         step_no = idx + 1 if isinstance(idx, int) else "?"
         return f"Chain hash mismatch at step {step_no} ({wire.get('subsystem')})"
+    if t == FailureReasonType.CHAIN_STEP_IDENTITY_MISMATCH:
+        idx = wire.get("step_idx")
+        step_no = idx + 1 if isinstance(idx, int) else "?"
+        return (
+            f"Chain step {step_no} names subsystem {wire.get('found_subsystem')!r}; "
+            f"the canonical subsystem for that position is "
+            f"{wire.get('expected_subsystem')!r}"
+        )
     if t == FailureReasonType.FINAL_HASH_MISMATCH:
         return "final_hash does not match the last step's chain_hash"
     if t == FailureReasonType.SIGNATURE_MISMATCH:
@@ -226,7 +234,10 @@ def verify(
     )
 
     failed_step: Optional[int] = None
-    if wire is not None and wire.get("type") == FailureReasonType.STEP_HASH_MISMATCH:
+    if wire is not None and wire.get("type") in (
+        FailureReasonType.STEP_HASH_MISMATCH,
+        FailureReasonType.CHAIN_STEP_IDENTITY_MISMATCH,
+    ):
         idx = wire.get("step_idx")
         if isinstance(idx, int):
             failed_step = idx + 1

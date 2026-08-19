@@ -1,6 +1,6 @@
 //! Trust-chain manifest — authority public keys with archive-forever discipline.
 //!
-//! Per the verifier specification (G2 long-term verifiability, addendum 2026-05-06):
+//! Per Nanorix EO-07 ext (G2 long-term verifiability, addendum 2026-05-06):
 //! "An AuditProof signed today with signing_key_version 7 must be verifiable
 //! in 2032 even after we've rotated to version 12. Healthcare retention is
 //! 7-30 years. Without archive-forever discipline encoded now, we ship a
@@ -34,7 +34,7 @@ use std::collections::HashMap;
 /// `https://nanorix.io/.well-known/trust-chain.json` or loaded from a local
 /// file via `--trust-chain`.
 ///
-/// Forever-stable schema per the Forever-Standard wire discipline — once published, fields are
+/// Forever-stable schema per ADR-006 I0 — once published, fields are
 /// additive only.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TrustChainManifest {
@@ -65,9 +65,9 @@ pub struct TrustChainManifest {
     /// this field and `pqc_manifest_signature`. base64 (with `base64:` prefix).
     pub manifest_signature: String,
 
-    /// Reserved for the post-quantum manifest dual-signature (the specification:
+    /// Reserved for the post-quantum manifest dual-signature (ADR-049 D1:
     /// SLH-DSA-SHA2-256s) over the same `signed_payload()` bytes as
-    /// `manifest_signature`. Always `None` until the specification Phase 1; absent from
+    /// `manifest_signature`. Always `None` until ADR-049 Phase 1; absent from
     /// the JSON until then, so pre-PQC manifests are byte-identical.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pqc_manifest_signature: Option<String>,
@@ -110,7 +110,7 @@ pub struct KeyVersionRecord {
     pub public_key_b64: String,
 
     /// SHA-256 fingerprint over the public key bytes, hex-encoded with
-    /// `sha256:` prefix per the Forever-Standard wire discipline prefix discipline.
+    /// `sha256:` prefix per ADR-006 I0 prefix discipline.
     pub public_key_fingerprint: String,
 
     /// When this key first became valid for signing. RFC 3339 UTC.
@@ -122,7 +122,7 @@ pub struct KeyVersionRecord {
     pub archived_at: Option<String>,
 
     /// Signature algorithm for this key version. Absent means `"Ed25519"`
-    /// (every pre-the specification key). Added per the specification.1 BEFORE first public
+    /// (every pre-ADR-049 key). Added per ADR-049 D3.1 BEFORE first public
     /// manifest publication so the forever-stable schema carries algorithm
     /// agility from day one; hybrid-era key versions will name their PQC
     /// algorithm here (e.g., `"ML-DSA-65"`).
@@ -132,7 +132,7 @@ pub struct KeyVersionRecord {
 
 impl KeyVersionRecord {
     /// The effective signature algorithm: the explicit `algorithm` field, or
-    /// `"Ed25519"` when absent (the specification.1 default).
+    /// `"Ed25519"` when absent (ADR-049 D3.1 default).
     pub fn algorithm_or_default(&self) -> &str {
         self.algorithm.as_deref().unwrap_or("Ed25519")
     }
@@ -211,7 +211,7 @@ impl TrustChainManifest {
     /// `manifest_signature` AND `pqc_manifest_signature` keys removed. Signer
     /// and verifier MUST build the payload identically — both go through this
     /// one function. Excluding the (reserved) PQC field NOW fixes the payload
-    /// contract before any manifest ships: at the specification Phase 1 both signatures
+    /// contract before any manifest ships: at ADR-049 Phase 1 both signatures
     /// independently cover this same payload, with no ordering dependency.
     fn signed_payload(&self) -> Result<Vec<u8>, ManifestError> {
         let mut value = serde_json::to_value(self).map_err(|_| ManifestError::Malformed)?;
@@ -223,7 +223,7 @@ impl TrustChainManifest {
     }
 
     /// Verify the manifest's own Ed25519 signature against the long-term
-    /// identity key — the trust-chain anchoring trust root.
+    /// identity key — the EO-07 sub-B trust root.
     ///
     /// Everything the verifier trusts reduces to `pinned_fingerprint`, which
     /// the auditor obtains independently over multiple channels
@@ -348,7 +348,7 @@ pub enum KeyStatus {
     Archived,
 }
 
-/// V1 stub: load manifest from a local JSON file. V2 (trust-chain anchoring) adds the
+/// V1 stub: load manifest from a local JSON file. V2 (EO-07 sub-B) adds the
 /// `https://nanorix.io/.well-known/trust-chain.json` fetch + manifest-
 /// signature verification against the long-term identity key.
 pub fn load_from_file(path: &std::path::Path) -> anyhow::Result<TrustChainManifest> {
@@ -533,7 +533,7 @@ mod tests {
         assert_eq!(loaded, manifest);
     }
 
-    // ── trust-chain anchoring: manifest-signature verification ──────────────────────
+    // ── EO-07 sub-B: manifest-signature verification ──────────────────────
 
     /// A manifest signed by a test identity key. Returns the manifest, the
     /// identity fingerprint (the value an auditor pins out-of-band), and the
@@ -621,11 +621,11 @@ mod tests {
         );
     }
 
-    // ── the specification.1-2: algorithm agility + reserved PQC dual-signature ────
+    // ── ADR-049 D3.1-2: algorithm agility + reserved PQC dual-signature ────
 
     #[test]
     fn algorithm_defaults_to_ed25519_and_is_absent_from_json_when_none() {
-        // Pre-the specification manifests carry no algorithm field: it must parse as
+        // Pre-ADR-049 manifests carry no algorithm field: it must parse as
         // None, mean Ed25519, and round-trip back to absent (byte-compat for
         // the JCS signing payload).
         let m = fixture_manifest();
@@ -678,7 +678,7 @@ mod tests {
 
     #[test]
     fn manifest_with_unknown_fields_still_parses() {
-        // Additive-evolution insurance (the specification C.2): future manifest fields
+        // Additive-evolution insurance (ADR-051 C.2): future manifest fields
         // at every level must be ignored by this build, not rejected.
         let json = serde_json::json!({
             "schema_version": "1",

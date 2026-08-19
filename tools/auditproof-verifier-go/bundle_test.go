@@ -18,7 +18,7 @@ import (
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Fixture builder: synthesizes a receipt pipeline AuditProof with N=2 receipts for
+// Fixture builder: synthesizes a Wave-N AuditProof with N=2 receipts for
 // bundle extraction/verification roundtrip testing.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -255,8 +255,8 @@ func TestBundleDisclaimerFactualLanguage(t *testing.T) {
 }
 
 func TestBundleDisclaimerCitesADR040(t *testing.T) {
-	if !strings.Contains(PortableReceiptBundleDisclaimer, "the specification") {
-		t.Error("disclaimer must cite the specification")
+	if !strings.Contains(PortableReceiptBundleDisclaimer, "ADR-040") {
+		t.Error("disclaimer must cite ADR-040")
 	}
 	if !strings.Contains(PortableReceiptBundleDisclaimer, "control-map") {
 		t.Error("disclaimer must mention control-map mapping artifact")
@@ -373,7 +373,7 @@ func TestExtractN1BundleHasEmptyInclusionProof(t *testing.T) {
 func TestExtractBundleWithPatternTag(t *testing.T) {
 	timestamp := "2026-05-12T00:00:00Z"
 	capsuleID := "cap_pa_go"
-	// the per-record receipt specification: the declared tag is bound into the chain hash, not merely
+	// ADR-039: the declared tag is bound into the chain hash, not merely
 	// carried in the JSON.
 	receiptChain := computeRecordChainHashLocal(capsuleID, 0, "rec_pa", "sha512:in", "sha512:out", NanorixGenesisHash, strPtrLocal("pa"))
 	merkleRoot := receiptChain
@@ -429,7 +429,7 @@ func TestExtractBundleWithPatternTag(t *testing.T) {
 
 // Tagged N=1 bundle roundtrip with a real signer: VerifyReceiptBundle must
 // bind the declared pattern_tag into the record_chain_hash recompute
-// (the per-record receipt specification signed primitive), and a swapped or stripped tag must be rejected.
+// (ADR-039 signed primitive), and a swapped or stripped tag must be rejected.
 func TestVerifyReceiptBundleTaggedRoundtripAndTamperRejected(t *testing.T) {
 	timestamp := "2026-05-12T00:00:00Z"
 	capsuleID := "cap_pa_verify_go"

@@ -60,7 +60,7 @@ use crate::{strip_base64_prefix, strip_hash_prefix};
 ///
 /// Vocabulary discipline per `regulatory_context` rules + CONVENTIONS.md:
 /// forbidden words include `COMPLIANT`, `SATISFIED`, `PASSED`, `MEETS`.
-pub const PORTABLE_RECEIPT_BUNDLE_DISCLAIMER: &str = "This Portable Receipt Bundle carries cryptographic evidence of one record's structural execution. Verifying party uses the audit_proof_anchors to verify the receipt's merkle inclusion + outer Ed25519 signature. Control framework references are NOT included in this bundle; consult the specification mapping artifact at schema.nanorix.com/control-map/{framework_version}.json to apply current control mappings at consumption time.";
+pub const PORTABLE_RECEIPT_BUNDLE_DISCLAIMER: &str = "This Portable Receipt Bundle carries cryptographic evidence of one record's structural execution. Verifying party uses the audit_proof_anchors to verify the receipt's merkle inclusion + outer Ed25519 signature. Control framework references are NOT included in this bundle; consult the ADR-040 mapping artifact at schema.nanorix.com/control-map/{framework_version}.json to apply current control mappings at consumption time.";
 
 /// `signature_target` value for the legacy CDP v1.0/v2.0 signing model:
 /// the outer Ed25519 signature covers the ASCII-hex bytes of
@@ -75,7 +75,7 @@ pub const SIGNATURE_TARGET_DOCUMENT_CANONICAL_HASH: &str = "document_canonical_h
 
 /// Wave B Item 7 — Portable Receipt Bundle wire shape.
 ///
-/// Forever-Standard the Forever-Standard wire discipline: `bundle_version` is append-only; the V1.0
+/// Forever-Standard ADR-006 I0: `bundle_version` is append-only; the V1.0
 /// shape remains valid forever. Future bundle types land as new wire-format
 /// versions, NEVER as breaking-shape changes to V1.0.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -102,7 +102,7 @@ pub struct AuditProofAnchors {
     pub framework_version_at_emit: Option<String>,
     /// Which anchor the outer Ed25519 signature covers. Absent = legacy
     /// [`SIGNATURE_TARGET_STEP8_CHAIN_HASH`] (v1.0/v2.0 bundles predate this
-    /// field). Additive per the Forever-Standard wire discipline — legacy bundle JSON is byte-unchanged.
+    /// field). Additive per ADR-006 I0 — legacy bundle JSON is byte-unchanged.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub signature_target: Option<String>,
     /// FullCdp document canonical hash (bare lowercase 128-char hex) — the
@@ -115,7 +115,7 @@ pub struct AuditProofAnchors {
 /// Bundle-extraction / verification errors.
 #[derive(Debug, thiserror::Error)]
 pub enum BundleError {
-    #[error("AuditProof has no record_receipts field; cannot extract receipt bundle from pre-the receipt pipeline AuditProof")]
+    #[error("AuditProof has no record_receipts field; cannot extract receipt bundle from pre-Wave-N AuditProof")]
     NoReceipts,
     #[error("record index {0} out of bounds; AuditProof has {1} receipts")]
     IndexOutOfBounds(u32, usize),
@@ -143,7 +143,7 @@ pub enum BundleError {
 ///
 /// `audit_proof` is the full FullCdp/VerificationCdp JSON; `record_index`
 /// selects the receipt within `record_receipts`. Returns
-/// `Err(BundleError::NoReceipts)` if the AuditProof is pre-the receipt pipeline (no
+/// `Err(BundleError::NoReceipts)` if the AuditProof is pre-Wave-N (no
 /// `record_receipts` field).
 pub fn extract_receipt_bundle(
     audit_proof: &serde_json::Value,
@@ -267,7 +267,7 @@ pub fn extract_receipt_bundle(
     })
 }
 
-/// Verify a Portable Receipt Bundle standalone — Mode B per the per-record receipt specification.
+/// Verify a Portable Receipt Bundle standalone — Mode B per ADR-039.
 ///
 /// Steps (mirrors `extract_receipt_bundle` inverse semantics):
 /// 1. Recompute the receipt's `record_chain_hash` from its fields.
@@ -334,7 +334,7 @@ pub fn verify_receipt_bundle(bundle: &PortableReceiptBundle) -> Result<(), Bundl
         _ => crate::NANORIX_GENESIS_HASH.to_string(),
     };
 
-    // the per-record receipt specification: a declared pattern_tag is a signed primitive — bind its wire
+    // ADR-039: a declared pattern_tag is a signed primitive — bind its wire
     // form into the recompute (mirrors the server's `wave_n.rs` and the
     // Go/Python/TypeScript bundle ports).
     let pattern_tag = bundle.receipt.get("pattern_tag").and_then(|v| v.as_str());
@@ -480,13 +480,13 @@ pub fn bundle_verdict_text(bundle: &PortableReceiptBundle) -> String {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Local hash primitives (mirror the reference chain implementation to keep the
-// verifier independent of the service-side crate per the verifier specification standalone artifact)
+// Local hash primitives (mirror governance/rzl/src/wave_n.rs to keep the
+// verifier independent of the service-side crate per EO-07 standalone artifact)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// `pattern_tag_wire` follows the server's conditional-append rule
-/// (the reference chain implementation): the trailing `\x00 ‖ pattern_tag_wire`
-/// segment is appended ONLY when the receipt declares a tag (the per-record receipt specification
+/// (`governance/rzl/src/wave_n.rs`): the trailing `\x00 ‖ pattern_tag_wire`
+/// segment is appended ONLY when the receipt declares a tag (ADR-039
 /// signed-primitive binding).
 fn compute_record_chain_hash_local(
     capsule_id: &str,
@@ -584,7 +584,7 @@ mod tests {
     use ed25519_dalek::{Signer, SigningKey};
     use sha2::{Digest, Sha512};
 
-    /// Synthesize a receipt pipeline AuditProof with N=2 receipts for testing.
+    /// Synthesize a Wave-N AuditProof with N=2 receipts for testing.
     fn make_wave_n_proof_n2() -> (serde_json::Value, SigningKey) {
         let timestamp = "2026-05-12T00:00:00Z";
         let capsule_id = "cap_bundle_test_n2";
@@ -795,7 +795,7 @@ mod tests {
 
     #[test]
     fn bundle_disclaimer_cites_adr_040_mapping() {
-        assert!(PORTABLE_RECEIPT_BUNDLE_DISCLAIMER.contains("the specification"));
+        assert!(PORTABLE_RECEIPT_BUNDLE_DISCLAIMER.contains("ADR-040"));
         assert!(PORTABLE_RECEIPT_BUNDLE_DISCLAIMER.contains("control-map"));
     }
 
@@ -1026,7 +1026,7 @@ mod tests {
 
     /// Synthesize a v2.1 AuditProof (N=1 receipt) whose attestation signs the
     /// FullCdp document canonical hash — the production v2.1 signing model
-    /// (the reference server implementation Phase 2: Ed25519 over the ASCII
+    /// (`services/api/src/routes/capsules.rs` Phase 2: Ed25519 over the ASCII
     /// bytes of the bare lowercase hex canonical hash).
     fn make_v21_proof() -> (serde_json::Value, SigningKey) {
         let timestamp = "2026-06-01T00:00:00Z";
@@ -1225,7 +1225,7 @@ mod tests {
         }
     }
 
-    // ── the per-record receipt specification pattern_tag signed-primitive binding (regression) ───────────
+    // ── ADR-039 pattern_tag signed-primitive binding (regression) ───────────
 
     /// A tagged receipt's record_chain_hash binds the pattern_tag wire form —
     /// the bundle verify path must recompute WITH the tag (mirrors the server

@@ -8,11 +8,11 @@
 // Ed25519 signature over it distinguishes a genuine AuditProof from a fabricated
 // one.
 //
-// ## Which message is signed (mirrors the hosted verification endpoint)
+// ## Which message is signed (mirrors services/api/src/routes/verify.rs)
 //
 //   - 1.0                    → final_hash (ASCII hex, prefix-stripped)
 //   - 2.0                    → document_hash
-//   - 2.1 + nanorix_only     → the recomputed the specification Part-3 canonical hash
+//   - 2.1 + nanorix_only     → the recomputed ADR-011 Part-3 canonical hash
 //   - 2.1 + dual_signature   → not verifiable by this build → Absent
 //   - 2.1 + tee_attested     → not verifiable by this build → Absent
 //
@@ -30,7 +30,7 @@
 // the Rust verifier implements via `VerifierPolicy::trust_chain` and this Go
 // build does not yet carry.
 //
-// Forever-Standard discipline (the Forever-Standard wire discipline): the canonical view's field set,
+// Forever-Standard discipline (ADR-006 I0): the canonical view's field set,
 // wire-name mapping, and the two server-side transforms (signing_key_version
 // String → i64; the attestation subset) are part of the attestation contract.
 // Any change here must keep the 100-fixture corpus at 100/100.
@@ -88,7 +88,7 @@ type SignatureCheck struct {
 	Mode string
 }
 
-// RecomputeCanonicalHash rebuilds the specification Part-3 canonical view from a
+// RecomputeCanonicalHash rebuilds the ADR-011 Part-3 canonical view from a
 // proof's JSON and returns its RFC-8785 JCS SHA-512 hex digest — byte-identical
 // to the server's `FullCdp::canonical_hash()` and to the Rust verifier's
 // `recompute_canonical_hash`. Lowercase 128-char hex, or empty string on the
@@ -312,15 +312,15 @@ func VerifySignatureAgainst(proof map[string]interface{}, cdpVersion, pubB64 str
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// the chain-timestamp recovery rule — chain-timestamp recovery from attestation key_id
+// ADR-047 — chain-timestamp recovery from attestation key_id
 // ─────────────────────────────────────────────────────────────────────────────
 
 // RecoverTimestampFromKeyID recovers the chain timestamp from an attestation
 // `key_id`. Mirrors `nanorix_verify::recover_timestamp_from_key_id`.
 //
-// AuditProofs issued before the chain-timestamp recovery rule restored the document-level `destroyed_at`
+// AuditProofs issued before ADR-047 restored the document-level `destroyed_at`
 // field carry the chain timestamp in exactly one place: the attestation
-// `key_id`, built by the chain specification as
+// `key_id`, built by `governance/rzl/src/cdp.rs` as
 // `nrx-verify-{terminated_at with ':' replaced by '-'}-{capsule_id[..8]}`.
 // Only the TIME portion ever held colons — the ISO-8601 date carries its own
 // dashes — so restoration splits at `T` and rewrites dashes on the right-hand

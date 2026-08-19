@@ -58,7 +58,7 @@ than a fixture, so the corpus does not pin it.
 ## The signed message
 
 A v2.1 `nanorix_only` AuditProof is **not** signed over `final_hash` — that is
-the v1.0 message. It is signed over the specification Part-3 canonical-view hash,
+the v1.0 message. It is signed over the ADR-011 Part-3 canonical-view hash,
 `hex(sha512(jcs(canonical_view)))`. Getting this wrong is not a theoretical
 concern: the corpus previously shipped with every success fixture signed over
 the v1.0 message inside a document stamped `cdp_version: "2.1"`, so every one

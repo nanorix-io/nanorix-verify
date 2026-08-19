@@ -1,15 +1,15 @@
-//! Customer-attested authority chain-walk — the customer-authority specification G15.
+//! Customer-attested authority chain-walk — ADR-031 G15.
 //!
 //! ## What this module is
 //!
-//! the customer-authority specification G15 closes the BYO-HSM verifier boundary by walking the chain of
+//! ADR-031 G15 closes the BYO-HSM verifier boundary by walking the chain of
 //! trust from a customer-attested AuditProof back to a root that the
 //! verifier already trusts. When an AuditProof's `signing_authority.kind`
 //! is `customer-attested`, the verifier:
 //!
 //! 1. Resolves the customer's published Ed25519 public key — either
 //!    fetched from the customer's published URL OR resolved through the
-//!    Nanorix trust-chain manifest (per the verifier specification) which records
+//!    Nanorix trust-chain manifest (per ADR-027 + EO-07 ext) which records
 //!    bounded customer-authority registrations as additional manifest
 //!    entries.
 //! 2. Verifies the AuditProof's signature against that customer-authority
@@ -33,8 +33,8 @@
 //! ## Naming relative to verify-types/chain.rs
 //!
 //! `governance/verify-types/src/chain.rs` ships chain-walk for
-//! the specification multi-step pipeline composition (capsule chain). This
-//! module ships chain-walk for the customer-authority specification G15 customer-attested AUTHORITY
+//! ADR-030 D2 multi-step pipeline composition (capsule chain). This
+//! module ships chain-walk for ADR-031 G15 customer-attested AUTHORITY
 //! chain (signing-authority chain, distinct from capsule chain). Both
 //! are "chain walks" but at different layers:
 //!
@@ -48,7 +48,7 @@
 //! AND part of a multi-step pipeline would invoke BOTH walks during
 //! full verification.
 //!
-//! ## Forever-Standard discipline (the Forever-Standard wire discipline)
+//! ## Forever-Standard discipline (ADR-006 I0)
 //!
 //! - The closed-set `AuthorityWalkFailure` enum is permanent. New
 //!   failure modes ship as additive variants.
@@ -68,9 +68,9 @@ use crate::trust_chain::{KeyStatus, TrustChainManifest};
 /// Customer-attested-authority kind discriminator.
 ///
 /// Wire form: `signing_authority.kind = "customer-attested"` (from
-/// `authority_kind` per the customer-authority specification D1 published-attestation document).
+/// `authority_kind` per ADR-031 D1 published-attestation document).
 /// **Forever-Standard locked** — new authority kinds ship as additive
-/// variants per the Forever-Standard wire discipline.
+/// variants per ADR-006 I0.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum AuthorityKind {
@@ -84,7 +84,7 @@ pub enum AuthorityKind {
     CustomerAttested,
 }
 
-/// Closed-set chain-walk failure modes per the customer-authority specification G15 + the Forever-Standard wire discipline.
+/// Closed-set chain-walk failure modes per ADR-031 G15 + ADR-006 I0.
 ///
 /// Each variant maps to a stable wire-form rejection reason that the
 /// auditor can route on. Forever-stable — additive only.
@@ -94,7 +94,7 @@ pub enum AuthorityWalkFailure {
     /// The AuditProof's `signing_authority.authority_id` is not present
     /// in the bounded trust-chain manifest. Either the manifest is
     /// stale OR the customer never registered this authority through
-    /// `POST /v1/customer-authorities` (per the customer-authority specification D1).
+    /// `POST /v1/customer-authorities` (per ADR-031 D1).
     AuthorityNotInTrustChainManifest { authority_id: String },
 
     /// The customer authority IS in the manifest, but its `state` is
@@ -162,7 +162,7 @@ pub struct AuthorityWalkResolution {
 }
 
 /// Walk the customer-attested authority chain and resolve the public
-/// key per the customer-authority specification G15.
+/// key per ADR-031 G15.
 ///
 /// ## Algorithm
 ///
@@ -172,7 +172,7 @@ pub struct AuthorityWalkResolution {
 /// 3. Look up the authority entry in the bounded `manifest`.
 /// 4. Resolve `signing_key_version` against the entry's
 ///    `active_versions` and `archived_versions` (archive-forever
-///    discipline per the verifier specification + this module's "AuditProof signed
+///    discipline per EO-07 ext + this module's "AuditProof signed
 ///    under version N still verifies after rotation to N+K"
 ///    invariant).
 /// 5. If the entry is revoked at the authority level, fail with
@@ -507,7 +507,7 @@ mod tests {
 
     #[test]
     fn walk_failure_serde_snake_case_wire_form() {
-        // Forever-Standard wire-form lock per the Forever-Standard wire discipline.
+        // Forever-Standard wire-form lock per ADR-006 I0.
         let cases: Vec<(AuthorityWalkFailure, &str)> = vec![
             (
                 AuthorityWalkFailure::AuthorityNotInTrustChainManifest {

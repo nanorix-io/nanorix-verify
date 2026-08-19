@@ -98,6 +98,25 @@ hash input. Optional semantics are expressed as an always-present nullable slot.
 prevents a stripping attack: if absence is representable, an attacker can remove a field and
 produce a document that still verifies.
 
+### 2.3 Media type
+
+A serialised AuditProof is identified by the media type
+
+```
+application/vnd.nanorix.auditproof+json
+```
+
+The `+json` structured suffix applies: a consumer that does not recognise the type may still
+process the payload as JSON under RFC 6839, which is the behaviour a generic tool should have.
+Registration is in the vendor tree under RFC 6838 §3.2.
+
+A media type matters here for a reason specific to this format. Evidence is handed between parties
+who share no software: an auditor receives a file from a party they do not trust, and the first
+question is what the file claims to be. Content-sniffing a document whose whole purpose is
+tamper-evidence is the wrong default, so the type travels with it. Implementations SHOULD set it on
+HTTP responses carrying a proof and SHOULD accept a proof regardless of the type declared, because
+the verdict comes from verification and never from the label.
+
 ---
 
 ## 3. The chain

@@ -81,13 +81,13 @@ export interface VerifyResult {
 }
 
 /**
- * the specification an earlier release-A reserved-slot scope discriminator (2026-05-10).
+ * ADR-006 Wave 16-A reserved-slot scope discriminator (2026-05-10).
  *
  * AuditProof scope. V1 always undefined / absent (workload scope is implicit).
  * Future Items 2 (sealed-proxy = "call") and 4 (sealed-middleware = "request")
  * populate this; Pattern 4 high-volume per-record AuditProofs use "batch".
  *
- * Forever-Standard discipline (the Forever-Standard wire discipline): field-additive Optional with
+ * Forever-Standard discipline (ADR-006 I0): field-additive Optional with
  * skip_serializing_if mechanic on the Rust side. The verifier MUST treat
  * this as opaque — chain integrity verification is independent of cdp_kind.
  */
@@ -101,7 +101,7 @@ export type CdpKind = "workload" | "request" | "call" | "batch";
  * Note that `method` and the chain timestamp are NOT read off the chain steps
  * — `method` is a fixed per-subsystem constant and the timestamp is the
  * document's `destroyed_at` (recovered from `attestation.key_id` on
- * pre-the chain-timestamp recovery rule proofs). A serialized step carries only
+ * pre-ADR-047 proofs). A serialized step carries only
  * `step / subsystem / operation / evidence_hash / chain_hash`.
  *
  * @param proof  AuditProof as parsed JSON object.
@@ -227,13 +227,13 @@ export async function verify(proof: unknown): Promise<VerifyResult> {
   return result;
 }
 
-// ── the receipt pipeline (the per-record receipt specification + the receipt-batching specification) re-exports ───────────────────────────────────
+// ── Wave-N (ADR-039 + ADR-041) re-exports ───────────────────────────────────
 //
-// Per-record receipt + cross-org parent-proof composition surface. The the receipt pipeline
+// Per-record receipt + cross-org parent-proof composition surface. The Wave-N
 // primitives live in `./wave_n.ts` and are re-exported here so consumers can
 // `import { verifyFullAuditProof, verifyRecordReceipt } from "@nanorix/sdk/verifier"`.
 //
-// Forever-Standard (the Forever-Standard wire discipline): pre-the receipt pipeline AuditProofs verify byte-identically
+// Forever-Standard (ADR-006 I0): pre-Wave-N AuditProofs verify byte-identically
 // via the (null, null) Step 8 branch in `computeStep8Amended`.
 export {
   GENESIS_SHA512_HEX,

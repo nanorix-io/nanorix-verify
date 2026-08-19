@@ -5,7 +5,7 @@
 > auditor receives a Nanorix AuditProof and needs to confirm authenticity
 > without any Nanorix SaaS dependency.
 
-Per the verifier specification.
+Per Nanorix EO-07 (G3 Adoption-Blocker, dispatched 2026-05-06).
 
 ## Install
 
@@ -67,10 +67,10 @@ $ nanorix-verify auditproof.json --json
   "metadata": { ... }
 }
 
-# Reject diagnostic-mode proofs (verifier policy per the specification)
+# Reject diagnostic-mode proofs (verifier policy per EO-09)
 $ nanorix-verify auditproof.json --reject-diagnostic
 
-# Geo-residency check (per the specification G1)
+# Geo-residency check (per EO-03 G1)
 $ nanorix-verify auditproof.json --required-region europe-west1
 
 # Print trust chain
@@ -119,7 +119,7 @@ key for the AuditProof's signing authority. Two paths:
 ## Failure reasons
 
 When verification fails, `--json` returns a typed `failure_reason`. Closed
-enum (forever-stable per the Forever-Standard wire discipline):
+enum (forever-stable per ADR-006 I0):
 
 - `cdp_version_unsupported` — version not recognized
 - `required_field_missing` — structural fields absent
@@ -127,11 +127,12 @@ enum (forever-stable per the Forever-Standard wire discipline):
 - `step_hash_mismatch` — chain step doesn't recompute
 - `genesis_hash_mismatch` — first step's prev_hash != SHA-512(empty)
 - `final_hash_mismatch` — final_hash doesn't match last chain hash
+- `streaming_merkle_root_mismatch` — a streaming-egress Merkle root disagrees with the chunk leaves disclosed beside it
 - `signature_mismatch` — Ed25519 verify failed (sub-reason: malformed / does_not_verify / public_key_malformed / message_format_mismatch)
 - `signing_key_version_unknown` — key not in trust chain
 - `authority_revoked` — signing authority revoked
-- `region_mismatch` — AuditProof region disagrees with required (the specification G1)
-- `diagnostic_proof_refused` — verifier policy rejected diagnostic mode (the specification)
+- `region_mismatch` — AuditProof region disagrees with required (EO-03 G1)
+- `diagnostic_proof_refused` — verifier policy rejected diagnostic mode (EO-09)
 - `algorithm_unsupported` — unknown signature algorithm
 
 Each reason carries diagnostic detail (`step_idx`, `subsystem`, `claimed`/`computed`

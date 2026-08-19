@@ -1,8 +1,8 @@
-//! Output Bundle manifest + envelope types (the specification).
+//! Output Bundle manifest + envelope types (ADR-042).
 //!
 //! The **Output Bundle** is an UNSIGNED delivery envelope that binds a
 //! customer's opaque work-product (by hash only) to its VERBATIM AuditProof +
-//! per-record receipts (the per-record receipt specification) + cross-org lineage (the receipt-batching specification), delivered to
+//! per-record receipts (ADR-039) + cross-org lineage (ADR-041), delivered to
 //! the customer's own sink. It is the "how they actually want it" surface of
 //! the raw-at-rest store-displacement model: the capsule swaps the raw layer of
 //! the customer's existing store for `{derived work-product + proof}`.
@@ -15,14 +15,14 @@
 //! the exact bytes the customer retrieved from `GET /v1/capsules/:id/cdp` and
 //! `POST /v1/capsules/:id/record`. It is **NEVER** produced by re-serializing a
 //! parsed struct: doing so reorders keys + drops `skip_serializing_if = None`
-//! fields and silently breaks the Forever-Standard wire discipline byte-equivalence — a bug that is
+//! fields and silently breaks ADR-006 I0 byte-equivalence — a bug that is
 //! *invisible to signature verification* (the Ed25519 signature is over
 //! `final_hash`, not the JSON), so it would ship undetected. The property test
 //! [`tests::verbatim_embed_roundtrip_preserves_bytes`] pins this guard.
 //!
 //! ## The manifest is NEVER a trust root
 //!
-//! Per the specification (crypto-review F3, confused-deputy guard): the manifest is
+//! Per ADR-042 (crypto-review F3, confused-deputy guard): the manifest is
 //! UNSIGNED advisory packaging. Trust derives **solely** from the customer
 //! re-deriving `sha512(work_product)` and comparing to the **signed** receipt's
 //! `record_output_hash`, then walking the ladder: `record_chain_hash` →
@@ -31,7 +31,7 @@
 //! [`OutputBundleManifest::signed`] field is the structural marker (always
 //! `false`) so a parser cannot conflate the manifest with the signed block.
 //!
-//! ## Forever-Standard discipline (the Forever-Standard wire discipline)
+//! ## Forever-Standard discipline (ADR-006 I0)
 //!
 //! Wire form (serde `rename_all = "snake_case"`) is the contract auditors rely
 //! on. Variants/fields ship ADDITIVE only — never renamed, removed, or
@@ -40,7 +40,7 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-/// Provenance of a binding's `record_output_hash` (the specification crypto-review F1).
+/// Provenance of a binding's `record_output_hash` (ADR-042 crypto-review F1).
 ///
 /// The equality `sha512(work_product) == record_output_hash` is a
 /// Nanorix-**attested** fact only when the hash was computed by Nanorix over the
@@ -73,7 +73,7 @@ pub struct OutputBinding {
     /// `sha512:{hex}` digest of the delivered work-product bytes. Advisory — the
     /// verifier MUST re-derive this from the delivered bytes, not trust it.
     pub work_product_hash: String,
-    /// The the per-record receipt specification receipt `record_output_hash` (`sha512:{hex}`) this part binds
+    /// The ADR-039 receipt `record_output_hash` (`sha512:{hex}`) this part binds
     /// to — the path to the signed anchor (record_chain_hash → receipts Merkle
     /// root → signed Step-8 amendment → Ed25519).
     pub record_output_hash: String,
@@ -81,7 +81,7 @@ pub struct OutputBinding {
     pub output_hash_origin: OutputHashOrigin,
 }
 
-/// Advisory manifest of an Output Bundle (the specification). UNSIGNED packaging — never a
+/// Advisory manifest of an Output Bundle (ADR-042). UNSIGNED packaging — never a
 /// trust root.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct OutputBundleManifest {
@@ -90,13 +90,13 @@ pub struct OutputBundleManifest {
     /// Structural marker that this manifest is UNSIGNED advisory packaging.
     /// **Always `false`.** A consumer that trusts manifest fields without
     /// re-deriving them from the verbatim signed primitives has a bug
-    /// (the specification confused-deputy guard).
+    /// (ADR-042 confused-deputy guard).
     pub signed: bool,
     pub capsule_id: String,
     pub created_at: String,
     pub destroyed_at: String,
     /// Customer-declared sink target (endpoint host / `bucket/prefix` / webhook
-    /// URL) — **never a credential** (the specification customer-sole-declarer).
+    /// URL) — **never a credential** (ADR-013 customer-sole-declarer).
     pub sink_target: String,
     /// `final_hash` of the carried AuditProof (`sha512:{hex}`). Advisory.
     pub audit_proof_final_hash: String,
@@ -106,11 +106,11 @@ pub struct OutputBundleManifest {
     pub receipts_merkle_root: Option<String>,
     /// One binding per work-product part. At least one (N≥1) for any bundle that
     /// carries a work-product — there is no whole-capsule output hash by design
-    /// (the specification: adding one would touch the signed CDP / a trust anchor).
+    /// (ADR-042: adding one would touch the signed CDP / a trust anchor).
     pub bindings: Vec<OutputBinding>,
 }
 
-/// An Output Bundle (the specification): the UNSIGNED delivery envelope.
+/// An Output Bundle (ADR-042): the UNSIGNED delivery envelope.
 ///
 /// `audit_proof` / `receipts` / `lineage` carry **verbatim source bytes** as
 /// opaque strings — see module docs for why these are `String` and never
@@ -120,27 +120,27 @@ pub struct OutputBundle {
     pub manifest: OutputBundleManifest,
     /// Verbatim AuditProof JSON bytes (opaque). Carried, never re-encoded.
     pub audit_proof: String,
-    /// Verbatim per-record receipt JSON bytes (the per-record receipt specification). Carried, never re-encoded.
+    /// Verbatim per-record receipt JSON bytes (ADR-039). Carried, never re-encoded.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub receipts: Vec<String>,
-    /// Verbatim cross-org lineage JSON bytes (the receipt-batching specification). Carried, never re-encoded.
+    /// Verbatim cross-org lineage JSON bytes (ADR-041). Carried, never re-encoded.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub lineage: Vec<String>,
 }
 
 /// Structural-validation failure for an Output Bundle manifest. The legal /
 /// content meaning of the work-product is NEVER inspected — these checks are
-/// purely structural (the specification: Nanorix never reads the content).
+/// purely structural (ADR-042: Nanorix never reads the content).
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum OutputBundleError {
-    /// A bundle that carries a work-product must bind ≥1 receipt (the specification).
-    #[error("output bundle manifest has no bindings (a work-product bundle must bind >= 1 receipt per the specification)")]
+    /// A bundle that carries a work-product must bind ≥1 receipt (ADR-042).
+    #[error("output bundle manifest has no bindings (a work-product bundle must bind >= 1 receipt per ADR-042)")]
     NoBindings,
     /// A hash field is not in canonical `sha512:`-prefixed form.
     #[error("hash field `{field}` is not in canonical `sha512:` form: `{value}`")]
     UnprefixedHash { field: String, value: String },
     /// The structural unsigned marker was tampered to `true`.
-    #[error("manifest.signed must be false — the manifest is unsigned advisory packaging, never a trust root (the specification)")]
+    #[error("manifest.signed must be false — the manifest is unsigned advisory packaging, never a trust root (ADR-042)")]
     SignedMarkerTampered,
 }
 
@@ -263,7 +263,7 @@ mod tests {
         assert_eq!(m.validate(), Err(OutputBundleError::SignedMarkerTampered));
     }
 
-    // THE crypto guard (the specification "Implementation guards", highest risk): a
+    // THE crypto guard (ADR-042 "Implementation guards", highest risk): a
     // verbatim-carried AuditProof/receipt must survive embed → serialize →
     // deserialize → extract BYTE-IDENTICAL. This fails the moment anyone types
     // the carrier as a struct instead of an opaque string. We feed arbitrary

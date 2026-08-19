@@ -30,7 +30,7 @@ import {
 export const PORTABLE_RECEIPT_BUNDLE_DISCLAIMER =
   "This Portable Receipt Bundle carries cryptographic evidence of one record's structural execution. " +
   "Verifying party uses the audit_proof_anchors to verify the receipt's merkle inclusion + outer Ed25519 signature. " +
-  "Control framework references are NOT included in this bundle; consult the specification mapping artifact at " +
+  "Control framework references are NOT included in this bundle; consult the ADR-040 mapping artifact at " +
   "schema.nanorix.com/control-map/{framework_version}.json to apply current control mappings at consumption time.";
 
 /**
@@ -50,7 +50,7 @@ export interface AuditProofAnchors {
 /**
  * Wave B Item 7 wire shape mirroring Rust `PortableReceiptBundle`.
  *
- * Forever-Standard the Forever-Standard wire discipline: `bundle_version` is append-only; the V1.0
+ * Forever-Standard ADR-006 I0: `bundle_version` is append-only; the V1.0
  * shape remains valid forever.
  */
 export interface PortableReceiptBundle {
@@ -120,7 +120,7 @@ function base64Decode(b64: string): Uint8Array {
  *
  * @param auditProof Full FullCdp/VerificationCdp JSON object.
  * @param recordIndex Zero-indexed position within `record_receipts`.
- * @throws BundleError with kind `no_receipts` if AuditProof is pre-the receipt pipeline;
+ * @throws BundleError with kind `no_receipts` if AuditProof is pre-Wave-N;
  *         `index_out_of_bounds` if index outside receipt set;
  *         `missing_field` if a required outer field is absent.
  */
@@ -256,7 +256,7 @@ export async function verifyReceiptBundle(
   const trail = Array.isArray(r.record_activity_trail) ? r.record_activity_trail : undefined;
   const activityRoot =
     trail && trail.length > 0 ? await computeActivityRoot(trail) : GENESIS_SHA512_HEX;
-  // A declared pattern_tag is a SIGNED primitive (the per-record receipt specification) — bind it into
+  // A declared pattern_tag is a SIGNED primitive (ADR-039) — bind it into
   // the recomputed hash so a swapped/stripped tag fails verification.
   const recomputed = await computeRecordChainHash(
     anchors.capsule_id,

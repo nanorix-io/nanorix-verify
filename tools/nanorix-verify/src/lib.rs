@@ -1,11 +1,11 @@
 //! Nanorix AuditProof verifier — standalone library.
 //!
-//! Implements the 8-step AuditProof specification verification pipeline against an AuditProof
+//! Implements the 8-step ADR-011 I8 verification pipeline against an AuditProof
 //! JSON document. Independent of any Nanorix service: this crate has no HTTP
 //! client, so every verification is local. The trust-chain manifest, when one
 //! is used, is supplied as a local file and is itself signed.
 //!
-//! Per the verifier specification : "auditor
+//! Per Nanorix EO-07 (G3 Adoption-Blocker, dispatched 2026-05-06): "auditor
 //! verification CLI — the literal moment-of-truth artifact when an OCR
 //! auditor walks in."
 //!
@@ -23,7 +23,7 @@
 //!
 //! # Verification stages
 //!
-//! Per the AuditProof specification:
+//! Per ADR-011 I8:
 //! 1. Schema validation (required fields present, types correct)
 //! 2. cdp_version recognized (1.0 / 2.0 / 2.1)
 //! 3. Chain reproducibility (recompute SHA-512 chain from genesis)
@@ -33,7 +33,7 @@
 //! 7. Ed25519 signature verification
 //! 8. Authority status (active / revoked / fingerprint stale)
 //!
-//! Each stage emits a typed `FailureReason` on failure (per the verifier specification).
+//! Each stage emits a typed `FailureReason` on failure (per Nanorix EO-02).
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha512};
@@ -43,6 +43,7 @@ pub mod bundle;
 pub mod canonical_recompute;
 pub mod checkpoint;
 pub mod pubkey_bundle;
+pub mod streaming_merkle;
 pub mod trust_chain;
 pub use boundary::{
     recompute_activity_commitment, recompute_boundary_canonical_hash, verify_boundary_attestation,
@@ -68,18 +69,107 @@ pub const NANORIX_GENESIS_HASH: &str =
     "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e";
 pub const NANORIX_CHAIN_STEPS: usize = 8;
 
+/// Reserved attestation slots that sit outside `CanonicalCdpView` (ADR-011
+/// I18-I21, I24-I25 + ADR-012 D2/D3) AND that no Nanorix signer populates.
+///
+/// Every construction site in the workspace hard-codes these to `None`, so the
+/// signature never covered them and a genuine document never carries them. A
+/// populated one is either a schema this build does not know or an outsider
+/// edit to an authentic proof — indistinguishable to the signature, which is
+/// why presence alone has to be the rejection.
+///
+/// `per_event_attestations` is the ninth reserved slot and is deliberately
+/// ABSENT from this list: `services/api/src/routes/capsules.rs` drains
+/// `capsule_event_attestations` into it at destroy, so genuine proofs do carry
+/// it. Its entries are individually signed by the customer's own key, so it is
+/// self-authenticating rather than silently injectable; verifying those
+/// per-entry signatures is separate work.
+pub const UNSIGNED_RESERVED_SLOTS: [&str; 7] = [
+    "customer_attestation",
+    "policy_attestation",
+    "third_party_attestation",
+    "retention_policy_attestation",
+    "witness_signatures",
+    "pqc_attestation",
+    "customer_pqc_attestation",
+];
+
+/// First reserved slot carrying anything other than JSON `null`.
+///
+/// Genuine documents emit these keys with an explicit `null` (the fields have
+/// no `skip_serializing_if`), so absence and `null` are both normal. Anything
+/// else — including an empty array — is a shape no signer produces.
+/// Iteration follows `UNSIGNED_RESERVED_SLOTS` order, so a document with
+/// several populated slots always names the same one.
+fn populated_unsigned_slot(json: &serde_json::Value) -> Option<&'static str> {
+    UNSIGNED_RESERVED_SLOTS
+        .iter()
+        .copied()
+        .find(|slot| json.get(*slot).is_some_and(|v| !v.is_null()))
+}
+
+/// Number of `parent_proof_hashes` links carrying attribution the signature
+/// does not cover.
+///
+/// Only `parent_chain_hash` feeds the signed Merkle root
+/// (`governance/rzl/src/wave_n.rs`), so `parent_key_id`, `parent_signature`,
+/// `parent_role`, `parent_jurisdiction` and `parent_organization_tag` are
+/// rewritable by anyone holding the document and no key. They are also the
+/// fields the multi-vendor lineage UI renders, which is what makes counting
+/// them worth surfacing in the verdict.
+fn count_unattested_parent_attribution(json: &serde_json::Value) -> Option<usize> {
+    const ATTRIBUTION_FIELDS: [&str; 5] = [
+        "parent_key_id",
+        "parent_signature",
+        "parent_role",
+        "parent_jurisdiction",
+        "parent_organization_tag",
+    ];
+    let parents = json.get("parent_proof_hashes")?.as_array()?;
+    let n = parents
+        .iter()
+        .filter(|p| {
+            ATTRIBUTION_FIELDS
+                .iter()
+                .any(|f| p.get(*f).is_some_and(|v| !v.is_null()))
+        })
+        .count();
+    (n > 0).then_some(n)
+}
+
+/// The canonical 8-step chain identity: `(subsystem, method)` at each index.
+///
+/// Forever-Standard per INVARIANTS #1 / ADR-006 I0 — the order, the count, the
+/// subsystem names, and each subsystem's fixed method are all fixed for the
+/// life of the format. Mirrors `CHAIN_DEFS` / `CANONICAL_SUBSYSTEMS` in
+/// `governance/rzl/src/cdp.rs`, duplicated here because the auditor verifier
+/// ships standalone and takes no service-side dependency (EO-07).
+///
+/// The chain walk hashes THESE values, never the ones the document declares.
+/// A document cannot choose what a step is; it can only fail to match.
+pub const CANONICAL_CHAIN: [(&str, &str); NANORIX_CHAIN_STEPS] = [
+    ("eee_namespace", "procfs_verification"),
+    ("eee_tmpfs", "mountinfo_verification"),
+    ("eee_memory", "dod_5220_multipass_wipe"),
+    ("dire_keys", "ed25519_key_destruction"),
+    ("dire_identity", "credential_incineration"),
+    ("fgx_forensic", "merkle_tree_verification"),
+    ("rzl_audit", "hash_chain_validation"),
+    ("capsule_destroy", "capsule_lifecycle_verification"),
+];
+
 /// Output of a verification attempt. Mirrors the wire shape that the
-/// authenticated `POST /v1/verify` endpoint will return once the specification ships.
+/// authenticated `POST /v1/verify` endpoint will return once EO-02 ships.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct VerificationResult {
     /// True if and only if every check stage passed.
     pub valid: bool,
 
     /// Populated when `valid` is false. Closed enum aligned with the API
-    /// surface (per the specification).
+    /// surface (per EO-02).
     pub failure_reason: Option<FailureReason>,
 
-    /// 1..=8 indicating the highest stage reached (advisory; matches the specification
+    /// 1..=8 indicating the highest stage reached (advisory; matches ADR-011
     /// I8 step numbering).
     pub stage_reached: u8,
 
@@ -98,15 +188,28 @@ pub struct VerificationMetadata {
     pub activity_event_count: Option<usize>,
 
     /// `Some(ts)` when the document carried no usable `destroyed_at` and the
-    /// chain timestamp was recovered from `attestation.key_id` (the chain-timestamp recovery rule
+    /// chain timestamp was recovered from `attestation.key_id` (ADR-047
     /// pre-restoration proofs). `None` means the timestamp was read from the
     /// document's own `destroyed_at` field. An auditor reading a verdict can
     /// therefore always tell which route produced it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recovered_chain_timestamp: Option<String>,
+
+    /// `Some(n)` when `n` parent links carry attribution fields that the
+    /// signature does not cover — `parent_key_id`, `parent_signature`,
+    /// `parent_role`, `parent_jurisdiction`, `parent_organization_tag`. Only
+    /// `parent_chain_hash` feeds the signed Merkle root, so those values are
+    /// rewritable by an outsider on an otherwise-authentic proof. `None` when
+    /// the proof has no parent links or none of them carry attribution.
+    ///
+    /// A verdict is not entitled to stay silent about this: the lineage UI
+    /// renders exactly these fields, and a reader who has just been told
+    /// "integrity verified" will take them as attested unless told otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unattested_parent_attribution: Option<usize>,
 }
 
-// trust-chain anchoring (commit landing this re-export): closed-enum verification
+// EO-07 sub-B (commit landing this re-export): closed-enum verification
 // failure reasons + signature sub-reasons extracted to the
 // `nanorix-verify-types` workspace crate (governance/verify-types).
 // Re-exporting here preserves the `nanorix_verify::{FailureReason,
@@ -122,7 +225,7 @@ pub use nanorix_verify_types::{AuthorityIdMismatchReason, FailureReason, Signatu
 
 /// Verifier policy. Customer / auditor decides what to refuse.
 ///
-/// Per the Forever-Standard wire discipline + the customer-authority specification G7: this struct is field-additive
+/// Per ADR-006 I0 + ADR-031 G7: this struct is field-additive
 /// Forever-Standard. Pre-amendment callers passing
 /// `VerifierPolicy::default()` continue to behave identically — every
 /// new field defaults to its "accept anything" semantics. New fields
@@ -131,7 +234,7 @@ pub use nanorix_verify_types::{AuthorityIdMismatchReason, FailureReason, Signatu
 #[derive(Debug, Clone, Default)]
 pub struct VerifierPolicy {
     /// If true, refuse AuditProofs whose attestation indicates
-    /// `diagnostic_mode: true` (the specification). Default: false (accept diagnostic
+    /// `diagnostic_mode: true` (EO-09). Default: false (accept diagnostic
     /// proofs).
     pub reject_diagnostic: bool,
 
@@ -143,7 +246,7 @@ pub struct VerifierPolicy {
     /// `signing_authority.authority_id` match. AuditProofs that omit
     /// `signing_authority` entirely (Nanorix-default signing path) OR
     /// carry a different `authority_id` are rejected with
-    /// `FailureReason::AuthorityIdMismatch`. Per the customer-authority specification G7 + VP Security
+    /// `FailureReason::AuthorityIdMismatch`. Per ADR-031 G7 + VP Security
     /// extended-review F4.3 — closes the policy-mode-mismatch attack where
     /// a malicious AuditProof claims `signing_authority: None` while the
     /// customer's policy demands customer-HSM signing.
@@ -153,7 +256,7 @@ pub struct VerifierPolicy {
     /// against this gate.
     pub required_authority_id: Option<String>,
 
-    /// trust-chain anchoring trust root. When `Some`, the verifier resolves the proof's
+    /// EO-07 sub-B trust root. When `Some`, the verifier resolves the proof's
     /// signing key against this (already-verified) manifest and re-verifies the
     /// signature against the manifest key — reaching stage 8 ("verify without
     /// trusting Nanorix"). `main.rs` verifies the manifest's OWN signature
@@ -179,12 +282,12 @@ pub struct TrustedAuthority {
 }
 
 /// Top-level verify entrypoint. Loads AuditProof JSON, runs 8-stage
-/// verification per the AuditProof specification, returns structured result.
+/// verification per ADR-011 I8, returns structured result.
 ///
-/// **NOTE:** This is the V1 implementation scaffold. Per the verifier specification ship plan, the
-/// full the AuditProof specification stage 5 (canonical_hash recompute) and stage 6 (signing
+/// **NOTE:** This is the V1 implementation scaffold. Per EO-07 ship plan, the
+/// full ADR-011 I8 stage 5 (canonical_hash recompute) and stage 6 (signing
 /// key resolution from trust chain) need the shared verification crate
-/// extracted from the AuditProof document builder to avoid divergence.
+/// extracted from `services/api/src/cdp_document.rs` to avoid divergence.
 /// V1 provides chain integrity (stages 1-4) which catches the common
 /// tamper cases.
 pub fn verify_auditproof(
@@ -201,6 +304,7 @@ pub fn verify_auditproof(
         step_count: None,
         activity_event_count: None,
         recovered_chain_timestamp: None,
+        unattested_parent_attribution: None,
     };
 
     // Stage 1: schema validation — cdp_version present
@@ -231,14 +335,48 @@ pub fn verify_auditproof(
         };
     }
 
+    // Reserved-slot gate. A slot outside the signature carrying a value no
+    // signer emits means the bytes in front of us are not the bytes that were
+    // signed, even though the signature over the covered subset still checks
+    // out. Running before the policy pins and the chain walk because the
+    // document is structurally impossible on its own terms, independent of
+    // what any customer policy asks for. Stage 2 matches the other
+    // pre-chain-walk gates below.
+    if let Some(slot) = populated_unsigned_slot(json) {
+        return VerificationResult {
+            valid: false,
+            failure_reason: Some(FailureReason::UnsignedFieldPopulated {
+                field: slot.to_string(),
+            }),
+            stage_reached: 2,
+            metadata,
+        };
+    }
+
     metadata.capsule_id = json
         .get("capsule_id")
         .and_then(|v| v.as_str())
         .map(String::from);
 
+    // Region resolves from the SIGNED `capsule_started` activity event only.
+    //
+    // The activity trail is inside `CanonicalCdpView`, so a region carried
+    // there cannot be altered without breaking the signature. The two paths
+    // this replaced — `/environment/region` and top-level `region` — are both
+    // outside the canonical hash: `environment` is a derived projection built
+    // by `FullCdp::to_verification()` and its struct has no region field at
+    // all, and top-level `region` is emitted by nothing. Reading either meant
+    // the residency pin below consulted a value an outsider could add to a
+    // genuine signed proof with no key, while the signed value went unread.
     metadata.region = json
-        .pointer("/environment/region")
-        .or_else(|| json.get("region"))
+        .get("activity")
+        .and_then(|v| v.as_array())
+        .and_then(|events| {
+            events
+                .iter()
+                .find(|e| e.get("event").and_then(|t| t.as_str()) == Some("capsule_started"))
+        })
+        .and_then(|e| e.get("region"))
         .and_then(|v| v.as_str())
         .map(String::from);
 
@@ -253,11 +391,11 @@ pub fn verify_auditproof(
         .and_then(|v| v.as_str())
         .map(String::from);
 
-    // Policy-pin gate (the customer-authority specification G7 / VP Security F4.3).
+    // Policy-pin gate (ADR-031 G7 / VP Security F4.3).
     //
     // When the customer / auditor pins `required_authority_id`, the
     // AuditProof's `signing_authority.authority_id` must match. The
-    // AuditProof field is `Option<SigningAuthority>` per the customer-authority specification D2:
+    // AuditProof field is `Option<SigningAuthority>` per ADR-031 D2:
     //
     // - `signing_authority` field absent OR explicit JSON `null` →
     //   Nanorix-default signing path. Reject with reason
@@ -309,7 +447,7 @@ pub fn verify_auditproof(
         }
     }
 
-    // Residency-pin gate (the specification G1 / the region policy).
+    // Residency-pin gate (EO-03 G1 / ADR-018 D3).
     //
     // Same shape and rationale as the authority pin above: when the auditor
     // pins `required_region`, a proof asserting a different region is rejected
@@ -359,7 +497,7 @@ pub fn verify_auditproof(
         };
     }
 
-    // the chain-timestamp recovery rule — proofs issued before `destroyed_at` was restored to the wire
+    // ADR-047 — proofs issued before `destroyed_at` was restored to the wire
     // document carry the chain timestamp only in `attestation.key_id`. Recover
     // it there so authentic pre-restoration proofs reproduce their chain; the
     // recovered value is disclosed in the verdict metadata, never silently
@@ -368,8 +506,8 @@ pub fn verify_auditproof(
     let timestamp = timestamp.as_str();
     metadata.recovered_chain_timestamp = recovered;
 
-    // the per-record receipt specification + the receipt-batching specification the receipt pipeline (2026-05-12) — extract optional Merkle roots
-    // for Step 8 amendment. None for pre-the receipt pipeline proofs (both branches collapse
+    // ADR-039 + ADR-041 Wave-N (2026-05-12) — extract optional Merkle roots
+    // for Step 8 amendment. None for pre-Wave-N proofs (both branches collapse
     // to the legacy formula → byte-identical chain walk).
     let rrmr_opt = json
         .get("record_receipts_merkle_root")
@@ -378,22 +516,46 @@ pub fn verify_auditproof(
         .get("parent_proofs_merkle_root")
         .and_then(|v| v.as_str());
 
+    // Canonical-identity chain walk.
+    //
+    // The hash inputs are taken from `CANONICAL_CHAIN` by INDEX, never from
+    // the document. Before this, `subsystem` was read out of the step and fed
+    // straight into the hash, with `lookup_method` mapping anything unknown to
+    // an empty method — so any self-consistent 8-entry chain reproduced
+    // itself. Eight entries named `a`..`h`, the canonical eight in scrambled
+    // order, and `eee_namespace` repeated eight times all verified clean, and
+    // "8/8" meant only "eight of something".
+    //
+    // Two distinct faults, reported distinctly:
+    //   * hashes that do not reproduce against the canonical inputs
+    //     -> `StepHashMismatch` (unchanged verdict for every existing fixture)
+    //   * hashes that DO reproduce beside a subsystem label that is not the
+    //     canonical one for that index -> `ChainStepIdentityMismatch`
     let mut prev_hash = NANORIX_GENESIS_HASH.to_string();
     for (idx, step) in chain.iter().enumerate() {
-        let subsystem = step.get("subsystem").and_then(|v| v.as_str()).unwrap_or("");
+        let (canonical_subsystem, canonical_method) = CANONICAL_CHAIN[idx];
+        let declared_subsystem = step.get("subsystem").and_then(|v| v.as_str()).unwrap_or("");
         let claimed_chain_hash = step
             .get("chain_hash")
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        let method = lookup_method(subsystem);
 
-        let recomputed = if idx == 7 && subsystem == "capsule_destroy" {
-            // the per-record receipt specification + the receipt-batching specification Step 8 amendment — presence-conditional
+        let recomputed = if idx == NANORIX_CHAIN_STEPS - 1 {
+            // ADR-039 + ADR-041 Step 8 amendment — presence-conditional
             // Merkle-root incorporation. The (None, None) branch returns the
-            // legacy formula bit-for-bit (Forever-Standard).
+            // legacy formula bit-for-bit (Forever-Standard). The branch was
+            // additionally keyed on the DECLARED subsystem being
+            // `capsule_destroy`; index 8 is `capsule_destroy` by definition
+            // now, so the declared value no longer selects the formula.
             compute_step_8_amended_verifier(&prev_hash, timestamp, rrmr_opt, ppmr_opt)
         } else {
-            compute_step_hash(&prev_hash, subsystem, "destroy", method, timestamp)
+            compute_step_hash(
+                &prev_hash,
+                canonical_subsystem,
+                "destroy",
+                canonical_method,
+                timestamp,
+            )
         };
 
         if recomputed != strip_hash_prefix(claimed_chain_hash) {
@@ -401,16 +563,34 @@ pub fn verify_auditproof(
                 valid: false,
                 failure_reason: Some(FailureReason::StepHashMismatch {
                     step_idx: idx,
-                    subsystem: subsystem.to_string(),
+                    subsystem: declared_subsystem.to_string(),
                 }),
                 stage_reached: 3,
                 metadata,
             };
         }
+
+        // The hashes reproduced. The label beside them still has to be the
+        // right one — a genuine chain carrying a forged subsystem name would
+        // otherwise verify clean and be read by an auditor as attesting to a
+        // step it does not describe.
+        if declared_subsystem != canonical_subsystem {
+            return VerificationResult {
+                valid: false,
+                failure_reason: Some(FailureReason::ChainStepIdentityMismatch {
+                    step_idx: idx,
+                    expected_subsystem: canonical_subsystem.to_string(),
+                    found_subsystem: declared_subsystem.to_string(),
+                }),
+                stage_reached: 3,
+                metadata,
+            };
+        }
+
         prev_hash = recomputed;
     }
 
-    // ── the per-record receipt specification receipt set verification (Mode A step 3) ──
+    // ── ADR-039 receipt set verification (Mode A step 3) ──
     // If `record_receipts` is present, recompute the Merkle root from the
     // receipts in order and compare to the claimed `record_receipts_merkle_root`.
     // Each receipt's `record_chain_hash` is also recomputed from its fields.
@@ -429,13 +609,40 @@ pub fn verify_auditproof(
         }
     }
 
-    // ── the receipt-batching specification parent-proof set verification ──
+    // ── ADR-041 parent-proof set verification ──
     // If `parent_proof_hashes` is present, recompute the parent Merkle root
     // from each link's `parent_chain_hash` and compare to the claimed root.
     // Per-link signature verification (independent pubkey resolution) is
     // out of Wave A scope — Wave B Portable Pubkey Bundle support.
     if let Some(parents) = json.get("parent_proof_hashes").and_then(|v| v.as_array()) {
         if let Some(failure) = verify_parent_proofs(parents, ppmr_opt) {
+            return VerificationResult {
+                valid: false,
+                failure_reason: Some(failure),
+                stage_reached: 3,
+                metadata,
+            };
+        }
+        // The root binds `parent_chain_hash` and nothing else. Everything the
+        // lineage UI actually displays is outside it, so the verdict has to
+        // carry the count rather than let a reader infer coverage.
+        metadata.unattested_parent_attribution = count_unattested_parent_attribution(json);
+    }
+
+    // ── Streaming-egress Merkle root verification ──
+    // `streaming_egress_completed.streaming_merkle_root` commits to the
+    // `streaming_egress_chunk` leaves emitted beside it. It was signed from the
+    // day it shipped and read by nothing — the third instance of the shape this
+    // review found: a value in a proof is not evidence unless something reads
+    // it AND something signs it.
+    //
+    // Recomputed only when the leaves are fully disclosed; a root standing
+    // alone is the truncated shape and is carried past, as before. Placed with
+    // the other sub-structure Merkle checks and therefore BEFORE the signature
+    // stages, so it also covers the `SignatureCheck::Absent` path, where the
+    // activity trail carries no signature protection at all.
+    if let Some(activity) = json.get("activity").and_then(|v| v.as_array()) {
+        if let Some(failure) = streaming_merkle::verify_streaming_merkle_roots(activity) {
             return VerificationResult {
                 valid: false,
                 failure_reason: Some(failure),
@@ -468,7 +675,7 @@ pub fn verify_auditproof(
         };
     }
 
-    // Algorithm dispatch precedes byte-shape checks (the specification C.1): a proof
+    // Algorithm dispatch precedes byte-shape checks (ADR-051 C.1): a proof
     // declaring a non-Ed25519 signature algorithm fails typed as
     // AlgorithmUnsupported here — it must never fall through to the 64/32-byte
     // decode gates and report as "malformed". Absent or "Ed25519" proceeds
@@ -549,7 +756,7 @@ fn declared_non_ed25519_algorithm(json: &serde_json::Value) -> Option<String> {
     .map(str::to_string)
 }
 
-/// trust-chain anchoring — anchor an integrity-verified proof (sub-A passed, stage 7) to
+/// EO-07 sub-B — anchor an integrity-verified proof (sub-A passed, stage 7) to
 /// the Nanorix trust root.
 ///
 /// With a verified trust-chain manifest in `policy.trust_chain`, resolve the
@@ -688,9 +895,9 @@ pub fn compute_step_hash(
 
 /// Recover the chain timestamp from an attestation `key_id`.
 ///
-/// AuditProofs issued before the chain-timestamp recovery rule restored the document-level `destroyed_at`
+/// AuditProofs issued before ADR-047 restored the document-level `destroyed_at`
 /// field carry the chain timestamp in exactly one place: the attestation
-/// `key_id`, built by the chain specification as
+/// `key_id`, built by `governance/rzl/src/cdp.rs` as
 /// `nrx-verify-{terminated_at with ':' replaced by '-'}-{capsule_id[..8]}`.
 /// Only the TIME portion ever held colons — the ISO-8601 date carries its own
 /// dashes — so restoration splits at `T` and rewrites dashes on the right-hand
@@ -703,7 +910,7 @@ pub fn compute_step_hash(
 /// # Why recovering from an attacker-mutable field is sound
 ///
 /// `key_id` is covered by NEITHER signed message: v1.0 signs `final_hash`, and
-/// the v2.x canonical view (the AuditProof document builder
+/// the v2.x canonical view (`services/api/src/cdp_document.rs`
 /// `CanonicalCdpView` / `CanonicalAttestationSubset`) excludes the whole
 /// attestation by construction. So `key_id` can be edited without invalidating
 /// a signature — which is precisely why the recovered value is never trusted on
@@ -773,7 +980,15 @@ fn resolve_chain_timestamp(json: &serde_json::Value) -> (String, Option<String>)
 }
 
 /// Look up the canonical method string for a given subsystem (per CLAUDE.md
-/// CDP v1.0 chain spec). Forever-stable per the Forever-Standard wire discipline.
+/// CDP v1.0 chain spec). Forever-stable per ADR-006 I0.
+///
+/// Unknown subsystems map to the empty string, which is why this must NOT be
+/// used to derive a chain-walk hash input from a document-supplied subsystem:
+/// an unrecognised name would silently hash under an empty method and a
+/// self-consistent chain of unrecognised names would reproduce itself. The
+/// walk indexes [`CANONICAL_CHAIN`] instead. This function stays for fixture
+/// generation and for the byte-equivalence mirrors in the Go / Python /
+/// TypeScript ports.
 pub fn lookup_method(subsystem: &str) -> &'static str {
     match subsystem {
         "eee_namespace" => "procfs_verification",
@@ -789,7 +1004,7 @@ pub fn lookup_method(subsystem: &str) -> &'static str {
 }
 
 /// Strip canonical prefix conventions: `sha512:` from hash fields, `base64:`
-/// from key/signature fields. the specification forever-stable.
+/// from key/signature fields. ADR-011 I0 forever-stable.
 pub fn strip_hash_prefix(s: &str) -> &str {
     s.strip_prefix("sha512:").unwrap_or(s)
 }
@@ -799,17 +1014,17 @@ pub fn strip_base64_prefix(s: &str) -> &str {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// the receipt pipeline (the per-record receipt specification + the receipt-batching specification) verifier extension
+// Wave-N (ADR-039 + ADR-041) verifier extension
 //
-// Mirrors the reference chain implementation to keep the verifier independent of any
+// Mirrors `nanorix_rzl::wave_n` to keep the verifier independent of any
 // service-side dependency (the verifier ships as a standalone auditor
-// artifact per the verifier specification). The hash primitives are byte-identical to the
+// artifact per EO-07). The hash primitives are byte-identical to the
 // service-side implementation — pinned by the cross-impl byte-equivalence
 // test in the property-test suite.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Compute Step 8 amended hash per the per-record receipt specification + the receipt-batching specification combined formula. See
-/// the reference chain implementation for the spec; this
+/// Compute Step 8 amended hash per ADR-039 + ADR-041 combined formula. See
+/// `governance/rzl/src/wave_n.rs::compute_step_8_amended` for the spec; this
 /// is a verifier-side mirror.
 pub fn compute_step_8_amended_verifier(
     prev_hash: &str,
@@ -899,7 +1114,7 @@ pub fn verifier_merkle_root(leaves: &[String]) -> Option<String> {
 }
 
 /// Compute a per-record chain hash mirroring
-/// the reference chain implementation.
+/// `nanorix_rzl::wave_n::compute_record_chain_hash`.
 fn verifier_compute_record_chain_hash(
     capsule_id: &str,
     record_index: u32,
@@ -926,7 +1141,7 @@ fn verifier_compute_record_chain_hash(
     data.extend_from_slice(output_h.as_bytes());
     data.push(0x00);
     data.extend_from_slice(activity_h.as_bytes());
-    // the per-record receipt specification conformance: a declared pattern_tag is a signed primitive and
+    // ADR-039 conformance: a declared pattern_tag is a signed primitive and
     // is bound into the chain hash (trailing segment appended only when the
     // receipt carries a tag; activity_root's fixed 128-hex length gives
     // domain separation, so tagged and untagged preimages cannot collide).
@@ -938,7 +1153,7 @@ fn verifier_compute_record_chain_hash(
     hex::encode(Sha512::digest(&data))
 }
 
-/// Verify the receipt set per the per-record receipt specification Mode A step 3. Returns `Some(failure)`
+/// Verify the receipt set per ADR-039 Mode A step 3. Returns `Some(failure)`
 /// if any receipt's chain hash doesn't roundtrip OR the Merkle root doesn't
 /// match the claimed root. Returns `None` if all receipts verify.
 fn verify_record_receipts(
@@ -946,7 +1161,22 @@ fn verify_record_receipts(
     capsule_id: &str,
     claimed_root_opt: Option<&str>,
 ) -> Option<FailureReason> {
-    let claimed_root = claimed_root_opt?;
+    // A receipt set with no root is unverifiable, and the emitter never
+    // produces one: `record_receipts_merkle_root` is `Some` iff
+    // `record_receipts` is `Some` (services/api/src/cdp_document.rs). Skipping
+    // the check when the root is absent — which is what this function used to
+    // do — let an outsider append a whole fabricated receipt set to a genuine
+    // proof: no root means no comparison, and the array is outside the
+    // canonical hash, so the signature still verifies.
+    let claimed_root = match claimed_root_opt {
+        Some(root) => root,
+        None if receipts.is_empty() => return None,
+        None => {
+            return Some(FailureReason::RequiredFieldMissing {
+                field: "record_receipts_merkle_root".into(),
+            })
+        }
+    };
 
     // Recompute each receipt's chain hash from its fields and compare.
     let mut leaf_chain_hashes: Vec<String> = Vec::with_capacity(receipts.len());
@@ -1023,13 +1253,26 @@ fn verify_record_receipts(
     None
 }
 
-/// Verify the parent-proof set Merkle root per the receipt-batching specification. Returns
+/// Verify the parent-proof set Merkle root per ADR-041. Returns
 /// `Some(failure)` if the recomputed root doesn't match claimed.
 fn verify_parent_proofs(
     parents: &[serde_json::Value],
     claimed_root_opt: Option<&str>,
 ) -> Option<FailureReason> {
-    let claimed_root = claimed_root_opt?;
+    // Same fail-closed reasoning as `verify_record_receipts`:
+    // `parent_proofs_merkle_root` is `Some` iff `parent_proof_hashes` is
+    // `Some`, so a parent set without a root is a set nothing anchors. Left
+    // unchecked it made the entire declared lineage of a genuine proof
+    // forgeable by anyone holding the document.
+    let claimed_root = match claimed_root_opt {
+        Some(root) => root,
+        None if parents.is_empty() => return None,
+        None => {
+            return Some(FailureReason::RequiredFieldMissing {
+                field: "parent_proofs_merkle_root".into(),
+            })
+        }
+    };
 
     let leaves: Vec<String> = parents
         .iter()
@@ -1106,7 +1349,7 @@ mod tests {
         })
     }
 
-    // ── the chain-timestamp recovery rule — chain-timestamp recovery from attestation key_id ────────
+    // ── ADR-047 — chain-timestamp recovery from attestation key_id ────────
     //
     // Production issued AuditProofs before `destroyed_at` was restored to the
     // wire document. Those proofs are authentic and signed, but the timestamp
@@ -1114,7 +1357,7 @@ mod tests {
 
     #[test]
     fn recovers_production_key_id_with_millis_and_z() {
-        // The exact shape the chain specification emits for a production
+        // The exact shape `governance/rzl/src/cdp.rs` emits for a production
         // `Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)` timestamp.
         assert_eq!(
             recover_timestamp_from_key_id("nrx-verify-2026-03-01T00-05-00.000Z-550e8400"),
@@ -1293,7 +1536,7 @@ mod tests {
         assert_eq!(result.metadata.step_count, Some(8));
     }
 
-    // ── trust-chain anchoring: trust-chain anchoring (stage 8) ──────────────────────
+    // ── EO-07 sub-B: trust-chain anchoring (stage 8) ──────────────────────
 
     /// A chain-valid v2.1 `nanorix_only` proof whose `canonical_hash` is signed
     /// by `authority_key`. `embedded_pub_b64` is what lands in the attestation
@@ -1610,7 +1853,7 @@ mod tests {
         assert_eq!(strip_base64_prefix("xyz"), "xyz");
     }
 
-    // ── the customer-authority specification G7 — Verifier policy `required_authority_id` pin ──────
+    // ── ADR-031 G7 — Verifier policy `required_authority_id` pin ──────
     //
     // Five deterministic fixtures matching the runbook G7 test plan:
     //
@@ -1714,7 +1957,7 @@ mod tests {
         assert_eq!(result.stage_reached, 4);
     }
 
-    // ── Residency pin (the specification G1 / the region policy) ────────────────────────────
+    // ── Residency pin (EO-03 G1 / ADR-018 D3) ────────────────────────────
 
     /// A pinned region that the proof does not match is rejected before the
     /// chain walk. Until this gate existed, `--required-region` parsed fine and
@@ -1723,7 +1966,9 @@ mod tests {
     #[test]
     fn residency_pin_rejects_disagreeing_region() {
         let mut proof = make_minimal_v1_proof();
-        proof["region"] = serde_json::json!("us-central1");
+        proof["activity"] = serde_json::json!([
+            { "event": "capsule_started", "region": "us-central1" }
+        ]);
 
         let policy = VerifierPolicy {
             required_region: Some("europe-west1".into()),
@@ -1764,7 +2009,9 @@ mod tests {
     #[test]
     fn residency_pin_accepts_matching_region() {
         let mut proof = make_minimal_v1_proof();
-        proof["region"] = serde_json::json!("europe-west1");
+        proof["activity"] = serde_json::json!([
+            { "event": "capsule_started", "region": "europe-west1" }
+        ]);
 
         let policy = VerifierPolicy {
             required_region: Some("europe-west1".into()),
@@ -1774,6 +2021,56 @@ mod tests {
         let result = verify_auditproof(&proof, &[], &policy);
 
         assert!(result.valid, "expected valid; got {result:?}");
+    }
+
+    /// An outsider must not be able to satisfy a residency pin by appending a
+    /// region to a genuine, correctly-signed proof.
+    ///
+    /// Regression test for a demonstrated defect, not a hypothetical. Region
+    /// used to resolve from `/environment/region` or top-level `region`.
+    /// Neither is inside `CanonicalCdpView`: `environment` is a projection
+    /// built by `FullCdp::to_verification()` whose struct carries no region
+    /// field at all, and top-level `region` is emitted by nothing. So the pin
+    /// consulted a field anyone could append to a correctly-signed document
+    /// with no key — and because real proofs carry no region, the control
+    /// could only ever be satisfied by a forged one. True-positive rate zero,
+    /// false-positive rate one.
+    ///
+    /// Region now resolves only from the `capsule_started` activity event,
+    /// which is inside the signed canonical view.
+    #[test]
+    fn residency_pin_ignores_unsigned_region_fields() {
+        for injected_at in ["region", "environment"] {
+            let mut proof = make_minimal_v1_proof();
+            proof["activity"] = serde_json::json!([
+                { "event": "capsule_started", "region": "us-central1" }
+            ]);
+            if injected_at == "region" {
+                proof["region"] = serde_json::json!("europe-west1");
+            } else {
+                proof["environment"] = serde_json::json!({ "region": "europe-west1" });
+            }
+
+            let policy = VerifierPolicy {
+                required_region: Some("europe-west1".into()),
+                ..Default::default()
+            };
+
+            let result = verify_auditproof(&proof, &[], &policy);
+
+            assert!(
+                !result.valid,
+                "unsigned `{injected_at}` must not satisfy a residency pin; got {result:?}"
+            );
+            assert!(
+                matches!(
+                    result.failure_reason,
+                    Some(FailureReason::RegionMismatch { ref actual, .. })
+                        if actual == "us-central1"
+                ),
+                "must report the SIGNED region, not the injected one; got {result:?}"
+            );
+        }
     }
 
     /// No pin means no residency opinion — the pre-gate behaviour of every
@@ -2010,10 +2307,10 @@ mod tests {
         }
     }
 
-    // ── the specification an earlier release-A cdp_kind verifier byte-equivalence pins ──────
+    // ── ADR-006 Wave 16-A cdp_kind verifier byte-equivalence pins ──────
     //
     // The cdp_kind reserved-slot lives at the FullCdp / VerificationCdp
-    // canonical-hash layer (the AuditProof document builder), NOT in the
+    // canonical-hash layer (services/api/src/cdp_document.rs), NOT in the
     // 8-step destruction chain that this verifier reproduces.
     //
     // Therefore: the verifier MUST process AuditProofs identically whether
@@ -2108,7 +2405,7 @@ mod tests {
         }
     }
 
-    // ── the specification C.1-2 — algorithm dispatch + additive-evolution tolerance ─
+    // ── ADR-051 C.1-2 — algorithm dispatch + additive-evolution tolerance ─
 
     #[test]
     fn non_ed25519_attestation_algorithm_fails_typed_at_stage_4() {
@@ -2141,7 +2438,7 @@ mod tests {
 
     #[test]
     fn unknown_fields_do_not_disturb_verification() {
-        // Additive-evolution insurance (the specification C.2): a proof carrying fields
+        // Additive-evolution insurance (ADR-051 C.2): a proof carrying fields
         // this build has never heard of must verify exactly as without them.
         let mut proof = make_minimal_v1_proof();
         proof["future_sibling_artifact"] = serde_json::json!({ "anything": [1, 2, 3] });
@@ -2150,6 +2447,313 @@ mod tests {
         assert!(
             result.valid,
             "unknown fields must be ignored; got {result:?}"
+        );
+    }
+
+    // ── Reserved attestation slots: fail closed on a populated one ──
+    //
+    // The distinction against `unknown_fields_do_not_disturb_verification`
+    // above is deliberate. A field this build has never heard of is ignored,
+    // because additive evolution has to stay possible. A field this build
+    // knows to be BOTH outside the signature AND never emitted is rejected,
+    // because there is no benign way for it to be there.
+
+    #[test]
+    fn every_populated_reserved_slot_is_rejected() {
+        for slot in UNSIGNED_RESERVED_SLOTS {
+            let mut proof = make_minimal_v1_proof();
+            proof[slot] = serde_json::json!([{ "signature": "base64:AAAA" }]);
+            let result = verify_auditproof(&proof, &[], &VerifierPolicy::default());
+            assert!(!result.valid, "{slot} populated must be rejected");
+            match result.failure_reason {
+                Some(FailureReason::UnsignedFieldPopulated { ref field }) => {
+                    assert_eq!(field, slot)
+                }
+                other => panic!("{slot}: expected unsigned_field_populated, got {other:?}"),
+            }
+            assert_eq!(result.stage_reached, 2);
+        }
+    }
+
+    #[test]
+    fn reserved_slots_emitted_as_null_still_verify() {
+        // The positive control that keeps the gate honest: genuine documents
+        // carry every one of these keys with an explicit `null`, because the
+        // fields have no `skip_serializing_if`. Rejecting those would reject
+        // every proof Nanorix has ever issued.
+        let mut proof = make_minimal_v1_proof();
+        for slot in UNSIGNED_RESERVED_SLOTS {
+            proof[slot] = serde_json::Value::Null;
+        }
+        proof["per_event_attestations"] = serde_json::Value::Null;
+        let result = verify_auditproof(&proof, &[], &VerifierPolicy::default());
+        assert!(result.valid, "null slots must verify; got {result:?}");
+    }
+
+    #[test]
+    fn per_event_attestations_is_not_rejected_when_populated() {
+        // The one reserved slot the server genuinely fills, drained from
+        // `capsule_event_attestations` at destroy. Rejecting a populated one
+        // would reject authentic proofs from per-event-signed capsules.
+        let mut proof = make_minimal_v1_proof();
+        proof["per_event_attestations"] = serde_json::json!([{
+            "algorithm": "Ed25519",
+            "public_key": "base64:AAAA",
+            "signature": "base64:BBBB",
+            "event_id": "evt_1",
+        }]);
+        let result = verify_auditproof(&proof, &[], &VerifierPolicy::default());
+        assert!(
+            result.valid,
+            "per_event_attestations must stay accepted; got {result:?}"
+        );
+    }
+
+    #[test]
+    fn injected_witness_signatures_no_longer_reads_as_untampered() {
+        // The reproduction from FINDING_unsigned_slot_injection.md: take a
+        // proof that verifies, add a fabricated witness countersignature,
+        // change nothing else. Before this gate the verdict was "Integrity
+        // verified (proof not tampered since signing)" — false in exactly the
+        // case the sentence exists to rule out, and asserting an independent
+        // corroboration that never happened.
+        let clean = make_minimal_v1_proof();
+        assert!(verify_auditproof(&clean, &[], &VerifierPolicy::default()).valid);
+
+        let mut tampered = clean;
+        tampered["witness_signatures"] = serde_json::json!([{
+            "algorithm": "Ed25519",
+            "public_key": "base64:AAAA",
+            "signature": "base64:ZZZZ",
+            "key_id": "witness-that-never-signed",
+        }]);
+        let result = verify_auditproof(&tampered, &[], &VerifierPolicy::default());
+        assert!(!result.valid);
+        assert!(matches!(
+            result.failure_reason,
+            Some(FailureReason::UnsignedFieldPopulated { .. })
+        ));
+    }
+
+    #[test]
+    fn empty_array_in_a_reserved_slot_is_rejected() {
+        // No signer emits `[]` either — the shape is `null` or absent. An
+        // empty array carries no claim, but accepting it would mean the gate
+        // reasons about content rather than about who could have written it.
+        let mut proof = make_minimal_v1_proof();
+        proof["witness_signatures"] = serde_json::json!([]);
+        assert!(!verify_auditproof(&proof, &[], &VerifierPolicy::default()).valid);
+    }
+
+    // ── Unanchored sets: a set with no Merkle root is a set nothing binds ──
+
+    #[test]
+    fn parent_set_without_root_is_rejected() {
+        // Wholesale lineage injection: `parent_proof_hashes` is outside the
+        // canonical view and the root is `skip_serializing_if`, so appending
+        // an entire fabricated array to a genuine proof used to leave the
+        // signature intact AND the Merkle comparison skipped.
+        let mut proof = make_minimal_v1_proof();
+        proof["parent_proof_hashes"] = serde_json::json!([{
+            "parent_chain_hash": "sha512:00",
+            "parent_key_id": "cust-auth-fabricated",
+            "parent_signature": "base64:AAAA",
+            "parent_organization_tag": "vendor:never-involved",
+        }]);
+        let result = verify_auditproof(&proof, &[], &VerifierPolicy::default());
+        assert!(!result.valid);
+        match result.failure_reason {
+            Some(FailureReason::RequiredFieldMissing { ref field }) => {
+                assert_eq!(field, "parent_proofs_merkle_root")
+            }
+            other => panic!("expected required_field_missing, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn receipt_set_without_root_is_rejected() {
+        let mut proof = make_minimal_v1_proof();
+        proof["record_receipts"] = serde_json::json!([{
+            "record_index": 0,
+            "record_id": "rec_fabricated",
+            "record_chain_hash": "sha512:00",
+        }]);
+        let result = verify_auditproof(&proof, &[], &VerifierPolicy::default());
+        assert!(!result.valid);
+        match result.failure_reason {
+            Some(FailureReason::RequiredFieldMissing { ref field }) => {
+                assert_eq!(field, "record_receipts_merkle_root")
+            }
+            other => panic!("expected required_field_missing, got {other:?}"),
+        }
+    }
+    // ── B1.4 — canonical chain identity ───────────────────────────────────
+    //
+    // Eight entries is a count, not an identity. Before this gate the walk
+    // hashed whatever `subsystem` the document declared and mapped anything
+    // unrecognised to an empty method, so any self-consistent 8-entry chain
+    // reproduced itself and verified clean. These pin the three shapes that
+    // used to pass and the one shape that now has its own verdict.
+
+    /// Build a self-consistent v1.0 chain over an arbitrary subsystem list —
+    /// exactly what a signer authoring a non-canonical chain would produce.
+    fn make_self_consistent_v1_proof(subsystems: [&str; NANORIX_CHAIN_STEPS]) -> serde_json::Value {
+        let timestamp = "2026-05-06T12:00:00Z";
+        let mut prev_hash = NANORIX_GENESIS_HASH.to_string();
+        let mut chain = Vec::new();
+        for subsystem in subsystems {
+            let method = lookup_method(subsystem);
+            let chain_hash = compute_step_hash(&prev_hash, subsystem, "destroy", method, timestamp);
+            chain.push(serde_json::json!({
+                "subsystem": subsystem,
+                "method": method,
+                "chain_hash": chain_hash.clone(),
+            }));
+            prev_hash = chain_hash;
+        }
+        serde_json::json!({
+            "cdp_version": "1.0",
+            "capsule_id": "cap_identity_test",
+            "destroyed_at": timestamp,
+            "chain": chain,
+            "final_hash": prev_hash,
+        })
+    }
+
+    /// Positive control. The canonical eight still verify — the gate rejects
+    /// non-canonical identity, it does not reject proofs.
+    #[test]
+    fn canonical_chain_still_verifies() {
+        let canonical = [
+            "eee_namespace",
+            "eee_tmpfs",
+            "eee_memory",
+            "dire_keys",
+            "dire_identity",
+            "fgx_forensic",
+            "rzl_audit",
+            "capsule_destroy",
+        ];
+        let proof = make_self_consistent_v1_proof(canonical);
+        let result = verify_auditproof(&proof, &[], &VerifierPolicy::default());
+        assert!(result.valid, "canonical chain must verify; got {result:?}");
+        assert_eq!(result.metadata.step_count, Some(8));
+    }
+
+    #[test]
+    fn canonical_chain_table_matches_lookup_method() {
+        for (subsystem, method) in CANONICAL_CHAIN {
+            assert_eq!(lookup_method(subsystem), method, "{subsystem}");
+        }
+    }
+
+    #[test]
+    fn scrambled_canonical_order_is_rejected() {
+        let proof = make_self_consistent_v1_proof([
+            "capsule_destroy",
+            "rzl_audit",
+            "fgx_forensic",
+            "dire_identity",
+            "dire_keys",
+            "eee_memory",
+            "eee_tmpfs",
+            "eee_namespace",
+        ]);
+        let result = verify_auditproof(&proof, &[], &VerifierPolicy::default());
+        assert!(!result.valid, "scrambled order must not verify");
+        assert_eq!(result.stage_reached, 3);
+        assert!(
+            matches!(
+                result.failure_reason,
+                Some(FailureReason::StepHashMismatch { step_idx: 0, .. })
+            ),
+            "got {:?}",
+            result.failure_reason
+        );
+    }
+
+    #[test]
+    fn unknown_subsystems_are_rejected_not_mapped_to_empty_method() {
+        let proof = make_self_consistent_v1_proof(["a", "b", "c", "d", "e", "f", "g", "h"]);
+        let result = verify_auditproof(&proof, &[], &VerifierPolicy::default());
+        assert!(!result.valid, "unknown subsystems must not verify");
+        assert!(
+            matches!(
+                result.failure_reason,
+                Some(FailureReason::StepHashMismatch { step_idx: 0, .. })
+            ),
+            "got {:?}",
+            result.failure_reason
+        );
+    }
+
+    #[test]
+    fn duplicated_subsystem_is_rejected() {
+        let proof = make_self_consistent_v1_proof(["eee_namespace"; NANORIX_CHAIN_STEPS]);
+        let result = verify_auditproof(&proof, &[], &VerifierPolicy::default());
+        assert!(!result.valid, "a repeated subsystem must not verify");
+        assert!(
+            matches!(
+                result.failure_reason,
+                Some(FailureReason::StepHashMismatch { step_idx: 1, .. })
+            ),
+            "got {:?}",
+            result.failure_reason
+        );
+    }
+
+    /// The residual the new variant exists for: genuine hashes, lying label.
+    /// The chain walk reproduces every hash because the inputs come from the
+    /// canonical table — only the declared name is wrong, and nothing but an
+    /// explicit identity check can see it.
+    #[test]
+    fn genuine_hashes_with_a_forged_subsystem_label_are_rejected() {
+        let mut proof = make_minimal_v1_proof();
+        proof["chain"][3]["subsystem"] = serde_json::json!("dire_identity");
+        let result = verify_auditproof(&proof, &[], &VerifierPolicy::default());
+        assert!(!result.valid, "a forged step label must not verify");
+        assert_eq!(result.stage_reached, 3);
+        match result.failure_reason {
+            Some(FailureReason::ChainStepIdentityMismatch {
+                step_idx,
+                ref expected_subsystem,
+                ref found_subsystem,
+            }) => {
+                assert_eq!(step_idx, 3);
+                assert_eq!(expected_subsystem, "dire_keys");
+                assert_eq!(found_subsystem, "dire_identity");
+            }
+            other => panic!("expected ChainStepIdentityMismatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn empty_sets_without_root_still_verify() {
+        // A pre-Wave-N proof carries neither key; an empty array anchors
+        // nothing and claims nothing, so neither may become a rejection.
+        let mut proof = make_minimal_v1_proof();
+        proof["parent_proof_hashes"] = serde_json::json!([]);
+        proof["record_receipts"] = serde_json::json!([]);
+        let result = verify_auditproof(&proof, &[], &VerifierPolicy::default());
+        assert!(result.valid, "empty sets must verify; got {result:?}");
+    }
+
+    #[test]
+    fn missing_subsystem_field_is_rejected() {
+        let mut proof = make_minimal_v1_proof();
+        proof["chain"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("subsystem");
+        let result = verify_auditproof(&proof, &[], &VerifierPolicy::default());
+        assert!(!result.valid, "an unlabelled step must not verify");
+        assert!(
+            matches!(
+                result.failure_reason,
+                Some(FailureReason::ChainStepIdentityMismatch { step_idx: 0, .. })
+            ),
+            "got {:?}",
+            result.failure_reason
         );
     }
 }

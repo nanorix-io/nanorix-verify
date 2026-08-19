@@ -23,7 +23,7 @@ verifier on the 100-fixture reference corpus, is the strongest available
 proof that the spec is unambiguous and the algorithm is implementable
 without insider information.
 
-The AuditProof shape is **forever-stable** per the Forever-Standard wire discipline. This Go
+The AuditProof shape is **forever-stable** per ADR-006 I0. This Go
 implementation therefore uses standard-library-only crypto (`crypto/ed25519`,
 `crypto/sha512`, `encoding/json`) so it carries zero supply-chain dependence
 on third parties for the cryptographic primitives.
@@ -67,9 +67,9 @@ auditproof-verifier-go --fixture-dir tools/nanorix-verify/fixtures/corpus
 ### Verifier policy flags
 
 ```
---reject-diagnostic            Refuse AuditProofs flagged diagnostic_mode (the specification)
+--reject-diagnostic            Refuse AuditProofs flagged diagnostic_mode (EO-09)
 --required-region <region>     Require the AuditProof region to match (e.g. europe-west1)
---required-authority-id <id>   Require a specific signing-authority id (per the customer-authority specification G7)
+--required-authority-id <id>   Require a specific signing-authority id (per ADR-031 G7)
 ```
 
 ### Exit codes
@@ -85,7 +85,7 @@ auditproof-verifier-go --fixture-dir tools/nanorix-verify/fixtures/corpus
 
 This Go verifier produces byte-equivalent results to the Rust verifier
 (`tools/nanorix-verify/`) on the 100-fixture reference corpus shipped at
-commit `ba1d51a` (an earlier release verification-surface scaffolds). Specifically:
+commit `ba1d51a` (Wave 6 verification-surface scaffolds). Specifically:
 
 - 100/100 fixtures yield identical verdict (valid/invalid)
 - 100/100 fixtures yield identical typed `failure_reason` payload
@@ -94,7 +94,7 @@ commit `ba1d51a` (an earlier release verification-surface scaffolds). Specifical
 - JSON wire-form is byte-identical including key ordering (the
   serde-tag-discriminant `"type"` is always emitted first)
 
-The closed-set `FailureReason` enum is forever-stable per the Forever-Standard wire discipline and is
+The closed-set `FailureReason` enum is forever-stable per ADR-006 I0 and is
 mirrored exactly from the canonical Rust definition at
 `governance/verify-types/src/lib.rs::FailureReason`. New failure modes ship
 as additive variants; existing variants are NEVER renamed, removed, or
@@ -174,6 +174,6 @@ Apache-2.0. Copyright 2026 Nanorix Inc. See `LICENSE` at the repository root.
 - Verification result types (Rust source of truth):
   `governance/verify-types/src/lib.rs`
 - Fixture corpus: `tools/nanorix-verify/fixtures/corpus/` (100 fixtures, shipped
-  from sealed an earlier release commit `ba1d51a`)
+  from sealed Wave 6 commit `ba1d51a`)
 - JSON Schema: `tools/nanorix-verify/schema/audit_proof_v2_1.json`
   (verifier release framing)

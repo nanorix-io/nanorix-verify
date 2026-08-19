@@ -1,4 +1,4 @@
-//! the boundary-attestation specification D7 — offline BoundaryAttestation (retain mode) verification.
+//! ADR-050 D7 — offline BoundaryAttestation (retain mode) verification.
 //!
 //! A BoundaryAttestation is the sibling primitive to the AuditProof
 //! (INVARIANTS #28): a point-in-time signed snapshot issued while the capsule
@@ -6,7 +6,7 @@
 //! inside the signed bytes says so — and this verifier reports structural
 //! results only, never a verdict about what the evidence means.
 //!
-//! Verification stages (per the boundary-attestation specification D7):
+//! Verification stages (per ADR-050 D7):
 //! 1. Parse; `kind` + `version` + schema + fixed continuation statement +
 //!    observation-method vocabulary (disjoint from the 8 destruction-chain
 //!    method names by construction).
@@ -18,7 +18,7 @@
 //! 4. Chain walk when a set of attestations for one capsule is supplied:
 //!    `prev_attestation_hash` linkage, strict `attestation_index`
 //!    monotonicity, `cutoff_ts` strictly increasing, genesis rule at index 1.
-//! 5. Disclosed activity trail: recompute the per-record receipt specification-shaped SHA-512 chain
+//! 5. Disclosed activity trail: recompute the ADR-039-shaped SHA-512 chain
 //!    over canonical-JSON event hashes and compare `activity_commitment` +
 //!    `activity_event_count`.
 //!
@@ -34,21 +34,21 @@ use serde_json::Value;
 use sha2::{Digest, Sha512};
 
 /// Fixed domain separator — no BoundaryAttestation can be parsed as an
-/// AuditProof or vice versa (the boundary-attestation specification D2).
+/// AuditProof or vice versa (ADR-050 D2).
 pub const BOUNDARY_ATTESTATION_KIND: &str = "boundary_attestation";
 
 /// Document schema versions this build verifies. Unknown versions fail typed
-/// (the specification discipline).
+/// (ADR-049 discipline).
 pub const BOUNDARY_SUPPORTED_VERSIONS: &[&str] = &["1.0"];
 
 /// The fixed continuation statement embedded in every BoundaryAttestation
-/// (the boundary-attestation specification D3). The signature covers it; the verifier additionally checks
+/// (ADR-050 D3). The signature covers it; the verifier additionally checks
 /// it verbatim so an issuer bug cannot ship a snapshot without the explicit
 /// not-a-destruction-claim wording.
 pub const BOUNDARY_CONTINUATION_STATEMENT: &str = "The capsule remained live at cutoff_ts; \
      this attestation records observations up to that instant and is NOT a destruction claim.";
 
-/// Observation-method vocabulary (the boundary-attestation specification D2) — deliberately disjoint from
+/// Observation-method vocabulary (ADR-050 D2) — deliberately disjoint from
 /// the 8 destruction-chain method names so no string in this document can be
 /// mistaken for a destruction-chain step.
 pub const BOUNDARY_OBSERVATION_METHODS: &[&str] = &[
@@ -60,7 +60,7 @@ pub const BOUNDARY_OBSERVATION_METHODS: &[&str] = &[
 /// Typed failure reasons for the BoundaryAttestation pipeline. Sibling enum
 /// to `nanorix_verify_types::FailureReason` — a NEW document type gets its
 /// own closed enum rather than widening the Forever-Standard AuditProof one
-/// (verify-types additive-evolution policy, the specification.3). Same wire form
+/// (verify-types additive-evolution policy, ADR-049 D3.3). Same wire form
 /// discipline: `type` tag, snake_case.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -72,7 +72,7 @@ pub enum BoundaryFailureReason {
     /// A structurally required field is absent or of the wrong type.
     RequiredFieldMissing { field: String },
     /// `hash_algorithm` / `signature_algorithm` pin differs from sha512 /
-    /// Ed25519 (the specification explicit pins).
+    /// Ed25519 (ADR-049 D1 explicit pins).
     AlgorithmUnsupported { field: String, found: String },
     /// The fixed continuation statement is absent or altered.
     ContinuationStatementMismatch,
@@ -132,7 +132,7 @@ pub struct BoundaryVerificationResult {
     /// True iff every check that ran was valid.
     pub valid: bool,
     pub failure_reason: Option<BoundaryFailureReason>,
-    /// Highest the boundary-attestation specification D7 stage reached (1..=3 for a single document; the
+    /// Highest ADR-050 D7 stage reached (1..=3 for a single document; the
     /// chain walk and activity-trail stages are reported on their own
     /// results).
     pub stage_reached: u8,
@@ -146,7 +146,7 @@ pub struct BoundaryVerificationResult {
     pub metadata: BoundaryMetadata,
 }
 
-/// Verdict for a chain of attestations for one capsule (the boundary-attestation specification D5).
+/// Verdict for a chain of attestations for one capsule (ADR-050 D5).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct BoundaryChainResult {
     pub valid: bool,
@@ -184,9 +184,9 @@ pub fn recompute_boundary_canonical_hash(doc: &Value) -> String {
     }
 }
 
-/// Recompute the per-record receipt specification-shaped activity commitment over disclosed events:
+/// Recompute the ADR-039-shaped activity commitment over disclosed events:
 /// `prev = genesis; prev = SHA-512(prev ‖ 0x00 ‖ SHA-512(JCS(event)).hex())`
-/// per the reference chain implementation. Genesis when
+/// per `governance/rzl/src/wave_n.rs::compute_activity_root`. Genesis when
 /// the trail is empty. Lowercase hex, no prefix.
 pub fn recompute_activity_commitment(events: &[Value]) -> String {
     let mut prev = NANORIX_GENESIS_HASH.to_string();
@@ -222,7 +222,7 @@ fn fail(
     }
 }
 
-/// Verify one BoundaryAttestation document: stages 1-3 of the boundary-attestation specification D7.
+/// Verify one BoundaryAttestation document: stages 1-3 of ADR-050 D7.
 ///
 /// With `policy.trust_chain` set (the manifest's own signature already
 /// verified by the caller, exactly as for AuditProofs), the signing key is
@@ -307,7 +307,7 @@ pub fn verify_boundary_attestation(
         );
     }
 
-    // Explicit algorithm pins (the specification — the document is born agile, so
+    // Explicit algorithm pins (ADR-049 D1 — the document is born agile, so
     // the pins are load-bearing, not decorative).
     let hash_alg = str_of(doc, "hash_algorithm").unwrap_or_default();
     if hash_alg != "sha512" {
@@ -332,7 +332,7 @@ pub fn verify_boundary_attestation(
         );
     }
 
-    // Fixed continuation statement, verbatim (the boundary-attestation specification D3).
+    // Fixed continuation statement, verbatim (ADR-050 D3).
     if str_of(doc, "continuation").as_deref() != Some(BOUNDARY_CONTINUATION_STATEMENT) {
         return fail(
             BoundaryFailureReason::ContinuationStatementMismatch,
@@ -396,7 +396,7 @@ pub fn verify_boundary_attestation(
         (Some(s), Some(p)) => (s, p),
         // No signature this build could check: canonical form verified,
         // integrity NOT established. `valid` stays true; the CLI maps this
-        // to exit 3, never exit 0 (the published corpus exit-code ladder).
+        // to exit 3, never exit 0 (commit b372515 exit-code ladder).
         _ => {
             return BoundaryVerificationResult {
                 valid: true,
@@ -432,7 +432,7 @@ pub fn verify_boundary_attestation(
     }
 
     // Authenticity: resolve + re-verify against the trust-chain manifest
-    // (same the specification/the specification machinery as AuditProofs — the boundary-attestation specification D4).
+    // (same ADR-011/ADR-033 machinery as AuditProofs — ADR-050 D4).
     let manifest = match &policy.trust_chain {
         Some(m) => m,
         None => {
@@ -487,7 +487,7 @@ pub fn verify_boundary_attestation(
     }
 }
 
-/// Verify a chain of BoundaryAttestations for ONE capsule (the boundary-attestation specification D5, D7
+/// Verify a chain of BoundaryAttestations for ONE capsule (ADR-050 D5, D7
 /// stage 4). Documents are walked in `attestation_index` order (the supplied
 /// order does not matter). Any suffix of a chain is internally checkable;
 /// `genesis_anchored` reports whether the walk reached the genesis origin.
@@ -672,7 +672,7 @@ pub fn verify_boundary_chain(docs: &[Value], policy: &VerifierPolicy) -> Boundar
 }
 
 /// Verify a disclosed activity trail against one attestation's commitment
-/// (the boundary-attestation specification D7 stage 5). Returns `None` when the recomputed the per-record receipt specification-shaped
+/// (ADR-050 D7 stage 5). Returns `None` when the recomputed ADR-039-shaped
 /// chain and the event count both match the document.
 pub fn verify_disclosed_activity_trail(
     doc: &Value,

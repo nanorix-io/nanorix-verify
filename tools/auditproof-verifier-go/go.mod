@@ -1,15 +1,15 @@
 // Module auditproof-verifier-go — Go reference implementation of the Nanorix
 // AuditProof verifier, providing cross-implementation byte-equivalence with the
 // Rust verifier (`tools/nanorix-verify/`) on the 100-fixture corpus shipped at
-// the published corpus (an earlier release verification-surface scaffolds).
+// commit ba1d51a (Wave 6 verification-surface scaffolds).
 //
 // Discipline anchors:
-// - the Forever-Standard wire discipline: Forever-Standard. AuditProof shape is permanent; this module
+// - ADR-006 I0: Forever-Standard. AuditProof shape is permanent; this module
 //   evolves field-additively, never breakingly.
-// - the specification: trust-chain manifest awareness (capsulefile_content_hash →
+// - ADR-027: trust-chain manifest awareness (capsulefile_content_hash →
 //   required_authority_id → customer-attested signing).
-// - the customer-authority specification: BYO-HSM customer-attested signing path.
-// - the specification: verifier release framing.
+// - ADR-031: BYO-HSM customer-attested signing path.
+// - ADR-033: verifier release framing.
 //
 // Cross-implementation byte-equivalence is the binding contract: every fixture
 // in `tools/nanorix-verify/fixtures/corpus/` must produce a byte-identical

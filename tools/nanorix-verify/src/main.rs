@@ -4,7 +4,7 @@
 //! auditor receives a Nanorix AuditProof and needs to confirm authenticity
 //! without any Nanorix SaaS dependency.
 //!
-//! Per the verifier specification :
+//! Per Nanorix EO-07 (G3 Adoption-Blocker, dispatched 2026-05-06):
 //! ```text
 //! $ brew install nanorix-verify
 //! $ nanorix-verify auditproof.json
@@ -33,7 +33,7 @@ use std::path::{Path, PathBuf};
     version,
     about = "Verify a Nanorix AuditProof — auditor moment-of-truth tool",
     long_about = "Verifies a Nanorix AuditProof JSON document independently of the Nanorix \
-                  SaaS. Performs 8-stage verification per the AuditProof specification: schema, version, chain \
+                  SaaS. Performs 8-stage verification per ADR-011 I8: schema, version, chain \
                   reproducibility, final-hash binding, canonical-hash binding, signing-key \
                   resolution, Ed25519 signature, authority status."
 )]
@@ -49,19 +49,19 @@ struct Cli {
     json: bool,
 
     /// Refuse AuditProofs whose attestation indicates `diagnostic_mode: true`
-    /// (per the verifier specification verifier policy).
+    /// (per Nanorix EO-09 verifier policy).
     #[arg(long)]
     reject_diagnostic: bool,
 
     /// Required region (e.g., `europe-west1`). When set, AuditProofs whose
-    /// region disagrees fail with `RegionMismatch` (per the verifier specification).
+    /// region disagrees fail with `RegionMismatch` (per Nanorix EO-03 G1).
     #[arg(long)]
     required_region: Option<String>,
 
     /// Required signing-authority id (e.g., `customer-hsm-example-org-v1`).
     /// When set, AuditProofs whose `signing_authority.authority_id` is
     /// absent (Nanorix-default signing path) OR differs from this value
-    /// fail with `AuthorityIdMismatch` (per the customer-authority specification G7 / VP Security
+    /// fail with `AuthorityIdMismatch` (per ADR-031 G7 / VP Security
     /// extended-review F4.3). Use this when your compliance posture
     /// requires customer-HSM-attested AuditProofs and rejecting
     /// Nanorix-default signing.
@@ -73,7 +73,7 @@ struct Cli {
     /// verifies the signature against the manifest key — reaching full "verify
     /// without trusting Nanorix" (stage 8). The manifest's OWN signature is
     /// verified against the pinned identity fingerprint first; if that fails,
-    /// the verifier aborts before checking any proof. (trust-chain anchoring.)
+    /// the verifier aborts before checking any proof. (EO-07 sub-B.)
     #[arg(long)]
     trust_chain: Option<PathBuf>,
 
@@ -94,7 +94,7 @@ enum Commands {
         proof: PathBuf,
 
         /// Optional path to the original input bytes (verifies input_hash if
-        /// present in the manifest). Per the specification.
+        /// present in the manifest). Per ADR-008.
         #[arg(long)]
         input: Option<PathBuf>,
 
@@ -104,7 +104,7 @@ enum Commands {
         api_key: Option<String>,
     },
 
-    /// an earlier release-7 /  — bulk verification mode.
+    /// Wave 18-7 / CTI-T7-007 — bulk verification mode.
     ///
     /// Walks `<directory>` recursively, verifies every `*.json` AuditProof,
     /// reports a per-file PASS / FAIL line + aggregate summary. Exit code
@@ -142,7 +142,7 @@ enum Commands {
     ///
     /// Build a bundle of N cross-org Ed25519 verification pubkeys (signed by
     /// the publishing party), or verify an existing bundle, used when an
-    /// the receipt-batching specification cross-org chain references a parent AuditProof signed under
+    /// ADR-041 cross-org chain references a parent AuditProof signed under
     /// a different account OR an offline/air-gap environment where
     /// `/v1/keys/:id` lookup is unavailable.
     PubkeyBundle {
@@ -150,7 +150,7 @@ enum Commands {
         op: PubkeyBundleOp,
     },
 
-    /// the boundary-attestation specification — BoundaryAttestation (retain mode) operations.
+    /// ADR-050 — BoundaryAttestation (retain mode) operations.
     ///
     /// A BoundaryAttestation is a point-in-time signed snapshot of a LIVE
     /// capsule's isolation boundary — the sibling primitive to the
@@ -183,7 +183,7 @@ enum BoundaryOp {
         attestations: Vec<PathBuf>,
 
         /// Disclosed activity-trail JSON ({"events": [...]} or a bare
-        /// array). Recomputes the per-record receipt specification-shaped commitment chain and
+        /// array). Recomputes the ADR-039-shaped commitment chain and
         /// compares activity_commitment + activity_event_count.
         /// Single-attestation mode only.
         #[arg(long)]
@@ -244,7 +244,7 @@ enum PubkeyBundleOp {
 }
 
 /// Compiled-in pin for the Nanorix long-term identity key (`sha256:<hex>`) —
-/// the trust-chain anchoring trust root. `None` until the HSM identity key is provisioned
+/// the EO-07 sub-B trust root. `None` until the HSM identity key is provisioned
 /// when the identity key is provisioned; set it to the published fingerprint
 /// then (also published at `nanorix.io/.well-known/identity.txt` + GitHub
 /// releases for out-of-band cross-confirmation). While `None`, `--trust-chain`
@@ -261,7 +261,7 @@ fn main() -> Result<()> {
         ..Default::default()
     };
 
-    // trust-chain anchoring: if a trust-chain manifest is supplied, verify its OWN
+    // EO-07 sub-B: if a trust-chain manifest is supplied, verify its OWN
     // signature against the pinned identity fingerprint BEFORE verifying any
     // proof. A bad trust root is a setup error — fail loud, exit 2; never
     // silently downgrade to integrity-only verification.
@@ -348,7 +348,7 @@ fn main() -> Result<()> {
     }
 }
 
-/// an earlier release-7 /  — bulk verification entry point.
+/// Wave 18-7 / CTI-T7-007 — bulk verification entry point.
 ///
 /// Walks `directory` recursively, collects every regular file whose path
 /// ends in `extension` (default `.json`), and verifies each as an
@@ -659,9 +659,9 @@ fn verify_path(path: &PathBuf, policy: &VerifierPolicy, json_output: bool) -> Re
     Ok(())
 }
 
-/// the boundary-attestation specification D7 — verify one BoundaryAttestation or a chain of them.
+/// ADR-050 D7 — verify one BoundaryAttestation or a chain of them.
 ///
-/// Exit-code ladder (same contract as `verify_path`, the published corpus):
+/// Exit-code ladder (same contract as `verify_path`, commit b372515):
 ///   0 → every supplied document's signature was checked and verified
 ///   1 → verification failed (structure, canonical hash, signature, chain,
 ///       or disclosed activity trail)
@@ -818,7 +818,7 @@ fn boundary_verify(
     Ok(())
 }
 
-/// One verdict line per BoundaryAttestation. Kind is named FIRST (the boundary-attestation specification:
+/// One verdict line per BoundaryAttestation. Kind is named FIRST (ADR-050:
 /// verifier output names the document kind before anything else, so a mid-run
 /// snapshot can never read as terminal destruction evidence).
 fn print_boundary_human(r: &BoundaryVerificationResult) {
@@ -884,7 +884,7 @@ fn print_human(r: &VerificationResult) {
         // Honest verdict ladder — the green "Verified" is reserved for FULL
         // trust-anchored verification and nothing weaker:
         //   stage 8  → signature verified AND the signing key resolved against
-        //              the Nanorix trust-chain manifest (trust-chain anchoring). Only this
+        //              the Nanorix trust-chain manifest (EO-07 sub-B). Only this
         //              is "verify without trusting Nanorix".
         //   stage 7  → signature is cryptographically valid, but against the key
         //              EMBEDDED in the proof — proves integrity (not tampered
@@ -911,7 +911,7 @@ fn print_human(r: &VerificationResult) {
                 "  {}",
                 "Integrity verified (proof not tampered since signing). Authenticity \
                  pending: the signing key was read from the proof itself, not yet \
-                 resolved against the Nanorix trust-chain manifest (trust-chain anchoring)."
+                 resolved against the Nanorix trust-chain manifest (EO-07 sub-B)."
                     .dimmed()
             );
         } else {
@@ -931,12 +931,24 @@ fn print_human(r: &VerificationResult) {
         if let Some(steps) = r.metadata.step_count {
             println!("  Chain steps: {steps} / 8");
         }
+        if let Some(n) = r.metadata.unattested_parent_attribution {
+            println!(
+                "  {}",
+                format!(
+                    "Parent links: {n} carry attribution the signature does NOT cover \
+                     (parent_key_id, parent_signature, parent_role, parent_jurisdiction, \
+                     parent_organization_tag). Only parent_chain_hash is bound to the signed \
+                     Merkle root. Do not read the rest as attested."
+                )
+                .yellow()
+            );
+        }
         if let Some(ts) = &r.metadata.recovered_chain_timestamp {
             println!("  Chain timestamp: {ts} (recovered from attestation key_id)");
             println!(
                 "  {}",
                 "This proof predates the restoration of the document-level \
-                 `destroyed_at` field (the chain-timestamp recovery rule), so the timestamp the chain hashes \
+                 `destroyed_at` field (ADR-047), so the timestamp the chain hashes \
                  was read from the attestation key_id. The chain still had to \
                  reproduce against it — a wrong timestamp cannot pass."
                     .dimmed()
@@ -977,6 +989,13 @@ fn format_reason(r: &FailureReason) -> String {
             step_idx,
             subsystem,
         } => format!("step_hash_mismatch (step {step_idx}, subsystem: {subsystem})"),
+        FailureReason::ChainStepIdentityMismatch {
+            step_idx,
+            expected_subsystem,
+            found_subsystem,
+        } => format!(
+            "chain_step_identity_mismatch (step {step_idx}, expected: {expected_subsystem}, found: {found_subsystem})"
+        ),
         FailureReason::GenesisHashMismatch => "genesis_hash_mismatch".into(),
         FailureReason::FinalHashMismatch { .. } => "final_hash_mismatch".into(),
         FailureReason::SignatureMismatch { reason } => format!("signature_mismatch ({reason:?})"),
@@ -1021,6 +1040,12 @@ fn format_reason(r: &FailureReason) -> String {
                 "authority_id_mismatch (claimed: {claimed}, expected: {expected_authority_id}, reason: {sub})"
             )
         }
+        FailureReason::StreamingMerkleRootMismatch { claimed, computed } => {
+            format!("streaming_merkle_root_mismatch (claimed: {claimed}, computed: {computed})")
+        }
+        FailureReason::UnsignedFieldPopulated { field } => {
+            format!("unsigned_field_populated (field: {field})")
+        }
         FailureReason::Reserved => "reserved".into(),
     }
 }
@@ -1038,6 +1063,11 @@ fn print_resolution_hint(r: &FailureReason) {
         }
         FailureReason::StepHashMismatch { .. } => {
             "→ The chain was tampered with at the named step. Reject the proof."
+        }
+        FailureReason::ChainStepIdentityMismatch { .. } => {
+            "→ A chain step names a subsystem that is not the canonical one for its \
+             position. The 8-step order is fixed for the life of the format. Reject \
+             the proof."
         }
         FailureReason::GenesisHashMismatch => {
             "→ First step's prev_hash != SHA-512(empty). Tampered or truncated."
@@ -1067,7 +1097,7 @@ fn print_resolution_hint(r: &FailureReason) {
         }
         FailureReason::AuthorityModeMismatch { .. } => {
             "→ Customer-attested authority signature failed against the registered Ed25519 \
-             public key (the customer-authority specification). Either the authority's published key is stale \
+             public key (ADR-031 Amendment 1). Either the authority's published key is stale \
              OR the AuditProof was signed with a non-Ed25519 algorithm. Re-publish the key OR \
              reject the proof."
         }
@@ -1077,7 +1107,7 @@ fn print_resolution_hint(r: &FailureReason) {
                  but this AuditProof was signed under Nanorix's default signing authority. \
                  Either accept Nanorix-default proofs (drop --required-authority-id) OR \
                  require the capsule producer to configure customer-HSM signing in their \
-                 Capsulefile (per the customer-authority specification)."
+                 Capsulefile (per ADR-031)."
             }
             AuthorityIdMismatchReason::VerifierPolicyAuthorityIdMismatch => {
                 "→ Your --required-authority-id policy demands a specific customer authority, \
@@ -1086,6 +1116,20 @@ fn print_resolution_hint(r: &FailureReason) {
                  a cryptographic concern."
             }
         },
+        FailureReason::StreamingMerkleRootMismatch { .. } => {
+            "→ A streaming-egress Merkle root in the activity trail does not match the root \
+             recomputed from the chunk hashes disclosed beside it. The destruction chain itself \
+             reproduced — this is the record of what the capsule streamed out, not the record of \
+             its destruction. Treat the streamed-response evidence as unreliable and ask the \
+             capsule producer to re-issue the proof."
+        }
+        FailureReason::UnsignedFieldPopulated { .. } => {
+            "→ The named field is outside the signature's coverage and no Nanorix signer \
+             populates it, so its contents were added after signing by someone holding no \
+             key. The signature over the covered fields still checks out; that is precisely \
+             why this is rejected rather than reported as verified. Reject the proof and \
+             obtain a fresh copy from the issuer."
+        }
         FailureReason::Reserved => "→ Reserved value; should not appear.",
     };
     println!("  {}", hint.dimmed());
@@ -1323,7 +1367,7 @@ fn pubkey_bundle_verify(
 }
 
 fn print_trust_chain() -> Result<()> {
-    println!("{}", "Trust-chain manifest (the verifier specification):".bold());
+    println!("{}", "Trust-chain manifest (EO-07 + EO-07 ext):".bold());
     println!();
     println!(
         "  {} Source: pass a local manifest via --trust-chain (offline / air-gap). This build has no HTTP client and retrieves nothing; obtain a manifest yourself and pass it in.",
@@ -1334,7 +1378,7 @@ fn print_trust_chain() -> Result<()> {
         "•".dimmed()
     );
     println!(
-        "  {} {} discipline: archived_versions are forever-retained per the verifier specification (G2 long-term verifiability). Healthcare retention is 7-30 years; AuditProof signed under version N must verify after we rotate to version N+K. Archived keys are NEVER removed.",
+        "  {} {} discipline: archived_versions are forever-retained per EO-07 ext (G2 long-term verifiability). Healthcare retention is 7-30 years; AuditProof signed under version N must verify after we rotate to version N+K. Archived keys are NEVER removed.",
         "•".dimmed(),
         "Archive-forever".bold()
     );
@@ -1361,7 +1405,7 @@ fn print_trust_chain() -> Result<()> {
     );
     println!();
     println!(
-        "  {} trust-chain anchoring (WIRED + tested): manifest-signature verification, key resolution, and signature-against-manifest-key. Supply --trust-chain <manifest> + --identity-fingerprint <sha256:...> to verify a proof to stage 8. This build retrieves nothing over the network; supply the manifest as a file.",
+        "  {} EO-07 sub-B (WIRED + tested): manifest-signature verification, key resolution, and signature-against-manifest-key. Supply --trust-chain <manifest> + --identity-fingerprint <sha256:...> to verify a proof to stage 8. This build retrieves nothing over the network; supply the manifest as a file.",
         "✓".green()
     );
     println!();

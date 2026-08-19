@@ -1,7 +1,7 @@
 //! Portable Pubkey Bundle (`.ppb.json`) — Wave B Item 8 surface.
 //!
 //! A JSON document carrying N cross-org Ed25519 verification pubkeys, used
-//! when an receipt-batching specification cross-org chain references a parent AuditProof signed
+//! when an ADR-041 cross-org chain references a parent AuditProof signed
 //! under a different Nanorix customer account OR an offline/air-gap
 //! environment where `/v1/keys/:id` lookup is unavailable.
 //!

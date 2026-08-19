@@ -1,6 +1,6 @@
 [package]
 name = "nanorix-verify"
-description = "Standalone AuditProof verifier — auditor moment-of-truth artifact (the verifier specification)"
+description = "Standalone AuditProof verifier — auditor moment-of-truth artifact (Nanorix EO-07 G3)"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -36,7 +36,7 @@ anyhow = { workspace = true }
 thiserror = { workspace = true }
 chrono = { workspace = true }
 base64 = "0.22"
-# Shared verification result types (trust-chain anchoring); single source of truth
+# Shared verification result types (EO-07 sub-B); single source of truth
 # for FailureReason wire-form between services/api + tools/nanorix-verify.
 nanorix-verify-types = { path = "../../governance/verify-types" }
 

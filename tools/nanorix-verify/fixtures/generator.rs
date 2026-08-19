@@ -40,9 +40,9 @@
 //! ## The signed message (why every v2.1 fixture must carry canonical fields)
 //!
 //! A v2.1 `nanorix_only` AuditProof is NOT signed over `final_hash` — that is
-//! the v1.0 message. It is signed over the specification Part-3 canonical-view hash:
+//! the v1.0 message. It is signed over the ADR-011 Part-3 canonical-view hash:
 //! `hex(sha512(serde_jcs(canonical_view)))`, built by
-//! the AuditProof document builder::FullCdp::canonical_view()` and mirrored
+//! `services/api/src/cdp_document.rs::FullCdp::canonical_view()` and mirrored
 //! for the offline verifier in `canonical_recompute::recompute_canonical_hash`.
 //! The generator signs with that same mirrored function rather than a third
 //! private copy, so the corpus cannot drift away from the verifier; the
@@ -235,15 +235,24 @@ impl FixtureBuilder {
             "destruction_state": "complete",
             "hash_algorithm": "SHA-512",
             "signature_algorithm": "Ed25519",
-            "activity": [],
+            // Region lives on the `capsule_started` event, NOT at top level.
+            // `activity` is inside `CanonicalCdpView`, so a region carried here
+            // is covered by the signature; a top-level `region` is not, and a
+            // corpus that put it there could never exercise the residency pin's
+            // real path. Production emits region the same way (EO-03 G1).
+            "activity": [{
+                "event": "capsule_started",
+                "encryption": "aes-256-gcm",
+                "network": "sealed",
+                "region": region,
+            }],
             "destroyed_at": FIXTURE_TIMESTAMP,
             "chain": chain,
             "final_hash": format!("sha512:{}", last_hash),
-            "region": region,
         })
     }
 
-    /// Sign a built document over its the specification Part-3 canonical hash and attach
+    /// Sign a built document over its ADR-011 Part-3 canonical hash and attach
     /// the attestation block. Must run AFTER every canonical-bound field is
     /// set; tamper fixtures mutate only after this returns.
     fn sign_in_place(&self, proof: &mut Value) {
@@ -251,7 +260,7 @@ impl FixtureBuilder {
 
         let canonical_hash = recompute_canonical_hash(proof);
         // Ed25519 over the canonical hash's ASCII hex characters (128 bytes),
-        // not its 64 raw digest bytes — Forever-Standard per the specification.
+        // not its 64 raw digest bytes — Forever-Standard per ADR-006.
         let signature_b64 = B64.encode(self.signing_key.sign(canonical_hash.as_bytes()).to_bytes());
 
         let capsule_id = proof["capsule_id"].as_str().unwrap_or_default().to_string();
@@ -264,7 +273,7 @@ impl FixtureBuilder {
             "algorithm": "Ed25519",
             "public_key": format!("base64:{}", self.public_key_b64),
             "signature": format!("base64:{}", signature_b64),
-            // Mirrors the chain specification: the timestamp's ':' separators
+            // Mirrors governance/rzl/src/cdp.rs: the timestamp's ':' separators
             // are replaced with '-', and the suffix is the capsule_id's FIRST 8
             // characters.
             "key_id": format!(
@@ -751,7 +760,7 @@ fn generate_canonical_hash_drift_failures(builder: &FixtureBuilder, root: &Path)
         (
             "flip_signature_algorithm",
             |p| p["signature_algorithm"] = json!("RSA-PSS"),
-            // the specification C.1: algorithm dispatch precedes byte-shape checks — a
+            // ADR-051 C.1: algorithm dispatch precedes byte-shape checks — a
             // document declaring a non-Ed25519 algorithm fails typed at stage
             // 4 (this build cannot evaluate what the document declares), not
             // as a presumed-Ed25519 mismatch at stage 7. Same path is the
@@ -759,7 +768,7 @@ fn generate_canonical_hash_drift_failures(builder: &FixtureBuilder, root: &Path)
             // future-algorithm proof.
             with_note(
                 expected_failure("algorithm_unsupported", json!({ "found": "RSA-PSS" }), 4),
-                "the specification C.1: algorithm dispatch precedes byte-shape checks. A \
+                "ADR-051 C.1: algorithm dispatch precedes byte-shape checks. A \
                  document declaring a non-Ed25519 signature algorithm fails \
                  typed as algorithm_unsupported at stage 4 — this build cannot \
                  evaluate what the document declares, so presuming Ed25519 \
@@ -970,7 +979,7 @@ fn write_index(root: &Path, total: usize) {
             "policy": "optional — VerifierPolicy pins REQUIRED to reach this verdict; absent means defaults",
             "note": "optional — prose for verdicts that are not the obvious guess from the category name",
         },
-        "signed_message": "v1.0 signs final_hash; v2.0 signs document_hash; v2.1 nanorix_only signs the specification Part-3 canonical-view hash (hex(sha512(jcs(view))))",
+        "signed_message": "v1.0 signs final_hash; v2.0 signs document_hash; v2.1 nanorix_only signs the ADR-011 Part-3 canonical-view hash (hex(sha512(jcs(view))))",
         "anchor_timestamp": FIXTURE_TIMESTAMP,
         "anchor_signing_seed_sha256": {
             "_note": "Public anchor for cross-impl reproducibility. The seed itself is constant in source.",

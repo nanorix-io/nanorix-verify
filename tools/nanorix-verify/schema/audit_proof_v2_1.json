@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schema.nanorix.com/audit-proof/v2_1.json",
   "title": "Nanorix AuditProof v2.1",
-  "description": "JSON Schema for the Nanorix AuditProof document — the cryptographically signed, ephemeral capsule destruction record. Two physical shapes are described: VerificationCdp (shareable, public-facing, the auditor moment-of-truth artifact) and FullCdp (operational record, customer-only). Both shapes share the 8-step SHA-512 hash chain anchor and Ed25519 attestation envelope; FullCdp carries the activity trail and reserved attestation slots. This schema covers cdp_version 2.1 — the current Forever-Standard surface. Future minor-bump versions will add Optional fields per the Forever-Standard wire discipline; existing shape is permanent. Schema scaffold ships with the verifier crate; the published copy at schema.nanorix.com is release-event-gated.",
+  "description": "JSON Schema for the Nanorix AuditProof document — the cryptographically signed, ephemeral capsule destruction record. Two physical shapes are described: VerificationCdp (shareable, public-facing, the auditor moment-of-truth artifact) and FullCdp (operational record, customer-only). Both shapes share the 8-step SHA-512 hash chain anchor and Ed25519 attestation envelope; FullCdp carries the activity trail and reserved attestation slots. This schema covers cdp_version 2.1 — the current Forever-Standard surface. Future minor-bump versions will add Optional fields per ADR-006 I0; existing shape is permanent. Schema scaffold ships with the verifier crate; the published copy at schema.nanorix.com is release-event-gated.",
   "type": "object",
   "oneOf": [
     {
@@ -16,7 +16,7 @@
     "VerificationCdp": {
       "type": "object",
       "title": "AuditProof — the shareable projection",
-      "description": "Public-facing AuditProof projection. Contains zero operational details — no filenames, no commands, no capsulefile metadata. Auditor moment-of-truth artifact. AuditProof = VerificationCdp; AuditRecord = FullCdp (per the published brand mapping external-brand split).",
+      "description": "Public-facing AuditProof projection. Contains zero operational details — no filenames, no commands, no capsulefile metadata. Auditor moment-of-truth artifact. AuditProof = VerificationCdp; AuditRecord = FullCdp (per ADR-014 external-brand split).",
       "additionalProperties": false,
       "required": [
         "cdp_version",
@@ -35,7 +35,7 @@
         "cdp_version": {
           "type": "string",
           "enum": ["2.1"],
-          "description": "AuditProof schema version. Pinned at \"2.1\" for current Forever-Standard surface. Future minor-bumps add Optional fields per the Forever-Standard wire discipline; existing variants permanent."
+          "description": "AuditProof schema version. Pinned at \"2.1\" for current Forever-Standard surface. Future minor-bumps add Optional fields per ADR-006 I0; existing variants permanent."
         },
         "capsule_id": {
           "type": "string",
@@ -101,7 +101,7 @@
     "FullCdp": {
       "type": "object",
       "title": "AuditRecord — the full operational document",
-      "description": "Customer-only operational record. Carries activity trail, reserved attestation slots, destruction outcome, residency, and 8-step chain. Internal struct name `FullCdp`; external brand `AuditRecord` per the published brand mapping naming split.",
+      "description": "Customer-only operational record. Carries activity trail, reserved attestation slots, destruction outcome, residency, and 8-step chain. Internal struct name `FullCdp`; external brand `AuditRecord` per ADR-014 naming split.",
       "additionalProperties": false,
       "required": [
         "cdp_version",
@@ -136,7 +136,7 @@
         "activity": {
           "type": "array",
           "items": { "$ref": "#/$defs/ActivityEvent" },
-          "description": "Customer-declared activity trail. Variant-additive Forever-Standard taxonomy per the Forever-Standard wire discipline."
+          "description": "Customer-declared activity trail. Variant-additive Forever-Standard taxonomy per ADR-006 I0."
         },
         "chain": {
           "type": "array",
@@ -152,7 +152,7 @@
         },
         "destroyed_at": {
           "type": "string",
-          "description": "The timestamp every chain step hashes (the chain-timestamp recovery rule). A verifier recomputes each step as SHA-512(prev || 0x00 || subsystem || 0x00 || method || 0x00 || timestamp) and cannot walk the chain without it. Not canonical-hash-bound: adding it does not alter the signed bytes, so proofs issued before it was declared remain valid signatures — they are simply not independently chain-verifiable."
+          "description": "The timestamp every chain step hashes (ADR-047). A verifier recomputes each step as SHA-512(prev || 0x00 || subsystem || 0x00 || method || 0x00 || timestamp) and cannot walk the chain without it. Not canonical-hash-bound: adding it does not alter the signed bytes, so proofs issued before it was declared remain valid signatures — they are simply not independently chain-verifiable."
         },
         "residency": {
           "$ref": "#/$defs/Residency"
@@ -167,7 +167,7 @@
             { "type": "null" },
             { "$ref": "#/$defs/Attestation" }
           ],
-          "description": "Primary Ed25519 attestation from Nanorix signing authority (or customer authority under the customer-authority specification dual-signing). Null on unsigned partial AuditRecords."
+          "description": "Primary Ed25519 attestation from Nanorix signing authority (or customer authority under ADR-031 dual-signing). Null on unsigned partial AuditRecords."
         },
         "metadata": {
           "oneOf": [
@@ -181,7 +181,7 @@
         "signing_mode": {
           "type": "string",
           "enum": ["nanorix_only", "customer_attested", "dual_signature"],
-          "description": "Authority signing-mode. Canonical-hash-bound — included in canonical view per the AuditProof specification to prevent dual-signature downgrade attack (the specification)."
+          "description": "Authority signing-mode. Canonical-hash-bound — included in canonical view per ADR-011 Part 3 to prevent dual-signature downgrade attack (ADR-011 I22)."
         },
         "jurisdiction": {
           "type": "string",
@@ -240,7 +240,7 @@
               "items": { "$ref": "#/$defs/EventAttestation" }
             }
           ],
-          "description": "Per-event customer attestations slot. Reserved per the specification + the specification; null in current shape."
+          "description": "Per-event customer attestations slot. Reserved per ADR-007 A8 + ADR-012 D3; null in current shape."
         },
         "policy_attestation": {
           "oneOf": [
@@ -411,7 +411,7 @@
             "rzl_audit",
             "capsule_destroy"
           ],
-          "description": "Subsystem label. Forever-Standard; the eight subsystem strings are immutable per the Forever-Standard wire discipline."
+          "description": "Subsystem label. Forever-Standard; the eight subsystem strings are immutable per ADR-006 I0."
         },
         "operation": {
           "type": "string",

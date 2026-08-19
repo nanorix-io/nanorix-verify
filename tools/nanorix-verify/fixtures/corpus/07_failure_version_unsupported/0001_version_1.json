@@ -1,10 +1,17 @@
 {
-  "activity": [],
+  "activity": [
+    {
+      "encryption": "aes-256-gcm",
+      "event": "capsule_started",
+      "network": "sealed",
+      "region": "us-central1"
+    }
+  ],
   "attestation": {
     "algorithm": "Ed25519",
     "key_id": "nrx-verify-2026-05-08T00-00-00Z-cap_0000",
     "public_key": "base64:GVHak/xHE0xBsS1K/zXf3f5XTSdINLQ568meFsvQvCw=",
-    "signature": "base64:j0P8e+dglOJ6TL9CsBt3iiv+snfHRL1Wp9WC/BNrQj4ZaKj5/WC2FUBWhAiLiBhRZABB8ykusHIG/yTmTBO1Aw=="
+    "signature": "base64:xpo2wil2xbct75k8ZzT6zag+jHX245xO146vuZZvs25oJdkLR3RkbSsTpFE00K3JjJw6XI9kTPX3vk+45e/aCA=="
   },
   "authority_id": "us-kms-nanorix-v1",
   "capsule_id": "cap_00000000000000000000000000000259",
@@ -73,7 +80,6 @@
   "hash_algorithm": "SHA-512",
   "jurisdiction": "us",
   "org_id": "00000000-0000-0000-0000-000000000001",
-  "region": "us-central1",
   "signature_algorithm": "Ed25519",
   "signing_key_version": "1",
   "signing_mode": "nanorix_only"

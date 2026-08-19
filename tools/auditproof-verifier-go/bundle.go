@@ -28,7 +28,7 @@ import (
 // PortableReceiptBundleDisclaimer — factual language only. Vocabulary discipline
 // per regulatory_context rules: forbidden words include COMPLIANT, SATISFIED,
 // PASSED, MEETS.
-const PortableReceiptBundleDisclaimer = "This Portable Receipt Bundle carries cryptographic evidence of one record's structural execution. Verifying party uses the audit_proof_anchors to verify the receipt's merkle inclusion + outer Ed25519 signature. Control framework references are NOT included in this bundle; consult the specification mapping artifact at schema.nanorix.com/control-map/{framework_version}.json to apply current control mappings at consumption time."
+const PortableReceiptBundleDisclaimer = "This Portable Receipt Bundle carries cryptographic evidence of one record's structural execution. Verifying party uses the audit_proof_anchors to verify the receipt's merkle inclusion + outer Ed25519 signature. Control framework references are NOT included in this bundle; consult the ADR-040 mapping artifact at schema.nanorix.com/control-map/{framework_version}.json to apply current control mappings at consumption time."
 
 // signature_target values — which anchor the outer Ed25519 signature covers.
 // An absent signature_target means SignatureTargetStep8ChainHash (legacy
@@ -40,7 +40,7 @@ const (
 
 // PortableReceiptBundle — Wave B Item 7 wire shape.
 //
-// Forever-Standard the Forever-Standard wire discipline: BundleVersion is append-only; the V1.0 shape
+// Forever-Standard ADR-006 I0: BundleVersion is append-only; the V1.0 shape
 // remains valid forever. Future bundle types land as new wire-format versions,
 // NEVER as breaking-shape changes to V1.0.
 type PortableReceiptBundle struct {
@@ -63,7 +63,7 @@ type AuditProofAnchors struct {
 	Timestamp                string  `json:"timestamp"`
 	FrameworkVersionAtEmit   *string `json:"framework_version_at_emit,omitempty"`
 	// SignatureTarget names the anchor the outer Ed25519 signature covers.
-	// nil = legacy SignatureTargetStep8ChainHash. Additive per the Forever-Standard wire discipline —
+	// nil = legacy SignatureTargetStep8ChainHash. Additive per ADR-006 I0 —
 	// legacy bundle JSON is byte-unchanged.
 	SignatureTarget *string `json:"signature_target,omitempty"`
 	// DocumentCanonicalHash is the FullCdp document canonical hash (bare
@@ -110,7 +110,7 @@ const (
 //
 // `auditProof` is the full FullCdp/VerificationCdp JSON; `recordIndex`
 // selects the receipt within `record_receipts`. Returns
-// `BundleErrNoReceipts` if the AuditProof is pre-the receipt pipeline (no `record_receipts`
+// `BundleErrNoReceipts` if the AuditProof is pre-Wave-N (no `record_receipts`
 // field).
 func ExtractReceiptBundle(auditProof []byte, recordIndex uint32) (*PortableReceiptBundle, error) {
 	var doc map[string]interface{}
@@ -299,7 +299,7 @@ func VerifyReceiptBundle(bundle *PortableReceiptBundle) error {
 		activityRoot = computeActivityRootLocal(trail)
 	}
 
-	// the per-record receipt specification: a declared pattern_tag is a signed primitive — bind its wire
+	// ADR-039: a declared pattern_tag is a signed primitive — bind its wire
 	// form into the recompute.
 	var patternTag *string
 	if tag, ok := bundle.Receipt["pattern_tag"].(string); ok {
@@ -411,7 +411,7 @@ func BundleVerdictText(bundle *PortableReceiptBundle) string {
 // computeRecordChainHashLocal mirrors `ComputeRecordChainHash` (wave_n.go) but
 // returns bare hex (no `sha512:` prefix). `patternTagWire` follows the same
 // conditional-append rule: the trailing `\x00 ‖ pattern_tag_wire` segment is
-// appended ONLY when non-nil (the per-record receipt specification signed-primitive binding).
+// appended ONLY when non-nil (ADR-039 signed-primitive binding).
 func computeRecordChainHashLocal(capsuleID string, recordIndex uint32, recordID, inH, outH, activityRoot string, patternTagWire *string) string {
 	inHs := StripHashPrefix(inH)
 	outHs := StripHashPrefix(outH)

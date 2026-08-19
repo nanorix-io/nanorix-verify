@@ -49,7 +49,7 @@ PORTABLE_RECEIPT_BUNDLE_DISCLAIMER = (
     "record's structural execution. Verifying party uses the audit_proof_anchors "
     "to verify the receipt's merkle inclusion + outer Ed25519 signature. "
     "Control framework references are NOT included in this bundle; consult "
-    "the specification mapping artifact at "
+    "the ADR-040 mapping artifact at "
     "schema.nanorix.com/control-map/{framework_version}.json to apply current "
     "control mappings at consumption time."
 )
@@ -73,7 +73,7 @@ class AuditProofAnchors:
 class PortableReceiptBundle:
     """Wave B Item 7 wire shape mirroring Rust ``PortableReceiptBundle``.
 
-    Forever-Standard the Forever-Standard wire discipline: ``bundle_version`` is append-only; the V1.0
+    Forever-Standard ADR-006 I0: ``bundle_version`` is append-only; the V1.0
     shape remains valid forever.
     """
 
@@ -193,7 +193,7 @@ def extract_receipt_bundle(
         A populated ``PortableReceiptBundle``.
 
     Raises:
-        BundleError: With kind ``no_receipts`` if AuditProof is pre-the receipt pipeline;
+        BundleError: With kind ``no_receipts`` if AuditProof is pre-Wave-N;
             ``index_out_of_bounds`` if index outside receipt set;
             ``missing_field`` if a required outer field is absent.
     """
@@ -314,7 +314,7 @@ def verify_receipt_bundle(bundle: PortableReceiptBundle) -> None:
     else:
         activity_root = GENESIS_SHA512_HEX
 
-    # Declared pattern_tag is a signed primitive (the per-record receipt specification) — it binds into
+    # Declared pattern_tag is a signed primitive (ADR-039) — it binds into
     # the chain hash. Wire form = the receipt JSON "pattern_tag" string;
     # enum wire forms are never empty, so "" is treated as undeclared.
     tag_raw = bundle.receipt.get("pattern_tag")

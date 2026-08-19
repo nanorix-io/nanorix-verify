@@ -5,7 +5,7 @@
 //! verifiers are held to. Until this file existed, **no test read it at all** —
 //! which is how the corpus came to ship in a state where every success fixture
 //! failed to verify (the generator signed the v1.0 message, `final_hash`, into
-//! documents stamped `cdp_version: "2.1"`, whose signed message is the specification
+//! documents stamped `cdp_version: "2.1"`, whose signed message is the ADR-011
 //! Part-3 canonical-view hash). The chain integrity checks all passed, so
 //! nothing else noticed.
 //!

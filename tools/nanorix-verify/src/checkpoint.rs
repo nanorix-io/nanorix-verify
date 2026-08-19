@@ -1,12 +1,12 @@
-//! Transparency-checkpoint core — the attestation-scope policy/049 anchoring primitive.
+//! Transparency-checkpoint core — the ADR-045/049 anchoring primitive.
 //!
 //! An append-only SHA-512 Merkle tree over AuditProof leaves, published as
-//! periodic signed checkpoints and mirrored externally. Purpose (the specification.4):
+//! periodic signed checkpoints and mirrored externally. Purpose (ADR-049 D3.4):
 //! a proof anchored before a cryptographically relevant quantum computer
 //! exists stays forgery-evident forever, because detection rests only on hash
 //! security and public history — not on any signature key.
 //!
-//! Spec decisions carried from adversarial review (the specification.4, the specification §D.1):
+//! Spec decisions carried from adversarial review (ADR-049 D3.4, ADR-051 §D.1):
 //!
 //! - **Leaf** = SHA-512 over `final_hash_raw` + the attestation-envelope
 //!   digest — never over full proof JSON (which can embed customer-supplied
@@ -21,7 +21,7 @@
 //! - **Checkpoints** carry tree size, epoch, root, previous root, and the
 //!   hash algorithm; consecutive checkpoints are linked by consistency
 //!   proofs. The publisher signs the checkpoint (Ed25519 today, dual-signed
-//!   at the specification Phase 1); signing lives with the publisher — this module is
+//!   at ADR-049 Phase 1); signing lives with the publisher — this module is
 //!   the deterministic core both publisher and verifiers share.
 //!
 //! Inclusion and consistency verification follow the RFC 9162 algorithms,
@@ -33,7 +33,7 @@ use sha2::{Digest, Sha512};
 /// A SHA-512 digest.
 pub type Digest64 = [u8; 64];
 
-/// The attestation-envelope fields a leaf binds (the specification §D.1). All values are
+/// The attestation-envelope fields a leaf binds (ADR-051 §D.1). All values are
 /// the wire strings exactly as they appear in the proof document; `None` for
 /// `pqc_signature` is the pre-PQC era and digests as the empty string, so
 /// filling the field at Phase 1 changes the leaf — stripping it is
@@ -256,7 +256,7 @@ pub fn verify_consistency(
 }
 
 /// One published checkpoint — the signed tree head. The publisher fills
-/// `signature` (Ed25519 over `signed_payload()`; dual-signed at the specification
+/// `signature` (Ed25519 over `signed_payload()`; dual-signed at ADR-049
 /// Phase 1 via the reserved field). This module keeps the payload contract;
 /// key custody and signing live with the publisher.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -264,7 +264,7 @@ pub struct Checkpoint {
     /// Schema version. V1 = `"1"`; additive evolution only.
     pub checkpoint_version: String,
     /// Hash algorithm identifier — always `"sha512"` in V1; explicit so the
-    /// format carries algorithm agility from day one (the specification discipline).
+    /// format carries algorithm agility from day one (ADR-051 discipline).
     pub hash_algorithm: String,
     /// Number of leaves in the tree at this checkpoint.
     pub tree_size: u64,
@@ -280,7 +280,7 @@ pub struct Checkpoint {
     /// prefixed. Empty until signed.
     #[serde(default)]
     pub signature: String,
-    /// Reserved for the specification Phase 1 post-quantum dual signature over the
+    /// Reserved for the ADR-049 Phase 1 post-quantum dual signature over the
     /// same payload. Absent until then (byte-compat discipline, mirroring the
     /// trust-chain manifest).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -397,7 +397,7 @@ mod tests {
 
     #[test]
     fn pqc_field_changes_the_leaf() {
-        // Stripping-detection (the specification): a leaf with pqc_signature set
+        // Stripping-detection (ADR-049 D2): a leaf with pqc_signature set
         // differs from the same leaf without it.
         let mut env = AttestationEnvelope {
             algorithm: "Ed25519".to_string(),

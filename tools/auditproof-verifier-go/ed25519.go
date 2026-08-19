@@ -1,6 +1,6 @@
 // Ed25519 signature verification for AuditProof attestations.
 //
-// **Canonical message format (Forever-Standard the Forever-Standard wire discipline):** the Ed25519
+// **Canonical message format (Forever-Standard ADR-006 I0):** the Ed25519
 // signature is computed over the **ASCII-hex encoding** of the final
 // chain_hash (128 bytes), NOT the raw 64-byte SHA-512 digest. This is
 // surprising but is the binding wire-form decision pinned at first ship.

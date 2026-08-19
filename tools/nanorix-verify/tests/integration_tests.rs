@@ -50,9 +50,15 @@ fn synthesize_valid_proof(capsule_id: &str, timestamp: &str) -> serde_json::Valu
         "destroyed_at": timestamp,
         "chain": chain,
         "final_hash": final_hash,
-        "environment": {
+        // Region is read from the signed `capsule_started` event, never from
+        // `environment` — that projection is outside the canonical hash and
+        // its struct has no region field at all.
+        "activity": [{
+            "event": "capsule_started",
+            "encryption": "aes-256-gcm",
+            "network": "sealed",
             "region": "us-central1",
-        },
+        }],
         "attestation": {
             "algorithm": "Ed25519",
             "signing_key_version": "7",
@@ -90,7 +96,7 @@ fn cli_verifies_valid_v1_proof_with_zero_exit() {
     );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    // INTERIM (pre-embedded-key verification): this build reproduces the 8-step chain but does
+    // INTERIM (pre-EO-07 sub-A): this build reproduces the 8-step chain but does
     // NOT yet verify the Ed25519 signature on the single-proof path, so the CLI
     // now fails honest — "Chain verified · signature NOT checked" instead of an
     // unqualified green "Verified" (which would mislead an auditor into trusting
@@ -324,7 +330,7 @@ fn cli_exit_2_on_no_args() {
     assert_eq!(output.status.code(), Some(2));
 }
 
-// ── an earlier release-7 / : Bulk verification --batch ─────────────────────
+// ── Wave 18-7 / CTI-T7-007: Bulk verification --batch ─────────────────────
 
 /// Helper: write a valid proof JSON into the given directory under the
 /// given filename, using a synthesized timestamp.
@@ -619,7 +625,7 @@ fn cli_batch_mixed_corpus_with_ten_files() {
     );
 }
 
-// ── the chain-timestamp recovery rule D4 — captured-document regression guard ──────────────────────────
+// ── ADR-047 D4 — captured-document regression guard ──────────────────────────
 //
 // Every other fixture in this file is synthesized by `synthesize_valid_proof`.
 // That is precisely how the v2.1 defect survived to production: the verifier was
@@ -628,7 +634,7 @@ fn cli_batch_mixed_corpus_with_ten_files() {
 // omission in the real serialization is structurally invisible here.
 //
 // The fixture below is a captured API v2.1 document from a real capsule
-// (2026-07-30). Before the chain-timestamp recovery rule restored `destroyed_at`, this exact document
+// (2026-07-30). Before ADR-047 restored `destroyed_at`, this exact document
 // failed `step_hash_mismatch` at step 0 — an authentic proof the reference
 // verifier rejected.
 
@@ -644,12 +650,12 @@ fn captured_api_v2_1_document_carries_the_chain_timestamp() {
     assert!(
         !ts.is_empty(),
         "captured v2.1 document lost `destroyed_at` — every chain step hashes it, \
-         so a verifier holding only this document cannot recompute step 0 (the chain-timestamp recovery rule)"
+         so a verifier holding only this document cannot recompute step 0 (ADR-047)"
     );
     assert_eq!(
         proof.get("chain").and_then(|c| c.as_array()).map(Vec::len),
         Some(8),
-        "Forever-Standard chain is exactly 8 steps (the Forever-Standard wire discipline)"
+        "Forever-Standard chain is exactly 8 steps (ADR-006 I0)"
     );
 }
 
@@ -666,10 +672,10 @@ fn cli_walks_the_full_chain_of_a_captured_api_document() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    // The pre-the chain-timestamp recovery rule failure mode, named exactly so a regression is unambiguous.
+    // The pre-ADR-047 failure mode, named exactly so a regression is unambiguous.
     assert!(
         !stdout.contains("step_hash_mismatch"),
-        "captured document failed chain recomputation — the chain-timestamp recovery rule regression is back.\n\
+        "captured document failed chain recomputation — the ADR-047 regression is back.\n\
          stdout: {stdout}\nstderr: {stderr}"
     );
     assert!(

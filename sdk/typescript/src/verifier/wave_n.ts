@@ -1,20 +1,20 @@
 /**
- * the receipt pipeline (the per-record receipt specification + the receipt-batching specification) per-record receipt + parent-proof verification.
+ * Wave-N (ADR-039 + ADR-041) per-record receipt + parent-proof verification.
  *
- * Pure TypeScript port of the reference chain implementation plus the verifier-side
+ * Pure TypeScript port of `governance/rzl/src/wave_n.rs` plus the verifier-side
  * extension in `tools/nanorix-verify/src/lib.rs`. Cross-impl byte-equivalent
  * with Rust + Go + Python ports on the 110-fixture extended corpus.
  *
- * **Forever-Standard discipline (the Forever-Standard wire discipline):** every primitive here is part
+ * **Forever-Standard discipline (ADR-006 I0):** every primitive here is part
  * of the cryptographic-attestation contract. Cross-impl divergence from the
  * canonical Rust output is a P0 finding.
  *
- * Uses Web Crypto SubtleCrypto for SHA-512 + Ed25519. The the receipt pipeline hash primitives
+ * Uses Web Crypto SubtleCrypto for SHA-512 + Ed25519. The Wave-N hash primitives
  * are async because SubtleCrypto.digest returns a Promise.
  *
  * Distinct from `merkle.ts`: that module implements RFC 6962 binary Merkle
- * (leaf prefix 0x00 + inner prefix 0x01) used by `Capsule.batch()`. the receipt pipeline
- * uses the per-record receipt specification canonical pair-hash form:
+ * (leaf prefix 0x00 + inner prefix 0x01) used by `Capsule.batch()`. Wave-N
+ * uses the ADR-039 canonical pair-hash form:
  * `SHA-512(left_hex_bytes || \x00 || right_hex_bytes)` with NO domain prefix.
  *
  * Cross-impl reference vectors (locked in `verifier_wave_n.test.ts`):
@@ -29,23 +29,23 @@ import { canonicalizeBytes } from "../_jcs.js";
 
 /**
  * Genesis SHA-512 hash of the empty string. Re-exported so this module is
- * self-contained — mirrors Rust the reference chain implementation512_HEX`.
+ * self-contained — mirrors Rust `nanorix_rzl::wave_n::GENESIS_SHA512_HEX`.
  */
 export const GENESIS_SHA512_HEX =
   "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce" +
   "47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e";
 
 /**
- * Maximum supported parent-proof chain depth per the receipt-batching specification §"Depth limit". V1: 32.
+ * Maximum supported parent-proof chain depth per ADR-041 §"Depth limit". V1: 32.
  */
 export const PARENT_PROOF_MAX_DEPTH = 32;
 
 /**
  * Closed-enum pattern tag wire values (mirror Rust
- * the reference chain implementation and `nanorix.capsule_record.PATTERN_TAGS`).
+ * `nanorix_rzl::types::PatternTag` and `nanorix.capsule_record.PATTERN_TAGS`).
  *
  * Used by downstream consumers; the verifier itself does NOT reject unknown
- * pattern_tag values (forward-compatibility per the Forever-Standard wire discipline).
+ * pattern_tag values (forward-compatibility per ADR-006 I0).
  */
 export const PATTERN_TAGS_WIRE: readonly string[] = [
   "pa",
@@ -66,7 +66,7 @@ export const PATTERN_TAGS_WIRE: readonly string[] = [
 ] as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Pre-the receipt pipeline legacy formula constants
+// Pre-Wave-N legacy formula constants
 // ─────────────────────────────────────────────────────────────────────────────
 
 const STEP_8_SUBSYSTEM = "capsule_destroy";
@@ -74,19 +74,19 @@ const STEP_8_ACTION = "destroy";
 const STEP_8_METHOD = "capsule_lifecycle_verification";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// the receipt pipeline types — mirror the reference chain implementation{RecordReceipt, ParentProofLink}`
+// Wave-N types — mirror `nanorix_rzl::types::{RecordReceipt, ParentProofLink}`
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * Per-record receipt mirroring Rust `RecordReceipt`.
  *
- * Forever-Standard discipline (the Forever-Standard wire discipline): field shape is permanent.
+ * Forever-Standard discipline (ADR-006 I0): field shape is permanent.
  * New fields land as additive optional — existing fields NEVER renamed,
  * NEVER removed, NEVER repurposed.
  *
- * **No `control_tags` field by design.** Per the per-record receipt specification §"Receipt as direct
- * evidence primitive" + the specification RE-SCOPED: control IDs are NEVER stamped
- * into the signed receipt; adapters apply the specification mapping artifact at
+ * **No `control_tags` field by design.** Per ADR-039 §"Receipt as direct
+ * evidence primitive" + ADR-040 RE-SCOPED: control IDs are NEVER stamped
+ * into the signed receipt; adapters apply ADR-040 mapping artifact at
  * ingestion time.
  */
 export interface WaveNRecordReceipt {
@@ -103,7 +103,7 @@ export interface WaveNRecordReceipt {
 /**
  * Cross-org parent-proof link mirroring Rust `ParentProofLink`.
  *
- * Forever-Standard (the Forever-Standard wire discipline): optional fields skip-serialize when undefined.
+ * Forever-Standard (ADR-006 I0): optional fields skip-serialize when undefined.
  */
 export interface WaveNParentProofLink {
   parent_chain_hash: string;
@@ -170,7 +170,7 @@ async function sha512Hex(data: Uint8Array): Promise<string> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Merkle pair-hash + root construction (the per-record receipt specification)
+// Merkle pair-hash + root construction (ADR-039)
 // ─────────────────────────────────────────────────────────────────────────────
 
 const ENC = new TextEncoder();
@@ -179,7 +179,7 @@ const NULL = new Uint8Array([0]);
 /**
  * Compute SHA-512(left_hex_bytes || \x00 || right_hex_bytes).
  *
- * Per the per-record receipt specification §"Sibling pair hashing rule": both inputs are interpreted as
+ * Per ADR-039 §"Sibling pair hashing rule": both inputs are interpreted as
  * their hex-string byte values (UTF-8 of the hex chars). Either MAY carry a
  * `sha512:` prefix; stripped before hashing.
  *
@@ -194,7 +194,7 @@ export async function merklePairHash(left: string, right: string): Promise<strin
 
 /**
  * Build the canonical Merkle root over an ordered slice of SHA-512 leaf
- * hashes per the per-record receipt specification §"Merkle tree construction".
+ * hashes per ADR-039 §"Merkle tree construction".
  *
  *   - leaves.length === 0 → null
  *   - leaves.length === 1 → leaves[0] with `sha512:` prefix stripped
@@ -217,7 +217,7 @@ export async function merkleRootSha512NullSeparated(
         next.push(await merklePairHash(level[i], level[i + 1]));
         i += 2;
       } else {
-        // Odd-level last node: duplicate per the per-record receipt specification.
+        // Odd-level last node: duplicate per ADR-039.
         next.push(await merklePairHash(level[i], level[i]));
         i += 1;
       }
@@ -228,10 +228,10 @@ export async function merkleRootSha512NullSeparated(
 }
 
 /**
- * Public the per-record receipt specification surface for the receipt Merkle root.
+ * Public ADR-039 surface for the receipt Merkle root.
  *
  * Returns `null` for empty input (field skip-serializes in canonical JSON);
- * otherwise returns `sha512:{hex}` matching the per-record receipt specification wire form.
+ * otherwise returns `sha512:{hex}` matching the ADR-039 wire form.
  */
 export async function computeRecordReceiptsMerkleRoot(
   receipts: readonly WaveNRecordReceipt[],
@@ -242,7 +242,7 @@ export async function computeRecordReceiptsMerkleRoot(
   return root === null ? null : `sha512:${root}`;
 }
 
-/** Public the receipt-batching specification surface for the parent-proof Merkle root. */
+/** Public ADR-041 surface for the parent-proof Merkle root. */
 export async function computeParentProofsMerkleRoot(
   parents: readonly WaveNParentProofLink[],
 ): Promise<string | null> {
@@ -253,7 +253,7 @@ export async function computeParentProofsMerkleRoot(
 }
 
 /**
- * Build a Merkle inclusion proof for `leafIndex` per the per-record receipt specification.
+ * Build a Merkle inclusion proof for `leafIndex` per ADR-039.
  *
  * Returns siblings on the path from leaf → root in bottom-up order (each
  * as bare hex). Empty array when N=1. `null` when out of range or empty.
@@ -346,7 +346,7 @@ export async function computeActivityRoot(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Record chain hash (the per-record receipt specification per-record chain hash formula)
+// Record chain hash (ADR-039 per-record chain hash formula)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -360,7 +360,7 @@ export async function computeActivityRoot(
  *
  * `patternTagWire` is the snake_case wire string exactly as serialized in the
  * receipt JSON `pattern_tag` field. The trailing `\x00 || pattern_tag_wire`
- * segment is appended ONLY when the receipt declares a tag (the per-record receipt specification: the tag
+ * segment is appended ONLY when the receipt declares a tag (ADR-039: the tag
  * is a signed primitive, so it must be bound here, not merely carried in the
  * JSON). Domain separation is sound because `activity_root_or_genesis` is
  * always exactly 128 stripped hex chars: a tagged preimage is strictly longer
@@ -429,7 +429,7 @@ async function computeStepHash(
   return sha512Hex(data);
 }
 
-/** Pre-the receipt pipeline legacy Step 8 base hash. Mirrors Rust `compute_step_8_base`. */
+/** Pre-Wave-N legacy Step 8 base hash. Mirrors Rust `compute_step_8_base`. */
 export async function computeStep8Base(
   prevHash: string,
   timestamp: string,
@@ -444,13 +444,13 @@ export async function computeStep8Base(
 }
 
 /**
- * The presence-conditional Step 8 amendment formula (the per-record receipt specification + the receipt-batching specification).
+ * The presence-conditional Step 8 amendment formula (ADR-039 + ADR-041).
  *
  * Mirrors Rust `compute_step_8_amended` byte-for-byte. Output: bare lowercase
  * hex (no prefix). The (null, null) arm returns `computeStep8Base(...)`
- * UNMODIFIED — byte-identical to every pre-the receipt pipeline production AuditProof.
+ * UNMODIFIED — byte-identical to every pre-Wave-N production AuditProof.
  *
- * Forever-Standard (the Forever-Standard wire discipline).
+ * Forever-Standard (ADR-006 I0).
  */
 export async function computeStep8Amended(
   prevHash: string,
@@ -491,11 +491,11 @@ export async function computeStep8Amended(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Cycle prevention + depth cap (the receipt-batching specification)
+// Cycle prevention + depth cap (ADR-041)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Reject cycles per the receipt-batching specification §"Cycle prevention".
+ * Reject cycles per ADR-041 §"Cycle prevention".
  *
  * Returns the index of the cyclic parent if any `parent_chain_hash` equals
  * `selfChainHash`; returns -1 otherwise. Both inputs prefix-tolerant.
@@ -517,7 +517,7 @@ export function detectParentProofCycle(
 export function enforceDepthCap(parents: readonly WaveNParentProofLink[]): void {
   if (parents.length > PARENT_PROOF_MAX_DEPTH) {
     throw new RangeError(
-      `parent chain depth ${parents.length} exceeds PARENT_PROOF_MAX_DEPTH=${PARENT_PROOF_MAX_DEPTH} (the receipt-batching specification)`,
+      `parent chain depth ${parents.length} exceeds PARENT_PROOF_MAX_DEPTH=${PARENT_PROOF_MAX_DEPTH} (ADR-041)`,
     );
   }
 }
@@ -550,7 +550,7 @@ export class WaveNVerifyError extends Error {
 }
 
 /**
- * Mode B (standalone) verification per the per-record receipt specification.
+ * Mode B (standalone) verification per ADR-039.
  *
  *   1. Recompute the receipt's `record_chain_hash` from its fields.
  *   2. Verify the Merkle inclusion proof binds the receipt to outerMerkleRoot.
@@ -563,7 +563,7 @@ export async function verifyRecordReceipt(
   opts: VerifyRecordReceiptOptions,
 ): Promise<void> {
   // (1) Recompute chain hash. A declared pattern_tag is a SIGNED primitive
-  // (the per-record receipt specification) — it binds into the recomputed hash so a swapped/stripped tag
+  // (ADR-039) — it binds into the recomputed hash so a swapped/stripped tag
   // fails verification. Non-string values fail closed via the untagged arm.
   const activityRoot = await computeActivityRoot(receipt.record_activity_trail);
   const recomputed = await computeRecordChainHash(
@@ -652,7 +652,7 @@ export async function verifyRecordReceipt(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Mode A — Full the receipt pipeline AuditProof verification (extends V1 chain pipeline)
+// Mode A — Full Wave-N AuditProof verification (extends V1 chain pipeline)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Canonical 8-step subsystem order; mirrors `nanorix.verifier`. */
@@ -752,16 +752,16 @@ async function verifyParentProofsArray(
 }
 
 /**
- * Mode A — full the receipt pipeline AuditProof verification.
+ * Mode A — full Wave-N AuditProof verification.
  *
  * Extends the V1 8-stage pipeline with:
- *   - Step 8 amended chain walk (the per-record receipt specification + the receipt-batching specification 4-arm formula)
+ *   - Step 8 amended chain walk (ADR-039 + ADR-041 4-arm formula)
  *   - Per-receipt chain hash roundtrip
  *   - `record_receipts_merkle_root` binding
  *   - `parent_proofs_merkle_root` binding
  *   - parent depth-cap-32 enforcement
  *
- * Forever-Standard: pre-the receipt pipeline AuditProofs (no record_receipts, no
+ * Forever-Standard: pre-Wave-N AuditProofs (no record_receipts, no
  * parent_proof_hashes) verify byte-identically via the (null, null) Step 8
  * branch collapsing to the legacy formula.
  */
@@ -813,17 +813,20 @@ export async function verifyFullAuditProof(
 
   let prevHash = GENESIS_SHA512_HEX;
   for (let idx = 0; idx < chain.length; idx++) {
+    // Canonical-identity walk: hash inputs come from CANONICAL_SUBSYSTEMS by
+    // INDEX, never from the document.
     const step = chain[idx] ?? {};
-    const subsystem = step.subsystem ?? "";
+    const canonicalSubsystem = CANONICAL_SUBSYSTEMS[idx] as string;
+    const declaredSubsystem = step.subsystem ?? "";
     const claimedChainHash = step.chain_hash ?? "";
-    const method = CANONICAL_METHODS[subsystem] ?? "";
+    const method = CANONICAL_METHODS[canonicalSubsystem] ?? "";
     let recomputed: string;
-    if (idx === 7 && subsystem === "capsule_destroy") {
+    if (idx === CANONICAL_SUBSYSTEMS.length - 1) {
       recomputed = await computeStep8Amended(prevHash, timestamp, rrmr, ppmr);
     } else {
       recomputed = await computeStepHash(
         prevHash,
-        subsystem,
+        canonicalSubsystem,
         "destroy",
         method,
         timestamp,
@@ -832,14 +835,23 @@ export async function verifyFullAuditProof(
     if (recomputed !== stripSha512Prefix(claimedChainHash)) {
       return {
         valid: false,
-        failureReason: `chain step ${idx} (${subsystem}) hash mismatch`,
+        failureReason: `chain step ${idx} (${declaredSubsystem}) hash mismatch`,
+        stageReached: 3,
+      };
+    }
+    if (declaredSubsystem !== canonicalSubsystem) {
+      return {
+        valid: false,
+        failureReason:
+          `chain step ${idx} names subsystem "${declaredSubsystem}"; ` +
+          `canonical is "${canonicalSubsystem}"`,
         stageReached: 3,
       };
     }
     prevHash = recomputed;
   }
 
-  // the per-record receipt specification record-receipt-set verification.
+  // ADR-039 record-receipt-set verification.
   const capsuleId = typeof p.capsule_id === "string" ? p.capsule_id : "";
   const receipts = p.record_receipts;
   if (Array.isArray(receipts)) {
@@ -849,7 +861,7 @@ export async function verifyFullAuditProof(
     }
   }
 
-  // the receipt-batching specification parent-proof-set verification.
+  // ADR-041 parent-proof-set verification.
   const parents = p.parent_proof_hashes;
   if (Array.isArray(parents)) {
     const err = await verifyParentProofsArray(parents, ppmr);

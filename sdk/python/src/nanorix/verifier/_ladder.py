@@ -13,16 +13,16 @@ Stage ladder:
 |---|---|
 | 1 | `cdp_version` present |
 | 2 | `cdp_version` recognised; authority-id pin; region pin |
-| 3 | chain present, 8 steps, every step hash reproduces; the receipt pipeline receipt + parent sets |
+| 3 | chain present, 8 steps, every step hash reproduces; Wave-N receipt + parent sets |
 | 4 | `final_hash` binds to the last step's `chain_hash` |
 | 5–7 | Ed25519 signature over the version-appropriate message, against the embedded key |
 
-Stage 8 (anchoring the key to a signed trust-chain manifest, trust-chain anchoring) needs
+Stage 8 (anchoring the key to a signed trust-chain manifest, EO-07 sub-B) needs
 an operator-supplied manifest and is not implemented here; a proof whose
 embedded-key signature verifies tops out at the honest stage 7 — integrity
 proven, authenticity not established.
 
-## The chain hash formula (Forever-Standard, the Forever-Standard wire discipline)
+## The chain hash formula (Forever-Standard, ADR-006 I0)
 
     chain_hash[n] = SHA-512(prev || 0x00 || subsystem || 0x00 || "destroy"
                             || 0x00 || method || 0x00 || timestamp)
@@ -30,7 +30,7 @@ proven, authenticity not established.
 `method` is a FIXED per-step canonical constant looked up from the subsystem
 name — it is NOT the serialized `operation` field and NOT a per-step JSON
 field. `timestamp` is the document's `destroyed_at` (or the value recovered
-from `attestation.key_id` per the chain-timestamp recovery rule), the same value for every step.
+from `attestation.key_id` per ADR-047), the same value for every step.
 Production `CdpChainStep` carries only `step`, `subsystem`, `operation`,
 `evidence_hash`, and `chain_hash`; a verifier that reads per-step `method` or
 `timestamp` fields reproduces nothing on a real proof.
@@ -41,7 +41,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
-from typing import Any, Dict, Mapping, Optional, Sequence, Union
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 from nanorix.verifier import _canonical
 from nanorix.verifier._canonical import (
@@ -56,13 +56,13 @@ from nanorix.verifier.wave_n import (
     merkle_root_sha512_null_separated,
 )
 
-# Canonical genesis hash — SHA-512("") (Forever-Standard, the Forever-Standard wire discipline)
+# Canonical genesis hash — SHA-512("") (Forever-Standard, ADR-006 I0)
 GENESIS_HASH = (
     "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce"
     "47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e"
 )
 
-# Canonical method strings per subsystem (Forever-Standard, the Forever-Standard wire discipline).
+# Canonical method strings per subsystem (Forever-Standard, ADR-006 I0).
 METHOD_MAP: Dict[str, str] = {
     "eee_namespace": "procfs_verification",
     "eee_tmpfs": "mountinfo_verification",
@@ -88,9 +88,38 @@ CANONICAL_SUBSYSTEMS = [
 
 CHAIN_STEP_COUNT = 8
 
+# Reserved attestation slots outside CanonicalCdpView (ADR-011 I18-I21, I24-I25
+# + ADR-012 D2/D3) that no Nanorix signer populates. Every construction site
+# hard-codes them to None, so the signature never covered them and a genuine
+# document never carries them; a populated one was added after signing by
+# someone holding no key, and the signature cannot tell, because it never
+# covered the field.
+#
+# `per_event_attestations` is the ninth reserved slot and is deliberately
+# absent: the server drains capsule_event_attestations into it at destroy, so
+# genuine proofs do carry it, and each entry is signed by the customer's own
+# key. Mirrors the Rust, Go and TypeScript verifiers.
+UNSIGNED_RESERVED_SLOTS = (
+    "customer_attestation",
+    "policy_attestation",
+    "third_party_attestation",
+    "retention_policy_attestation",
+    "witness_signatures",
+    "pqc_attestation",
+    "customer_pqc_attestation",
+)
+
+_PARENT_ATTRIBUTION_FIELDS = (
+    "parent_key_id",
+    "parent_signature",
+    "parent_role",
+    "parent_jurisdiction",
+    "parent_organization_tag",
+)
+
 
 class FailureReasonType:
-    """Closed-set wire-form discriminators (Forever-Standard, the Forever-Standard wire discipline).
+    """Closed-set wire-form discriminators (Forever-Standard, ADR-006 I0).
 
     New variants ADDITIVE ONLY. Existing variants never renamed/removed.
     """
@@ -100,6 +129,7 @@ class FailureReasonType:
     AUTHORITY_MODE_MISMATCH = "authority_mode_mismatch"
     AUTHORITY_REVOKED = "authority_revoked"
     CDP_VERSION_UNSUPPORTED = "cdp_version_unsupported"
+    CHAIN_STEP_IDENTITY_MISMATCH = "chain_step_identity_mismatch"
     DIAGNOSTIC_PROOF_REFUSED = "diagnostic_proof_refused"
     FINAL_HASH_MISMATCH = "final_hash_mismatch"
     GENESIS_HASH_MISMATCH = "genesis_hash_mismatch"
@@ -110,6 +140,8 @@ class FailureReasonType:
     SIGNING_KEY_VERSION_UNKNOWN = "signing_key_version_unknown"
     STEP_COUNT_INVALID = "step_count_invalid"
     STEP_HASH_MISMATCH = "step_hash_mismatch"
+    STREAMING_MERKLE_ROOT_MISMATCH = "streaming_merkle_root_mismatch"
+    UNSIGNED_FIELD_POPULATED = "unsigned_field_populated"
 
 
 @dataclass
@@ -126,12 +158,14 @@ class FailureReason:
     # `found` is a string for the version variants and an integer for
     # step_count_invalid, matching the reference wire form in each case.
     found: Optional[Union[str, int]] = None
-    field: Optional[str] = None  # required_field_missing
+    field: Optional[str] = None  # required_field_missing, unsigned_field_populated
     expected: Optional[int] = None  # step_count_invalid
-    step_idx: Optional[int] = None  # step_hash_mismatch
+    step_idx: Optional[int] = None  # step_hash_mismatch, chain_step_identity_mismatch
     subsystem: Optional[str] = None  # step_hash_mismatch
-    claimed: Optional[str] = None  # final_hash_mismatch
-    computed: Optional[str] = None  # final_hash_mismatch
+    expected_subsystem: Optional[str] = None  # chain_step_identity_mismatch
+    found_subsystem: Optional[str] = None  # chain_step_identity_mismatch
+    claimed: Optional[str] = None  # final_hash_mismatch, streaming_merkle_root_mismatch
+    computed: Optional[str] = None  # final_hash_mismatch, streaming_merkle_root_mismatch
     reason: Optional[str] = None  # signature_mismatch
     version: Optional[str] = None  # signing_key_version_unknown
     required: Optional[str] = None  # region_mismatch
@@ -150,7 +184,10 @@ class FailureReason:
         ):
             if self.found is not None:
                 d["found"] = self.found
-        elif t == FailureReasonType.REQUIRED_FIELD_MISSING:
+        elif t in (
+            FailureReasonType.REQUIRED_FIELD_MISSING,
+            FailureReasonType.UNSIGNED_FIELD_POPULATED,
+        ):
             if self.field is not None:
                 d["field"] = self.field
         elif t == FailureReasonType.STEP_COUNT_INVALID:
@@ -163,7 +200,17 @@ class FailureReason:
                 d["step_idx"] = self.step_idx
             if self.subsystem is not None:
                 d["subsystem"] = self.subsystem
-        elif t == FailureReasonType.FINAL_HASH_MISMATCH:
+        elif t == FailureReasonType.CHAIN_STEP_IDENTITY_MISMATCH:
+            if self.step_idx is not None:
+                d["step_idx"] = self.step_idx
+            if self.expected_subsystem is not None:
+                d["expected_subsystem"] = self.expected_subsystem
+            if self.found_subsystem is not None:
+                d["found_subsystem"] = self.found_subsystem
+        elif t in (
+            FailureReasonType.FINAL_HASH_MISMATCH,
+            FailureReasonType.STREAMING_MERKLE_ROOT_MISMATCH,
+        ):
             if self.claimed is not None:
                 d["claimed"] = self.claimed
             if self.computed is not None:
@@ -203,9 +250,17 @@ class VerificationMetadata:
     activity_event_count: Optional[int] = None
 
     # Set only when the document carried no usable `destroyed_at` and the chain
-    # timestamp was recovered from `attestation.key_id` (the chain-timestamp recovery rule). An auditor
+    # timestamp was recovered from `attestation.key_id` (ADR-047). An auditor
     # can therefore always tell which route produced a verdict.
     recovered_chain_timestamp: Optional[str] = None
+
+    # Set to the number of parent links carrying attribution the signature does
+    # not cover — parent_key_id, parent_signature, parent_role,
+    # parent_jurisdiction, parent_organization_tag. Only parent_chain_hash feeds
+    # the signed Merkle root, so an outsider can rewrite the rest of a genuine
+    # proof's declared lineage. The lineage UI renders exactly those fields, so
+    # a verdict that stays silent invites them to be read as attested.
+    unattested_parent_attribution: Optional[int] = None
 
 
 @dataclass
@@ -236,7 +291,7 @@ class VerificationResult:
 class VerifierPolicy:
     """Customer-side policy configuration for AuditProof verification.
 
-    Field-additive per the Forever-Standard wire discipline + the customer-authority specification G7. Every field defaults to its
+    Field-additive per ADR-006 I0 + ADR-031 G7. Every field defaults to its
     "accept anything" semantics, so a default policy behaves identically to no
     policy at all.
     """
@@ -258,7 +313,7 @@ def compute_step_hash(
 ) -> str:
     """Reproduce one chain step's SHA-512 hash.
 
-    Formula (Forever-Standard, the Forever-Standard wire discipline):
+    Formula (Forever-Standard, ADR-006 I0):
         SHA-512(prev_hash || 0x00 || subsystem || 0x00 ||
                 "destroy"  || 0x00 || method    || 0x00 || timestamp)
     """
@@ -313,12 +368,20 @@ def _verify_record_receipts(
     capsule_id: str,
     claimed_root: Optional[str],
 ) -> Optional[FailureReason]:
-    """the per-record receipt specification Mode A step 3 — recompute each receipt's chain hash + the root.
+    """ADR-039 Mode A step 3 — recompute each receipt's chain hash + the root.
 
-    Returns None when there is nothing to check or everything reproduces.
+    Returns None when there is nothing to check or everything reproduces. A
+    non-empty receipt set with no root is refused rather than skipped: the
+    emitter sets ``record_receipts_merkle_root`` iff ``record_receipts`` is set,
+    so a rootless set is one nothing anchors.
     """
     if claimed_root is None:
-        return None
+        if not receipts:
+            return None
+        return FailureReason(
+            type=FailureReasonType.REQUIRED_FIELD_MISSING,
+            field="record_receipts_merkle_root",
+        )
 
     leaves = []
     for i, receipt in enumerate(receipts):
@@ -368,9 +431,22 @@ def _verify_parent_proofs(
     parents: Sequence[Any],
     claimed_root: Optional[str],
 ) -> Optional[FailureReason]:
-    """the receipt-batching specification — recompute the parent-proof Merkle root and compare to claimed."""
+    """ADR-041 — recompute the parent-proof Merkle root and compare to claimed.
+
+    A parent set with no root is anchored by nothing, and the emitter never
+    produces one: ``parent_proofs_merkle_root`` is set iff ``parent_proof_hashes``
+    is. Skipping the check when the root is absent — which this used to do — let
+    an outsider append an entire fabricated lineage to a genuine proof, since the
+    array is outside the canonical hash and the signature therefore still
+    verified.
+    """
     if claimed_root is None:
-        return None
+        if not parents:
+            return None
+        return FailureReason(
+            type=FailureReasonType.REQUIRED_FIELD_MISSING,
+            field="parent_proofs_merkle_root",
+        )
 
     leaves = [
         _str_or_empty(p.get("parent_chain_hash")) if isinstance(p, Mapping) else "" for p in parents
@@ -383,6 +459,161 @@ def _verify_parent_proofs(
             computed=f"sha512:{recomputed}",
         )
     return None
+
+
+EMPTY_SHA512_HEX = (
+    "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce"
+    "47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e"
+)
+
+
+def merkle_root_from_leaves(leaves: Sequence[bytes]) -> str:
+    """Byte-for-byte mirror of ``merkle_root_from_leaves``.
+
+    Reference: ``runtime/eee/src/daemon/streaming.rs`` (the emitter) and
+    ``tools/nanorix-verify/src/streaming_merkle.rs`` (the reference verifier).
+
+    RFC 6962 §2.1 domain separation over SHA-512: empty leaf set is SHA-512 of
+    the empty string; one leaf is ``SHA-512(0x00 || leaf)``; an inner node is
+    ``SHA-512(0x01 || left || right)``; an odd tail node is promoted unchanged.
+    Each leaf is the raw 64-byte SHA-512 of one chunk body, in ``seq`` order.
+
+    Returns 128 lowercase hex characters, unprefixed.
+
+    Forever-Standard (ADR-006 I0): changing any of those three rules
+    invalidates every streaming Merkle root ever emitted.
+    """
+    if not leaves:
+        return EMPTY_SHA512_HEX
+
+    level = [hashlib.sha512(b"\x00" + leaf).digest() for leaf in leaves]
+    while len(level) > 1:
+        nxt: List[bytes] = []
+        i = 0
+        while i + 1 < len(level):
+            nxt.append(hashlib.sha512(b"\x01" + level[i] + level[i + 1]).digest())
+            i += 2
+        if i < len(level):
+            nxt.append(level[i])
+        level = nxt
+    return level[0].hex()
+
+
+def _streaming_leaf_bytes(chunk_hash: str) -> Optional[bytes]:
+    """One ``chunk_hash`` as a 64-byte Merkle leaf, or None when unusable."""
+    try:
+        raw = bytes.fromhex(strip_hash_prefix(chunk_hash))
+    except ValueError:
+        return None
+    return raw if len(raw) == 64 else None
+
+
+def _close_stream(
+    chunks: List[Tuple[int, str]],
+    malformed: bool,
+    completed: Mapping[str, Any],
+) -> Optional[FailureReason]:
+    """Check one closed stream's root. None when there is nothing to check."""
+    claimed = completed.get("streaming_merkle_root")
+    if not isinstance(claimed, str):
+        return None
+
+    # A disclosed chunk event with no usable chunk_hash is a structural defect
+    # in the trail, not a root disagreement. Checked first so one unusable leaf
+    # cannot shrink the set into the "truncated, do not check" shape.
+    if malformed:
+        return FailureReason(
+            type=FailureReasonType.REQUIRED_FIELD_MISSING,
+            field="activity_trail.streaming_egress_chunk.chunk_hash",
+        )
+
+    total = completed.get("total_chunks")
+    if not isinstance(total, int) or isinstance(total, bool):
+        total = len(chunks)
+
+    # Partial disclosure — the truncated shape. Not a defect; not checkable.
+    if len(chunks) != total:
+        return None
+
+    leaves = [_streaming_leaf_bytes(h) for _, h in sorted(chunks, key=lambda c: c[0])]
+    computed = merkle_root_from_leaves([leaf for leaf in leaves if leaf is not None])
+    if strip_hash_prefix(claimed) != computed:
+        return FailureReason(
+            type=FailureReasonType.STREAMING_MERKLE_ROOT_MISMATCH,
+            claimed=claimed,
+            computed="sha512:" + computed,
+        )
+    return None
+
+
+def _verify_streaming_merkle_roots(activity: Sequence[Any]) -> Optional[FailureReason]:
+    """Recompute every fully-disclosed streaming-egress Merkle root.
+
+    ``streaming_egress_completed.streaming_merkle_root`` is an RFC 6962 SHA-512
+    commitment over the ``streaming_egress_chunk`` leaves emitted beside it
+    (reference: ``runtime/eee/src/daemon/streaming.rs::merkle_root_from_leaves``).
+    It was signed from the day it shipped and read by no verifier in any of the
+    four implementations.
+
+    Recomputed only when the leaves are present AND complete: a root standing
+    alone is the truncated shape, and rejecting it would reject every truncated
+    proof. Mirrors ``tools/nanorix-verify/src/streaming_merkle.rs``.
+    """
+    chunks: List[Tuple[int, str]] = []
+    malformed = False
+
+    for event in activity:
+        if not isinstance(event, Mapping):
+            continue
+        kind = event.get("event")
+        if kind == "streaming_egress_started":
+            chunks, malformed = [], False
+        elif kind == "streaming_egress_chunk":
+            seq = event.get("seq")
+            chunk_hash = event.get("chunk_hash")
+            if (
+                isinstance(seq, int)
+                and not isinstance(seq, bool)
+                and isinstance(chunk_hash, str)
+                and _streaming_leaf_bytes(chunk_hash) is not None
+            ):
+                chunks.append((seq, chunk_hash))
+            else:
+                # Flagged rather than dropped — dropping would let a malformed
+                # leaf shrink the set into a different tree, or into the
+                # "truncated" shape.
+                malformed = True
+        elif kind == "streaming_egress_completed":
+            failure = _close_stream(chunks, malformed, event)
+            if failure is not None:
+                return failure
+            chunks, malformed = [], False
+
+    return None
+def _populated_unsigned_slot(proof: Mapping[str, Any]) -> Optional[str]:
+    """First reserved slot carrying anything other than JSON ``null``.
+
+    Genuine documents emit these keys with an explicit ``null`` (the fields have
+    no ``skip_serializing_if``), so absence and ``null`` are both normal.
+    Anything else — an empty list included — is a shape no signer produces.
+    Iteration follows ``UNSIGNED_RESERVED_SLOTS`` order so a document with
+    several populated slots always names the same one, in every language.
+    """
+    for slot in UNSIGNED_RESERVED_SLOTS:
+        if proof.get(slot, None) is not None:
+            return slot
+    return None
+
+
+def _count_unattested_parent_attribution(parents: Sequence[Any]) -> Optional[int]:
+    """Parent links carrying attribution the signed Merkle root does not bind."""
+    n = sum(
+        1
+        for p in parents
+        if isinstance(p, Mapping)
+        and any(p.get(f, None) is not None for f in _PARENT_ATTRIBUTION_FIELDS)
+    )
+    return n or None
 
 
 def verify_auditproof(
@@ -465,18 +696,48 @@ def verify_auditproof(
             metadata=meta,
         )
 
+    # Reserved-slot gate. A slot outside the signature carrying a value no
+    # signer emits means the bytes in front of us are not the bytes that were
+    # signed, even though the signature over the covered subset still checks
+    # out. Runs before the policy pins and the chain walk because the document
+    # is structurally impossible on its own terms, independent of what any
+    # customer policy asks for.
+    populated_slot = _populated_unsigned_slot(proof)
+    if populated_slot is not None:
+        return VerificationResult(
+            valid=False,
+            failure_reason=FailureReason(
+                type=FailureReasonType.UNSIGNED_FIELD_POPULATED,
+                field=populated_slot,
+            ),
+            stage_reached=2,
+            metadata=meta,
+        )
+
     # Populate metadata
     if isinstance(proof.get("capsule_id"), str):
         meta.capsule_id = proof["capsule_id"]
-    meta.region = _pointer_str(proof, "environment", "region")
-    if meta.region is None and isinstance(proof.get("region"), str):
-        meta.region = proof["region"]
+    # Region resolves from the SIGNED capsule_started activity event only.
+    # The activity trail is inside CanonicalCdpView, so a region carried there
+    # cannot be altered without breaking the signature. `environment.region`
+    # and top-level `region` are both outside the canonical hash — reading
+    # either let an outsider satisfy a residency pin by appending a region to a
+    # genuine signed proof, with no key. Mirrors the Rust, Go and TS verifiers.
+    meta.region = None
+    activity = proof.get("activity")
+    if isinstance(activity, list):
+        for event in activity:
+            if not isinstance(event, dict) or event.get("event") != "capsule_started":
+                continue
+            if isinstance(event.get("region"), str):
+                meta.region = event["region"]
+            break
     meta.signing_key_version = _pointer_str(proof, "attestation", "signing_key_version")
     if meta.signing_key_version is None and isinstance(proof.get("signing_key_version"), str):
         meta.signing_key_version = proof["signing_key_version"]
     meta.algorithm = _pointer_str(proof, "attestation", "algorithm")
 
-    # Policy-pin gate — authority ID (the customer-authority specification G7 / VP Security F4.3).
+    # Policy-pin gate — authority ID (ADR-031 G7 / VP Security F4.3).
     #
     # Runs BEFORE the chain walk because the policy decision is independent of
     # chain validity: a customer who pinned the wrong authority should learn
@@ -510,7 +771,7 @@ def verify_auditproof(
                 metadata=meta,
             )
 
-    # Residency-pin gate (the specification G1 / the region policy). A proof carrying no region at
+    # Residency-pin gate (EO-03 G1 / ADR-018 D3). A proof carrying no region at
     # all cannot satisfy a residency pin — it is rejected with an empty
     # `actual` rather than accepted, so the pin fails closed.
     if pol.required_region:
@@ -557,8 +818,8 @@ def verify_auditproof(
     timestamp, recovered = _canonical.resolve_chain_timestamp(proof)
     meta.recovered_chain_timestamp = recovered
 
-    # the per-record receipt specification + the receipt-batching specification the receipt pipeline — optional Merkle roots amend step 8. Absent on
-    # pre-the receipt pipeline proofs, where both branches collapse to the legacy formula.
+    # ADR-039 + ADR-041 Wave-N — optional Merkle roots amend step 8. Absent on
+    # pre-Wave-N proofs, where both branches collapse to the legacy formula.
     rrmr = proof.get("record_receipts_merkle_root")
     rrmr = rrmr if isinstance(rrmr, str) else None
     ppmr = proof.get("parent_proofs_merkle_root")
@@ -577,14 +838,21 @@ def verify_auditproof(
                 stage_reached=3,
                 metadata=meta,
             )
-        subsystem = _str_or_empty(step_raw.get("subsystem"))
+        # Canonical-identity walk: the hash inputs come from
+        # CANONICAL_SUBSYSTEMS by INDEX, never from the document. A document
+        # cannot choose what a step is; it can only fail to match.
+        canonical_subsystem = CANONICAL_SUBSYSTEMS[idx]
+        declared_subsystem = _str_or_empty(step_raw.get("subsystem"))
         claimed_chain_hash = _str_or_empty(step_raw.get("chain_hash"))
 
-        if idx == 7 and subsystem == "capsule_destroy":
+        if idx == CHAIN_STEP_COUNT - 1:
             recomputed = compute_step_8_amended(prev_hash, timestamp, rrmr, ppmr)
         else:
             recomputed = compute_step_hash(
-                prev_hash, subsystem, lookup_method(subsystem), timestamp
+                prev_hash,
+                canonical_subsystem,
+                lookup_method(canonical_subsystem),
+                timestamp,
             )
 
         if recomputed != strip_hash_prefix(claimed_chain_hash):
@@ -593,7 +861,23 @@ def verify_auditproof(
                 failure_reason=FailureReason(
                     type=FailureReasonType.STEP_HASH_MISMATCH,
                     step_idx=idx,
-                    subsystem=subsystem,
+                    subsystem=declared_subsystem,
+                ),
+                stage_reached=3,
+                metadata=meta,
+            )
+
+        # Hashes reproduced; the label beside them still has to be the right
+        # one. Genuine hashes under a forged subsystem name would otherwise
+        # verify clean and read as attesting to a step they do not describe.
+        if declared_subsystem != canonical_subsystem:
+            return VerificationResult(
+                valid=False,
+                failure_reason=FailureReason(
+                    type=FailureReasonType.CHAIN_STEP_IDENTITY_MISMATCH,
+                    step_idx=idx,
+                    expected_subsystem=canonical_subsystem,
+                    found_subsystem=declared_subsystem,
                 ),
                 stage_reached=3,
                 metadata=meta,
@@ -611,6 +895,20 @@ def verify_auditproof(
     parents = proof.get("parent_proof_hashes")
     if isinstance(parents, list):
         failure = _verify_parent_proofs(parents, ppmr)
+        if failure is not None:
+            return VerificationResult(
+                valid=False, failure_reason=failure, stage_reached=3, metadata=meta
+            )
+        # The root binds parent_chain_hash and nothing else, so the verdict
+        # carries the count rather than let a reader infer coverage.
+        meta.unattested_parent_attribution = _count_unattested_parent_attribution(parents)
+
+    # Streaming-egress Merkle roots. Placed with the other sub-structure Merkle
+    # checks and therefore before the signature stages, so it also covers the
+    # path where a chain reproduces with no signature to check at all.
+    activity = proof.get("activity")
+    if isinstance(activity, list):
+        failure = _verify_streaming_merkle_roots(activity)
         if failure is not None:
             return VerificationResult(
                 valid=False, failure_reason=failure, stage_reached=3, metadata=meta
@@ -635,7 +933,7 @@ def verify_auditproof(
             metadata=meta,
         )
 
-    # Algorithm dispatch precedes byte-shape checks (the specification C.1): a proof
+    # Algorithm dispatch precedes byte-shape checks (ADR-051 C.1): a proof
     # declaring a non-Ed25519 signature algorithm fails typed as
     # algorithm_unsupported here — it must never fall through to the 64/32-byte
     # decode gates and report as "malformed". Absent or "Ed25519" proceeds

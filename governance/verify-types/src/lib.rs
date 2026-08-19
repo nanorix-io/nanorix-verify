@@ -4,15 +4,15 @@
 //! enum used by:
 //!
 //! 1. `services/api` — at `POST /v1/verify` (server-side typed-failure
-//!    response per the specification)
-//! 2. `tools/nanorix-verify` — offline auditor CLI (per the verifier specification)
+//!    response per EO-02)
+//! 2. `tools/nanorix-verify` — offline auditor CLI (per EO-07 G3 / sub-A)
 //!
-//! Before trust-chain anchoring (this crate), each side maintained its own
+//! Before EO-07 sub-B (this crate), each side maintained its own
 //! definition with a "must stay in lockstep" comment — easy to drift,
 //! breaking byte-identical typed-failure JSON. Extracting here closes
 //! that drift surface forever.
 //!
-//! **Forever-Standard discipline (the Forever-Standard wire discipline):** every variant shipped
+//! **Forever-Standard discipline (ADR-006 I0):** every variant shipped
 //! here is permanent. New failure modes ship as ADDITIVE variants.
 //! Existing variants NEVER renamed, NEVER removed, NEVER repurposed.
 //! The wire form (serde tag = "type", rename_all = "snake_case") is the
@@ -30,7 +30,7 @@ pub mod output_bundle;
 use serde::{Deserialize, Serialize};
 
 /// Closed-enum verification failure reason emitted by AuditProof
-/// verification paths. **Forever-stable per the Forever-Standard wire discipline** — additive only.
+/// verification paths. **Forever-stable per ADR-006 I0** — additive only.
 ///
 /// Wire form: `{"type": "<snake_case>", ...payload}` via serde tag dispatch.
 ///
@@ -39,20 +39,23 @@ use serde::{Deserialize, Serialize};
 /// | Wire tag | When emitted |
 /// |---|---|
 /// | `algorithm_unsupported` | V1 only supports Ed25519; unknown algorithm string |
-/// | `authority_id_mismatch` | Verifier policy demanded a specific `signing_authority.authority_id` and the AuditProof either omitted `signing_authority` (Nanorix-default) or named a different authority (the customer-authority specification G7) |
-/// | `authority_mode_mismatch` | Customer-attested authority signature failed against registered Ed25519 key (the customer-authority specification) |
+/// | `authority_id_mismatch` | Verifier policy demanded a specific `signing_authority.authority_id` and the AuditProof either omitted `signing_authority` (Nanorix-default) or named a different authority (ADR-031 G7) |
+/// | `authority_mode_mismatch` | Customer-attested authority signature failed against registered Ed25519 key (ADR-031 Amendment 1) |
 /// | `authority_revoked` | Trust-chain manifest marks the signing authority as revoked |
 /// | `cdp_version_unsupported` | CDP version not in {1.0, 2.0, 2.1} |
-/// | `diagnostic_proof_refused` | Verifier policy refused diagnostic-mode proof (the diagnostic-proof policy) |
+/// | `chain_step_identity_mismatch` | A chain entry's `subsystem` is not the canonical subsystem for its position in the Forever-Standard 8-step order (INVARIANTS #1 / ADR-006 I0) |
+/// | `diagnostic_proof_refused` | Verifier policy refused diagnostic-mode proof (ADR-019 D2) |
 /// | `final_hash_mismatch` | `final_hash` doesn't match last step's `chain_hash` |
 /// | `genesis_hash_mismatch` | First step's `prev_hash` != SHA-512(empty) |
-/// | `region_mismatch` | AuditProof region differs from policy required (the region policy) |
+/// | `region_mismatch` | AuditProof region differs from policy required (ADR-018 D3) |
 /// | `required_field_missing` | Structural field absent from AuditProof JSON |
 /// | `reserved` | V2+ wire-surface reservation; never populated in V1 |
 /// | `signature_mismatch` | Ed25519 signature verification failed (Nanorix-authority-signed proof) |
 /// | `signing_key_version_unknown` | Signing key version not in trust-chain manifest |
 /// | `step_count_invalid` | Chain has != 8 steps |
 /// | `step_hash_mismatch` | Step at given index didn't reproduce when recomputed |
+/// | `streaming_merkle_root_mismatch` | A `streaming_egress_completed.streaming_merkle_root` in the activity trail disagreed with the RFC 6962 root recomputed from the `streaming_egress_chunk` leaves disclosed beside it |
+/// | `unsigned_field_populated` | A field the signature does not cover carries a value no Nanorix signer emits (ADR-012 D2/D3 reserved attestation slots) |
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum FailureReason {
@@ -67,6 +70,36 @@ pub enum FailureReason {
 
     /// Step at given index did not reproduce when recomputed from prev_hash.
     StepHashMismatch { step_idx: usize, subsystem: String },
+
+    /// A chain entry declares a `subsystem` that is not the canonical
+    /// subsystem for its position in the Forever-Standard 8-step order
+    /// (INVARIANTS #1 / ADR-006 I0):
+    ///
+    /// `eee_namespace, eee_tmpfs, eee_memory, dire_keys, dire_identity,
+    /// fgx_forensic, rzl_audit, capsule_destroy`
+    ///
+    /// Emitted only when the step's `chain_hash` DID reproduce — i.e. the
+    /// hashes are genuine and the label beside them is not. A chain whose
+    /// hashes were computed over the non-canonical subsystem fails the
+    /// per-step recompute first and reports `StepHashMismatch`, because the
+    /// recompute takes its subsystem and method from the canonical table
+    /// rather than from the document.
+    ///
+    /// Distinct from `StepHashMismatch`, which says the recompute disagreed.
+    /// Routing this through it would tell an auditor the chain arithmetic
+    /// failed when every hash reproduced exactly — the same mis-description
+    /// `StreamingMerkleRootMismatch` exists to avoid.
+    ///
+    /// Field semantics:
+    /// - `step_idx`: 0-based index of the offending entry.
+    /// - `expected_subsystem`: the canonical subsystem for that index.
+    /// - `found_subsystem`: the value the document declared. Empty string
+    ///   when the entry omits `subsystem` entirely.
+    ChainStepIdentityMismatch {
+        step_idx: usize,
+        expected_subsystem: String,
+        found_subsystem: String,
+    },
 
     /// Genesis hash assumption violated (first step's prev_hash was not the
     /// canonical SHA-512 of empty input).
@@ -85,11 +118,11 @@ pub enum FailureReason {
     AuthorityRevoked,
 
     /// AuditProof asserts a region that doesn't match the policy-required
-    /// region (the specification G1 / the region policy). Customer setting
+    /// region (EO-03 G1 / ADR-018 D3). Customer setting
     /// `VerifierPolicy.required_region` rejects proofs from a different region.
     RegionMismatch { required: String, actual: String },
 
-    /// Verifier policy refuses diagnostic-mode proofs (the specification / the diagnostic-proof policy).
+    /// Verifier policy refuses diagnostic-mode proofs (EO-09 / ADR-019 D2).
     /// Customer setting `VerifierPolicy.reject_diagnostic = true` rejects
     /// proofs that carry a `DiagnosticModeEnabled` activity event.
     DiagnosticProofRefused,
@@ -100,14 +133,14 @@ pub enum FailureReason {
 
     /// Customer-attested authority signature did not verify against the
     /// registered customer authority's published Ed25519 public key
-    /// (the customer-authority specification / Amendment 1).
+    /// (ADR-031 / Amendment 1).
     ///
     /// Distinct from `SignatureMismatch`, which covers Nanorix-authority-
     /// signed AuditProof failures. This variant disambiguates customer-
     /// authority failure from Nanorix-authority failure so verifier
     /// consumers can route the failure correctly.
     ///
-    /// Per the customer-authority specification, customer authority signatures are
+    /// Per ADR-031 Amendment 1, customer authority signatures are
     /// Ed25519-only; algorithm mismatch (e.g., AuditProof claims Ed25519
     /// but the registered authority public key is not curve-25519) ALSO
     /// produces this variant — the resolution is identical (re-publish
@@ -133,7 +166,7 @@ pub enum FailureReason {
     /// AuditProof's `signing_authority.authority_id` either is absent (the
     /// AuditProof was signed under Nanorix's default signing authority — i.e.
     /// `signing_authority` field is `None` / omitted) or names a different
-    /// authority than the one demanded. Per the customer-authority specification G7 + VP Security extended
+    /// authority than the one demanded. Per ADR-031 G7 + VP Security extended
     /// review F4.3.
     ///
     /// This variant is **distinct from `AuthorityModeMismatch`**:
@@ -156,7 +189,7 @@ pub enum FailureReason {
     /// Field semantics:
     /// - `claimed_authority_id`: the `signing_authority.authority_id` value
     ///   present in the AuditProof, if any. `None` when the AuditProof omits
-    ///   `signing_authority` entirely (Nanorix-default signing path; the customer-authority specification
+    ///   `signing_authority` entirely (Nanorix-default signing path; ADR-031
     ///   Forever-Standard pre-amendment shape).
     /// - `expected_authority_id`: the value of
     ///   `VerificationPolicy.required_authority_id` that the verifier was
@@ -165,12 +198,60 @@ pub enum FailureReason {
     ///   emitted.
     /// - `reason`: closed enum classifying which of the two failure shapes
     ///   produced this rejection (none-vs-policy or wrong-id-vs-policy).
-    ///   Forever-stable per the Forever-Standard wire discipline; future additions are additive.
+    ///   Forever-stable per ADR-006 I0; future additions are additive.
     AuthorityIdMismatch {
         claimed_authority_id: Option<String>,
         expected_authority_id: String,
         reason: AuthorityIdMismatchReason,
     },
+
+    /// A streaming-egress Merkle root in the activity trail does not equal the
+    /// root recomputed from the chunk leaves disclosed alongside it.
+    ///
+    /// `streaming_egress_completed.streaming_merkle_root` is an RFC 6962
+    /// SHA-512 commitment over the `chunk_hash` values of the
+    /// `streaming_egress_chunk` events that precede it (leaf
+    /// `SHA-512(0x00 || chunk_hash)`, inner `SHA-512(0x01 || l || r)`, odd tail
+    /// promoted). Reference implementation:
+    /// `runtime/eee/src/daemon/streaming.rs::merkle_root_from_leaves`.
+    ///
+    /// Emitted only when the leaves are actually present and complete — a
+    /// document that discloses the root alone is a valid future shape (the
+    /// commitment is what a Merkle root is for) and is carried past unchecked,
+    /// not rejected.
+    ///
+    /// Distinct from `StepHashMismatch` / `FinalHashMismatch`, which are bound
+    /// to the 8-step destruction chain and say nothing about egress. Routing
+    /// this through either would tell an auditor the destruction chain failed
+    /// when it reproduced exactly.
+    ///
+    /// Field semantics:
+    /// - `claimed`: the `streaming_merkle_root` value as it appears in the
+    ///   document, prefix included.
+    /// - `computed`: the root recomputed from the disclosed leaves, emitted in
+    ///   the same `sha512:`-prefixed form so the two are directly comparable.
+    StreamingMerkleRootMismatch { claimed: String, computed: String },
+    /// A field that the signature does NOT cover carries a value that no
+    /// Nanorix signer emits.
+    ///
+    /// The eight reserved attestation slots (ADR-011 I18-I21, I24-I25 +
+    /// ADR-012 D2/D3) sit outside `CanonicalCdpView`, so their contents are
+    /// unsigned. Seven of them are hard-coded `None` at every emit site, and
+    /// no verifier reads any of them. A document carrying one is therefore
+    /// either from a schema this build does not know or was altered after
+    /// signing by someone holding no key — and the signature cannot tell the
+    /// difference, because it never covered the field. Rejecting is the only
+    /// honest verdict: reporting "not tampered since signing" about such a
+    /// document is false in exactly the case the sentence exists to rule out.
+    ///
+    /// `per_event_attestations` is deliberately NOT in the rejected set. It is
+    /// the one reserved slot the server genuinely populates (drained from
+    /// `capsule_event_attestations` at destroy), and each entry carries its own
+    /// customer signature, so it is self-authenticating rather than injectable
+    /// unverifiably.
+    ///
+    /// Field semantics: `field` is the JSON key that was populated, verbatim.
+    UnsignedFieldPopulated { field: String },
 
     /// Reserved for V2+; never populated in V1. Existence reserves the wire
     /// surface for future extension without breaking serde tag dispatch.
@@ -178,7 +259,7 @@ pub enum FailureReason {
 }
 
 /// Sub-reason for `FailureReason::AuthorityIdMismatch`. Closed enum;
-/// forever-stable per the Forever-Standard wire discipline. Additive only.
+/// forever-stable per ADR-006 I0. Additive only.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum AuthorityIdMismatchReason {
@@ -194,7 +275,7 @@ pub enum AuthorityIdMismatchReason {
 }
 
 /// Sub-reason for `FailureReason::SignatureMismatch`. Closed enum;
-/// forever-stable per the Forever-Standard wire discipline.
+/// forever-stable per ADR-006 I0.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum SignatureFailureReason {
@@ -244,6 +325,14 @@ mod tests {
                     subsystem: "x".into(),
                 },
                 "step_hash_mismatch",
+            ),
+            (
+                FailureReason::ChainStepIdentityMismatch {
+                    step_idx: 3,
+                    expected_subsystem: "dire_keys".into(),
+                    found_subsystem: "rzl_audit".into(),
+                },
+                "chain_step_identity_mismatch",
             ),
             (FailureReason::GenesisHashMismatch, "genesis_hash_mismatch"),
             (
@@ -307,6 +396,19 @@ mod tests {
                     reason: AuthorityIdMismatchReason::VerifierPolicyAuthorityIdMismatch,
                 },
                 "authority_id_mismatch",
+            ),
+            (
+                FailureReason::StreamingMerkleRootMismatch {
+                    claimed: "sha512:aa".into(),
+                    computed: "sha512:bb".into(),
+                },
+                "streaming_merkle_root_mismatch",
+            ),
+            (
+                FailureReason::UnsignedFieldPopulated {
+                    field: "witness_signatures".into(),
+                },
+                "unsigned_field_populated",
             ),
             (FailureReason::Reserved, "reserved"),
         ];
@@ -403,6 +505,10 @@ mod tests {
                 claimed_authority_id: Some("customer-hsm-other-v1".into()),
                 expected_authority_id: "customer-hsm-example-org-v1".into(),
                 reason: AuthorityIdMismatchReason::VerifierPolicyAuthorityIdMismatch,
+            },
+            FailureReason::StreamingMerkleRootMismatch {
+                claimed: "sha512:aa".into(),
+                computed: "sha512:bb".into(),
             },
             FailureReason::Reserved,
         ];

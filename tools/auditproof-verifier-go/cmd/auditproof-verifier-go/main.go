@@ -5,7 +5,7 @@
 // auditor receiving a Nanorix AuditProof who needs to confirm authenticity
 // without any Nanorix SaaS dependency.
 //
-// Per the specification (verifier release framing): cross-implementation byte-equivalence
+// Per ADR-033 (verifier release framing): cross-implementation byte-equivalence
 // across Rust + Go (and future browser TS) is the binding contract. If a
 // single language ecosystem suffers a supply-chain compromise or a runtime
 // bug, the alternate-language verifier provides cross-validation. This is what
@@ -73,7 +73,7 @@ func main() {
 	}
 
 	jsonOutput := flag.Bool("json", false, "Output result as JSON instead of human-readable text.")
-	rejectDiagnostic := flag.Bool("reject-diagnostic", false, "Refuse AuditProofs in diagnostic mode (the specification).")
+	rejectDiagnostic := flag.Bool("reject-diagnostic", false, "Refuse AuditProofs in diagnostic mode (EO-09).")
 	requiredRegion := flag.String("required-region", "", "Required region (e.g., 'europe-west1'). When set, AuditProofs whose region disagrees fail.")
 	requiredAuthorityID := flag.String("required-authority-id", "", "Required signing-authority id (e.g., 'customer-hsm-example-org-v1').")
 	fixtureDir := flag.String("fixture-dir", "", "Path to fixture corpus root; runs verification on every fixture and reports pass/fail counts.")
