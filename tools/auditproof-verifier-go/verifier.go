@@ -4,7 +4,7 @@
 // **Forever-Standard discipline (ADR-006 I0):** the stage numbering, the
 // failure-reason emission shapes, the policy-pin gate ordering, and the
 // genesis-hash anchor are PERMANENT. Any change to this file that would
-// produce non-byte-equivalent output to the Rust verifier on the 100-fixture
+// produce non-byte-equivalent output to the Rust verifier on the reference
 // corpus is a P0 finding.
 //
 // **Stage ladder implemented here:**
@@ -50,14 +50,31 @@ type VerifierPolicy struct {
 	// `signing_authority.authority_id` to match. Per ADR-031 G7 + VP Security
 	// extended-review F4.3.
 	RequiredAuthorityID string
+
+	// CustomerActivity: ADR-056 — the raw bytes of the customer's activity
+	// record, when the reader has it. The proof carries only
+	// `customer_declared_activity_root`; with the record in hand the verifier
+	// recomputes the root and compares (customer_activity.go). Supplying a
+	// record to a proof that declares no root is a failure
+	// (required_field_missing), not a no-op. Nil → a declared root is
+	// disclosed in the verdict as declared, not checked. Mirrors
+	// `VerifierPolicy::customer_activity` in the Rust verifier.
+	CustomerActivity []byte
 }
 
 // supportedCdpVersions enumerates the closed-set of recognized AuditProof
 // schema versions. Additive only per ADR-006 I0.
+//
+// "2.2" (ADR-053 + ADR-056) is verified exactly as "2.1": the canonical view,
+// the signed-message form and every stage are unchanged. What 2.2 adds rides
+// inside fields the 2.1 recompute already covers — new activity-trail events,
+// and `customer_declared_activity_root`, which the recompute includes whenever
+// present.
 var supportedCdpVersions = map[string]bool{
 	"1.0": true,
 	"2.0": true,
 	"2.1": true,
+	"2.2": true,
 }
 
 // Verify runs the AuditProof verification pipeline against `jsonBytes` under
@@ -119,6 +136,24 @@ func verifyCore(jsonBytes []byte, policy VerifierPolicy, enforceParentDepthCap b
 			},
 			StageReached: 2,
 			Metadata:     metadata,
+		}
+	}
+
+	// ADR-056 gate on customer_declared_activity_root, stage 2, before the
+	// chain walk (mirrors the Rust ladder's position beside its reserved-slot
+	// gate). The root is signed only where the signed message is the canonical
+	// view (2.1 / 2.2); on 1.0 the message is final_hash and on 2.0 the
+	// document_hash field, so a root there is a value anyone can write and the
+	// signature cannot tell. On 2.1 / 2.2 a root that is not a sha512: +
+	// 128-lowercase-hex string is a shape no signer emits, named here before
+	// any recompute consumes it so the verdict blames the field and not the
+	// signature or the record.
+	if failure := GateDeclaredActivityRoot(proof, cdpVersion); failure != nil {
+		return AuditProofVerificationResult{
+			Valid:         false,
+			FailureReason: failure,
+			StageReached:  2,
+			Metadata:      metadata,
 		}
 	}
 
@@ -369,6 +404,33 @@ func verifyCore(jsonBytes []byte, policy VerifierPolicy, enforceParentDepthCap b
 				Metadata:     metadata,
 			}
 		}
+	}
+
+	// ── ADR-056 customer-declared activity root ──
+	// The stage-2 gate above has already rejected a root on a version that
+	// does not sign it and a root of any shape no signer emits, so a root
+	// read here is a well-formed string on 2.1 / 2.2 and is canonical-bound:
+	// the signature stage below binds it to the signer regardless.
+	// Recomputing it needs the customer's record, which the reader supplies
+	// through the policy. Placed with the other sub-structure Merkle checks,
+	// mirroring the Rust ladder.
+	if root, ok := DeclaredActivityRoot(proof); ok {
+		metadata.CustomerDeclaredActivityRoot = strPtr(root)
+	}
+	if policy.CustomerActivity != nil {
+		if failure := VerifyCustomerDeclaredActivity(proof, policy.CustomerActivity); failure != nil {
+			return AuditProofVerificationResult{
+				Valid:         false,
+				FailureReason: failure,
+				StageReached:  3,
+				Metadata:      metadata,
+			}
+		}
+		checked := true
+		metadata.CustomerDeclaredActivityChecked = &checked
+	} else if metadata.CustomerDeclaredActivityRoot != nil {
+		checked := false
+		metadata.CustomerDeclaredActivityChecked = &checked
 	}
 
 	// Stage 4: final_hash binding.

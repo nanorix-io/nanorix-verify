@@ -216,9 +216,10 @@ pub fn extract_receipt_bundle(
         .and_then(|v| v.as_str())
         .map(String::from);
 
-    // CDP v2.1 signs the FullCdp document canonical hash, NOT the Step 8
-    // chain hash. Populate the signature-target anchor from the source proof
-    // version so `verify_receipt_bundle` verifies the correct message.
+    // CDP v2.1 (and v2.2, which shares its signed-message form) signs the
+    // FullCdp document canonical hash, NOT the Step 8 chain hash. Populate the
+    // signature-target anchor from the source proof version so
+    // `verify_receipt_bundle` verifies the correct message.
     // Recompute (same convention as `canonical_recompute::signed_message`)
     // rather than trusting an embedded field; fall back to the proof's
     // `canonical_hash` field only on the fail-closed empty recompute.
@@ -226,7 +227,7 @@ pub fn extract_receipt_bundle(
         .get("cdp_version")
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    let (signature_target, document_canonical_hash) = if cdp_version == "2.1" {
+    let (signature_target, document_canonical_hash) = if matches!(cdp_version, "2.1" | "2.2") {
         let recomputed = crate::canonical_recompute::recompute_canonical_hash(audit_proof);
         let canonical = if recomputed.is_empty() {
             audit_proof

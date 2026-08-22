@@ -42,9 +42,11 @@ use serde::{Deserialize, Serialize};
 /// | `authority_id_mismatch` | Verifier policy demanded a specific `signing_authority.authority_id` and the AuditProof either omitted `signing_authority` (Nanorix-default) or named a different authority (ADR-031 G7) |
 /// | `authority_mode_mismatch` | Customer-attested authority signature failed against registered Ed25519 key (ADR-031 Amendment 1) |
 /// | `authority_revoked` | Trust-chain manifest marks the signing authority as revoked |
-/// | `cdp_version_unsupported` | CDP version not in {1.0, 2.0, 2.1} |
+/// | `cdp_version_unsupported` | CDP version not in {1.0, 2.0, 2.1, 2.2} |
 /// | `chain_step_identity_mismatch` | A chain entry's `subsystem` is not the canonical subsystem for its position in the Forever-Standard 8-step order (INVARIANTS #1 / ADR-006 I0) |
+/// | `customer_declared_activity_root_mismatch` | The proof's `customer_declared_activity_root` disagreed with the root recomputed from the customer's activity record supplied beside it (ADR-056) |
 /// | `diagnostic_proof_refused` | Verifier policy refused diagnostic-mode proof (ADR-019 D2) |
+/// | `field_malformed` | A field is present but its JSON type or shape is not the one the document format defines for it; rejected before any recompute that would consume it |
 /// | `final_hash_mismatch` | `final_hash` doesn't match last step's `chain_hash` |
 /// | `genesis_hash_mismatch` | First step's `prev_hash` != SHA-512(empty) |
 /// | `region_mismatch` | AuditProof region differs from policy required (ADR-018 D3) |
@@ -59,7 +61,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum FailureReason {
-    /// CDP version not recognized (1.0 / 2.0 / 2.1).
+    /// CDP version not recognized (1.0 / 2.0 / 2.1 / 2.2).
     CdpVersionUnsupported { found: String },
 
     /// Required field absent from the AuditProof structure.
@@ -231,6 +233,59 @@ pub enum FailureReason {
     /// - `computed`: the root recomputed from the disclosed leaves, emitted in
     ///   the same `sha512:`-prefixed form so the two are directly comparable.
     StreamingMerkleRootMismatch { claimed: String, computed: String },
+
+    /// The proof's `customer_declared_activity_root` does not equal the root
+    /// recomputed from the customer's own activity record (ADR-056).
+    ///
+    /// The root is a SHA-512 Merkle commitment over the raw bytes of the
+    /// activity buffer the workload wrote — split on `0x0A`, one leaf per
+    /// line, never parsed or trimmed. The proof carries the root only; the
+    /// customer holds the record. Recomputation therefore needs the record as
+    /// a sidecar, and this variant is emitted only when one was supplied.
+    ///
+    /// The root is inside the canonical view, so a proof whose root was
+    /// altered after signing fails `SignatureMismatch` first. This variant is
+    /// reached when the signed root is genuine and the bytes presented as the
+    /// record are not the bytes that were committed — the record, not the
+    /// proof, is what disagrees.
+    ///
+    /// Distinct from `StepHashMismatch` / `FinalHashMismatch` (the 8-step
+    /// destruction chain, which reproduced) and from
+    /// `StreamingMerkleRootMismatch` (egress evidence Nanorix observed). This
+    /// root commits to bytes Nanorix never interpreted; the field name carries
+    /// that provenance and the failure must carry it too.
+    ///
+    /// Field semantics:
+    /// - `claimed`: the `customer_declared_activity_root` value as it appears
+    ///   in the document, prefix included.
+    /// - `computed`: the root recomputed from the supplied record, in the same
+    ///   `sha512:`-prefixed form so the two are directly comparable.
+    CustomerDeclaredActivityRootMismatch { claimed: String, computed: String },
+
+    /// A field is present but is not the JSON type or shape the document
+    /// format defines for it.
+    ///
+    /// Distinct from `RequiredFieldMissing` (the field is there) and from the
+    /// mismatch variants (nothing was recomputed). A verifier emits this
+    /// BEFORE any recompute that would consume the field, so a value that
+    /// could never have been emitted by a Nanorix signer — a number where a
+    /// `sha512:`-prefixed digest belongs, an empty string, uppercase hex, a
+    /// wrong-length digest — is named as the defect rather than surfacing as
+    /// a signature or root mismatch that blames the wrong thing.
+    ///
+    /// First use (ADR-056): `customer_declared_activity_root`, which must be
+    /// a JSON string of `sha512:` + 128 lowercase hex characters (a bare
+    /// 128-hex digest is also accepted). The empty string is malformed, not
+    /// absent: the canonical view binds `""` as a value, so every verifier
+    /// must read it the same way.
+    ///
+    /// Field semantics:
+    /// - `field`: the JSON key that was malformed, verbatim.
+    /// - `reason`: a short verifier-authored phrase naming what was wrong
+    ///   (free text; not a closed vocabulary — consumers branch on `field`,
+    ///   not on `reason`).
+    FieldMalformed { field: String, reason: String },
+
     /// A field that the signature does NOT cover carries a value that no
     /// Nanorix signer emits.
     ///
@@ -405,6 +460,20 @@ mod tests {
                 "streaming_merkle_root_mismatch",
             ),
             (
+                FailureReason::CustomerDeclaredActivityRootMismatch {
+                    claimed: "sha512:aa".into(),
+                    computed: "sha512:bb".into(),
+                },
+                "customer_declared_activity_root_mismatch",
+            ),
+            (
+                FailureReason::FieldMalformed {
+                    field: "customer_declared_activity_root".into(),
+                    reason: "expected a JSON string".into(),
+                },
+                "field_malformed",
+            ),
+            (
                 FailureReason::UnsignedFieldPopulated {
                     field: "witness_signatures".into(),
                 },
@@ -509,6 +578,17 @@ mod tests {
             FailureReason::StreamingMerkleRootMismatch {
                 claimed: "sha512:aa".into(),
                 computed: "sha512:bb".into(),
+            },
+            FailureReason::CustomerDeclaredActivityRootMismatch {
+                claimed: "sha512:aa".into(),
+                computed: "sha512:bb".into(),
+            },
+            FailureReason::FieldMalformed {
+                field: "customer_declared_activity_root".into(),
+                reason: "expected a JSON string".into(),
+            },
+            FailureReason::UnsignedFieldPopulated {
+                field: "witness_signatures".into(),
             },
             FailureReason::Reserved,
         ];

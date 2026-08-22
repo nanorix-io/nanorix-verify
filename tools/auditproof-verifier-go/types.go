@@ -15,7 +15,8 @@
 //   - authority_id_mismatch            policy-pin failure (ADR-031 G7)
 //   - authority_mode_mismatch          customer-authority Ed25519 verify failure
 //   - authority_revoked                trust-chain marks authority revoked
-//   - cdp_version_unsupported          version not in {1.0, 2.0, 2.1}
+//   - cdp_version_unsupported          version not in {1.0, 2.0, 2.1, 2.2}
+//   - customer_declared_activity_root_mismatch  the proof's signed root disagrees with the root recomputed from the supplied record (ADR-056)
 //   - diagnostic_proof_refused         policy refuses diagnostic-mode (ADR-019 D2)
 //   - final_hash_mismatch              final_hash != last step's chain_hash
 //   - genesis_hash_mismatch            first step's prev_hash != SHA-512(empty)
@@ -78,6 +79,22 @@ type VerificationMetadata struct {
 	// proof's declared lineage. The lineage UI renders exactly those fields, so
 	// a verdict that stays silent invites them to be read as attested.
 	UnattestedParentAttribution *int `json:"unattested_parent_attribution,omitempty"`
+
+	// CustomerDeclaredActivityRoot is the `customer_declared_activity_root`
+	// the proof carries (ADR-056), as written. Nil when the proof declares
+	// none. Disclosed whether or not the record was supplied: a verdict that
+	// stays silent about a declared root invites a reader to assume it was
+	// checked.
+	CustomerDeclaredActivityRoot *string `json:"customer_declared_activity_root,omitempty"`
+
+	// CustomerDeclaredActivityChecked is true when the customer's activity
+	// record was supplied (VerifierPolicy.CustomerActivity) and its recomputed
+	// root matched the declared one; false when the proof declares a root but
+	// no record was supplied — declared, not checked. Nil when the proof
+	// declares no root. A mismatch is a failure, not a false here. Never true
+	// outside cdp_version 2.1 / 2.2: on any other version a declared root is
+	// unsigned and the proof is rejected before this point.
+	CustomerDeclaredActivityChecked *bool `json:"customer_declared_activity_checked,omitempty"`
 }
 
 // CdpKind is the ADR-006 Wave 16-A reserved-slot scope discriminator
@@ -108,23 +125,25 @@ const (
 type FailureReasonType string
 
 const (
-	ReasonAlgorithmUnsupported     FailureReasonType = "algorithm_unsupported"
-	ReasonAuthorityIDMismatch      FailureReasonType = "authority_id_mismatch"
-	ReasonAuthorityModeMismatch    FailureReasonType = "authority_mode_mismatch"
-	ReasonAuthorityRevoked         FailureReasonType = "authority_revoked"
-	ReasonCdpVersionUnsupported    FailureReasonType = "cdp_version_unsupported"
-	ReasonChainStepIdentity        FailureReasonType = "chain_step_identity_mismatch"
-	ReasonDiagnosticProofRefused   FailureReasonType = "diagnostic_proof_refused"
-	ReasonFinalHashMismatch        FailureReasonType = "final_hash_mismatch"
-	ReasonGenesisHashMismatch      FailureReasonType = "genesis_hash_mismatch"
-	ReasonRegionMismatch           FailureReasonType = "region_mismatch"
-	ReasonRequiredFieldMissing     FailureReasonType = "required_field_missing"
-	ReasonReserved                 FailureReasonType = "reserved"
-	ReasonSignatureMismatch        FailureReasonType = "signature_mismatch"
-	ReasonSigningKeyVersionUnknown FailureReasonType = "signing_key_version_unknown"
-	ReasonStepCountInvalid         FailureReasonType = "step_count_invalid"
-	ReasonStepHashMismatch         FailureReasonType = "step_hash_mismatch"
-	ReasonUnsignedFieldPopulated   FailureReasonType = "unsigned_field_populated"
+	ReasonAlgorithmUnsupported                 FailureReasonType = "algorithm_unsupported"
+	ReasonAuthorityIDMismatch                  FailureReasonType = "authority_id_mismatch"
+	ReasonAuthorityModeMismatch                FailureReasonType = "authority_mode_mismatch"
+	ReasonAuthorityRevoked                     FailureReasonType = "authority_revoked"
+	ReasonCdpVersionUnsupported                FailureReasonType = "cdp_version_unsupported"
+	ReasonChainStepIdentity                    FailureReasonType = "chain_step_identity_mismatch"
+	ReasonCustomerDeclaredActivityRootMismatch FailureReasonType = "customer_declared_activity_root_mismatch"
+	ReasonDiagnosticProofRefused               FailureReasonType = "diagnostic_proof_refused"
+	ReasonFieldMalformed                       FailureReasonType = "field_malformed"
+	ReasonFinalHashMismatch                    FailureReasonType = "final_hash_mismatch"
+	ReasonGenesisHashMismatch                  FailureReasonType = "genesis_hash_mismatch"
+	ReasonRegionMismatch                       FailureReasonType = "region_mismatch"
+	ReasonRequiredFieldMissing                 FailureReasonType = "required_field_missing"
+	ReasonReserved                             FailureReasonType = "reserved"
+	ReasonSignatureMismatch                    FailureReasonType = "signature_mismatch"
+	ReasonSigningKeyVersionUnknown             FailureReasonType = "signing_key_version_unknown"
+	ReasonStepCountInvalid                     FailureReasonType = "step_count_invalid"
+	ReasonStepHashMismatch                     FailureReasonType = "step_hash_mismatch"
+	ReasonUnsignedFieldPopulated               FailureReasonType = "unsigned_field_populated"
 )
 
 // SignatureFailureReason mirrors the Rust sub-enum
@@ -160,6 +179,8 @@ const (
 //   - chain_step_identity_mismatch: StepIdx, ExpectedSubsystem, FoundSubsystem
 //   - genesis_hash_mismatch:      (no fields)
 //   - final_hash_mismatch:        Claimed, Computed
+//   - customer_declared_activity_root_mismatch: Claimed, Computed
+//   - field_malformed:            Field, Reason
 //   - signature_mismatch:         SigReason
 //   - signing_key_version_unknown: Version
 //   - authority_revoked:          (no fields)
@@ -175,15 +196,16 @@ type FailureReason struct {
 
 	// Per-variant payload fields. Nil/zero values when not applicable.
 	Found               string                    // cdp_version_unsupported, algorithm_unsupported
-	Field               string                    // required_field_missing, unsigned_field_populated
+	Field               string                    // required_field_missing, unsigned_field_populated, field_malformed
+	Reason              string                    // field_malformed — free text naming what was wrong with the field
 	Expected            int                       // step_count_invalid
 	FoundCount          int                       // step_count_invalid (Found is overloaded; use this for int)
 	StepIdx             int                       // step_hash_mismatch, chain_step_identity_mismatch
 	Subsystem           string                    // step_hash_mismatch
 	ExpectedSubsystem   string                    // chain_step_identity_mismatch
 	FoundSubsystem      string                    // chain_step_identity_mismatch
-	Claimed             string                    // final_hash_mismatch
-	Computed            string                    // final_hash_mismatch
+	Claimed             string                    // final_hash_mismatch, customer_declared_activity_root_mismatch
+	Computed            string                    // final_hash_mismatch, customer_declared_activity_root_mismatch
 	SigReason           SignatureFailureReason    // signature_mismatch
 	Version             string                    // signing_key_version_unknown
 	Required            string                    // region_mismatch
@@ -207,7 +229,7 @@ type FailureReason struct {
 // Forever-Standard discipline (ADR-006 I0): the wire form (key ordering, key
 // names, value encoding) is the cryptographic-attestation contract. Any
 // future change must produce byte-identical output to Rust's `serde_json::
-// to_string(&FailureReason)` on the 100-fixture corpus.
+// to_string(&FailureReason)` on the reference corpus.
 func (r *FailureReason) MarshalJSON() ([]byte, error) {
 	if r == nil {
 		return []byte("null"), nil
@@ -246,6 +268,14 @@ func (r *FailureReason) MarshalJSON() ([]byte, error) {
 		if err := emit("field", r.Field); err != nil {
 			return nil, err
 		}
+	case ReasonFieldMalformed:
+		// Rust struct declaration order: field, reason.
+		if err := emit("field", r.Field); err != nil {
+			return nil, err
+		}
+		if err := emit("reason", r.Reason); err != nil {
+			return nil, err
+		}
 	case ReasonStepCountInvalid:
 		if err := emit("expected", r.Expected); err != nil {
 			return nil, err
@@ -272,7 +302,7 @@ func (r *FailureReason) MarshalJSON() ([]byte, error) {
 		}
 	case ReasonGenesisHashMismatch, ReasonAuthorityRevoked, ReasonDiagnosticProofRefused, ReasonReserved:
 		// no payload fields
-	case ReasonFinalHashMismatch:
+	case ReasonFinalHashMismatch, ReasonCustomerDeclaredActivityRootMismatch:
 		if err := emit("claimed", r.Claimed); err != nil {
 			return nil, err
 		}
@@ -357,6 +387,13 @@ func (r *FailureReason) UnmarshalJSON(data []byte) error {
 		if v, ok := raw["field"].(string); ok {
 			r.Field = v
 		}
+	case ReasonFieldMalformed:
+		if v, ok := raw["field"].(string); ok {
+			r.Field = v
+		}
+		if v, ok := raw["reason"].(string); ok {
+			r.Reason = v
+		}
 	case ReasonStepCountInvalid:
 		if v, ok := raw["expected"].(float64); ok {
 			r.Expected = int(v)
@@ -381,7 +418,7 @@ func (r *FailureReason) UnmarshalJSON(data []byte) error {
 		if v, ok := raw["found_subsystem"].(string); ok {
 			r.FoundSubsystem = v
 		}
-	case ReasonFinalHashMismatch:
+	case ReasonFinalHashMismatch, ReasonCustomerDeclaredActivityRootMismatch:
 		if v, ok := raw["claimed"].(string); ok {
 			r.Claimed = v
 		}

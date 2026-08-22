@@ -1,0 +1,9 @@
+{
+  "failure_reason": {
+    "field": "customer_declared_activity_root",
+    "type": "unsigned_field_populated"
+  },
+  "note": "The signature on a 1.0 proof covers final_hash only, so a customer_declared_activity_root on it is a value the signature never saw. The root is signed only where the signed message is the canonical view (2.1 and 2.2); on any other version a present non-null root is rejected before the chain walk and is never reported as checked.",
+  "stage_reached": 2,
+  "valid": false
+}

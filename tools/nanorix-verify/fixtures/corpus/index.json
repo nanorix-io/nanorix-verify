@@ -52,6 +52,10 @@
     {
       "fixture_count": 5,
       "path": "09_tamper_patterns/d_signature_substitution"
+    },
+    {
+      "fixture_count": 10,
+      "path": "10_v2_2"
     }
   ],
   "expected_verdict_schema": {
@@ -64,6 +68,6 @@
   "generator": "tools/nanorix-verify/fixtures/generator.rs",
   "purpose": "Cross-implementation byte-equivalence corpus for the nanorix-verify reference verifier.",
   "schema_version": "2",
-  "signed_message": "v1.0 signs final_hash; v2.0 signs document_hash; v2.1 nanorix_only signs the ADR-011 Part-3 canonical-view hash (hex(sha512(jcs(view))))",
-  "total_fixtures": 100
+  "signed_message": "v1.0 signs final_hash; v2.0 signs document_hash; v2.1 and v2.2 nanorix_only sign the ADR-011 Part-3 canonical-view hash (hex(sha512(jcs(view)))) — 2.2 is verified exactly as 2.1",
+  "total_fixtures": 110
 }

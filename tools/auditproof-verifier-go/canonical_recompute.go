@@ -33,7 +33,7 @@
 // Forever-Standard discipline (ADR-006 I0): the canonical view's field set,
 // wire-name mapping, and the two server-side transforms (signing_key_version
 // String → i64; the attestation subset) are part of the attestation contract.
-// Any change here must keep the 100-fixture corpus at 100/100.
+// Any change here must keep the reference corpus at full agreement.
 
 package auditproof
 
@@ -149,6 +149,10 @@ func RecomputeCanonicalHash(proof map[string]interface{}) string {
 
 	insertIfPresent(view, "parent_proofs_merkle_root", proof)
 	insertIfPresent(view, "record_receipts_merkle_root", proof)
+	// ADR-056 — the one signed root over the customer's own activity record.
+	// Same insert-if-present mechanic as the two Merkle roots above, so a
+	// document without it hashes byte-identically to a pre-ADR-056 document.
+	insertIfPresent(view, "customer_declared_activity_root", proof)
 
 	// No skip attribute → null when absent.
 	view["runtime_attestation"] = proof["runtime_attestation"]
@@ -215,7 +219,9 @@ func signedMessage(proof map[string]interface{}, cdpVersion string) (string, boo
 	case "2.0":
 		s, _ := proof["document_hash"].(string)
 		return StripHashPrefix(s), true
-	case "2.1":
+	case "2.1", "2.2":
+		// 2.2 shares the 2.1 arm deliberately: ADR-053 / ADR-056 changed what
+		// the canonical view may carry, not how it is hashed or signed.
 		if signingMode == "nanorix_only" {
 			return RecomputeCanonicalHash(proof), true
 		}

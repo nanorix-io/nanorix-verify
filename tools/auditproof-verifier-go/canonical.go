@@ -20,7 +20,7 @@
 // Forever-Standard discipline (ADR-006 I0): the canonical form is the
 // cryptographic-attestation contract. Any future Go-side change to this
 // implementation must produce byte-identical output to the Rust verifier on
-// the 100-fixture corpus, otherwise it's a P0.
+// the reference corpus, otherwise it's a P0.
 
 package auditproof
 

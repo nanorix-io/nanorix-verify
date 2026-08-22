@@ -3,7 +3,7 @@
 // `tools/nanorix-verify/src/canonical_recompute.rs` and the ADR-047 block in
 // `tools/nanorix-verify/src/lib.rs`.
 //
-// The corpus sweep covers the signature stage end-to-end on 100 fixtures, but
+// The corpus sweep covers the signature stage end-to-end on every corpus fixture, but
 // no corpus fixture omits `destroyed_at`, so the recovery path needs its own
 // coverage here.
 

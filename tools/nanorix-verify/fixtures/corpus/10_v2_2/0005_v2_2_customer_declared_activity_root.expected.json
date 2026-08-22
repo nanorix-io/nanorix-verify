@@ -1,0 +1,6 @@
+{
+  "failure_reason": null,
+  "note": "customer_declared_activity_root is the `three` vector from fixtures/customer_declared_activity_root_vectors.json. The corpus does not carry the customer's record, so the root is declared, not checked; the signature covers it either way.",
+  "stage_reached": 7,
+  "valid": true
+}

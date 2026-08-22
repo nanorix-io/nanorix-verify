@@ -195,14 +195,15 @@ func ExtractReceiptBundle(auditProof []byte, recordIndex uint32) (*PortableRecei
 		}
 	}
 
-	// CDP v2.1 signs the FullCdp document canonical hash, NOT the Step 8
-	// chain hash. Populate the signature-target anchor from the source proof
-	// version so VerifyReceiptBundle verifies the correct message. Recompute
+	// CDP v2.1 (and v2.2, which shares its signed-message form) signs the
+	// FullCdp document canonical hash, NOT the Step 8 chain hash. Populate the
+	// signature-target anchor from the source proof version so
+	// VerifyReceiptBundle verifies the correct message. Recompute
 	// (same convention as the canonical_recompute signed-message path) rather
 	// than trusting an embedded field; fall back to the proof's canonical_hash
 	// field only on the fail-closed empty recompute.
 	var signatureTarget, documentCanonicalHash *string
-	if cdpVersion, _ := doc["cdp_version"].(string); cdpVersion == "2.1" {
+	if cdpVersion, _ := doc["cdp_version"].(string); cdpVersion == "2.1" || cdpVersion == "2.2" {
 		// Recompute over the UseNumber-parsed tree (RecomputeCanonicalHash's
 		// documented contract) so numeric literals keep their source form.
 		numericDoc := doc

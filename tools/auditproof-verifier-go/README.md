@@ -19,7 +19,7 @@ Auditors and customers need substrate-independence: the cryptographic chain
 that anchors AuditProof verification must be reproducible from the algorithm
 spec, not from a single binary distributed by Nanorix. A Go verifier built
 in a clean room from the spec, producing byte-identical output to the Rust
-verifier on the 100-fixture reference corpus, is the strongest available
+verifier on the reference corpus (110 fixtures), is the strongest available
 proof that the spec is unambiguous and the algorithm is implementable
 without insider information.
 
@@ -84,12 +84,12 @@ auditproof-verifier-go --fixture-dir tools/nanorix-verify/fixtures/corpus
 ## Cross-implementation byte-equivalence
 
 This Go verifier produces byte-equivalent results to the Rust verifier
-(`tools/nanorix-verify/`) on the 100-fixture reference corpus shipped at
+(`tools/nanorix-verify/`) on the reference corpus (110 fixtures) shipped at
 commit `ba1d51a` (Wave 6 verification-surface scaffolds). Specifically:
 
-- 100/100 fixtures yield identical verdict (valid/invalid)
-- 100/100 fixtures yield identical typed `failure_reason` payload
-- 100/100 fixtures yield identical metadata (cdp_version, capsule_id,
+- 110/110 fixtures yield identical verdict (valid/invalid)
+- 110/110 fixtures yield identical typed `failure_reason` payload
+- 110/110 fixtures yield identical metadata (cdp_version, capsule_id,
   region, signing_key_version, algorithm, step_count)
 - JSON wire-form is byte-identical including key ordering (the
   serde-tag-discriminant `"type"` is always emitted first)
@@ -111,7 +111,7 @@ cd tools/auditproof-verifier-go
 go test -v -run TestFixtureCorpusByteEquivalentWithRust
 ```
 
-The test walks all 100 fixtures, runs each through both verifiers, and
+The test walks all 110 fixtures, runs each through both verifiers, and
 fails the build if any fixture diverges.
 
 ## Implementation status
@@ -173,7 +173,7 @@ Apache-2.0. Copyright 2026 Nanorix Inc. See `LICENSE` at the repository root.
 - Rust verifier: `tools/nanorix-verify/`
 - Verification result types (Rust source of truth):
   `governance/verify-types/src/lib.rs`
-- Fixture corpus: `tools/nanorix-verify/fixtures/corpus/` (100 fixtures, shipped
+- Fixture corpus: `tools/nanorix-verify/fixtures/corpus/` (110 fixtures, shipped
   from sealed Wave 6 commit `ba1d51a`)
 - JSON Schema: `tools/nanorix-verify/schema/audit_proof_v2_1.json`
   (verifier release framing)

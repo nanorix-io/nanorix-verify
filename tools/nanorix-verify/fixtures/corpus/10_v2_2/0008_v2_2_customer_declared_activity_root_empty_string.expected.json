@@ -1,0 +1,10 @@
+{
+  "failure_reason": {
+    "field": "customer_declared_activity_root",
+    "reason": "empty string",
+    "type": "field_malformed"
+  },
+  "note": "A present non-null root must be a JSON string of sha512: + 128 lowercase hex (bare 128-hex accepted). The empty string is malformed, not absent: every verifier binds it as a value in the canonical view, so one that read it as \"no root\" would contradict its own recompute. The document is signed over the empty string, so the defect is named at stage 2 before the signature stage could have verified it.",
+  "stage_reached": 2,
+  "valid": false
+}

@@ -1,0 +1,10 @@
+{
+  "failure_reason": {
+    "field": "customer_declared_activity_root",
+    "reason": "expected a JSON string",
+    "type": "field_malformed"
+  },
+  "note": "A root that is not a JSON string is a shape no signer emits. Named as malformed at stage 2, before any recompute consumes it, so the verdict blames the field and not the signature or the record.",
+  "stage_reached": 2,
+  "valid": false
+}

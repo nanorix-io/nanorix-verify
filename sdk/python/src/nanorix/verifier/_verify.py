@@ -2,7 +2,7 @@
 Core verification logic — the convenience wrapper over the stage ladder.
 
 The verification itself lives in `nanorix.verifier._ladder`, the single Python
-implementation, held to the 100-document reference corpus at
+implementation, held to the pinned reference corpus at
 `tools/nanorix-verify/fixtures/corpus/`. This module adds the ergonomic
 `verify(proof)` surface: flexible input (dict / JSON string / path / bytes) and
 a flat result object.
@@ -101,6 +101,15 @@ class VerifyResult:
             surface; `failure_reason` is the prose rendering of it.
         chain_hash: The final (step 8) chain_hash if the chain reproduced,
             else "".
+        customer_declared_activity_root: The `customer_declared_activity_root`
+            the proof carries (ADR-056), as written; None when it declares
+            none. Disclosed whether or not the record was supplied, so a
+            reader never has to assume a declared root was checked.
+        customer_declared_activity_checked: True when the customer's record
+            was supplied through `VerifierPolicy.customer_activity` and its
+            recomputed root matched; False when the proof declares a root but
+            no record was supplied (declared, not checked); None when the
+            proof declares no root. A mismatch is a failure, never a False.
     """
 
     ok: bool
@@ -113,6 +122,8 @@ class VerifyResult:
     valid: bool = False
     stage_reached: int = 0
     failure: Optional[Dict[str, Any]] = None
+    customer_declared_activity_root: Optional[str] = None
+    customer_declared_activity_checked: Optional[bool] = None
 
 
 def _load_proof(input_data: Union[Dict[str, Any], str, Path, bytes]) -> Dict[str, Any]:
@@ -189,7 +200,49 @@ def _prose(wire: Dict[str, Any]) -> str:
             f"Signing authority {wire.get('claimed_authority_id')!r} does not match "
             f"required {wire.get('expected_authority_id')!r}"
         )
+    if t == FailureReasonType.CUSTOMER_DECLARED_ACTIVITY_ROOT_MISMATCH:
+        return (
+            "customer_declared_activity_root does not reproduce from the supplied "
+            "activity record (the chain itself reproduced)"
+        )
+    if t == FailureReasonType.UNSIGNED_FIELD_POPULATED:
+        return f"Field {wire.get('field')!r} is populated but is outside the signature"
+    if t == FailureReasonType.FIELD_MALFORMED:
+        return f"Field {wire.get('field')!r} is malformed: {wire.get('reason')}"
     return f"Verification failed: {t}"
+
+
+# Stage-3 failures raised by the sub-structure checks that run AFTER the chain
+# walk. A verdict carrying one of these means every step hash reproduced; the
+# flat result must not read it as a chain failure.
+_POST_CHAIN_WALK_FAILURES = frozenset(
+    {
+        FailureReasonType.CUSTOMER_DECLARED_ACTIVITY_ROOT_MISMATCH,
+        FailureReasonType.STREAMING_MERKLE_ROOT_MISMATCH,
+    }
+)
+
+
+def _chain_reproduced(stage_reached: int, wire: Optional[Dict[str, Any]]) -> bool:
+    """Whether every chain step reproduced, from the ladder's verdict.
+
+    Settled by stage 4 for anything that got past it. A stage-3 verdict is a
+    chain failure unless its reason is one only the post-walk sub-structure
+    checks raise — the ADR-056 sidecar check among them, which also fails
+    closed as ``required_field_missing`` for its own field.
+    """
+    if stage_reached >= 4:
+        return not (wire is not None and wire.get("type") == FailureReasonType.FINAL_HASH_MISMATCH)
+    if stage_reached == 3 and wire is not None:
+        t = wire.get("type")
+        if t in _POST_CHAIN_WALK_FAILURES:
+            return True
+        if (
+            t == FailureReasonType.REQUIRED_FIELD_MISSING
+            and wire.get("field") == "customer_declared_activity_root"
+        ):
+            return True
+    return False
 
 
 def verify(
@@ -242,11 +295,7 @@ def verify(
         if isinstance(idx, int):
             failed_step = idx + 1
 
-    # The chain and its final_hash binding are settled by stage 4; anything
-    # that got past it reproduced, whatever the signature then did.
-    chain_valid = result.stage_reached >= 4 and not (
-        wire is not None and wire.get("type") == FailureReasonType.FINAL_HASH_MISMATCH
-    )
+    chain_valid = _chain_reproduced(result.stage_reached, wire)
     signature_valid = result.stage_reached >= 7 and result.valid
 
     chain_hash = ""
@@ -275,4 +324,6 @@ def verify(
         valid=result.valid,
         stage_reached=result.stage_reached,
         failure=wire,
+        customer_declared_activity_root=result.metadata.customer_declared_activity_root,
+        customer_declared_activity_checked=result.metadata.customer_declared_activity_checked,
     )

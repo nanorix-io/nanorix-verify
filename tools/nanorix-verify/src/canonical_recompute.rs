@@ -17,7 +17,7 @@
 //! ## What is mirrored
 //!
 //! `services/api/src/cdp_document.rs::FullCdp::canonical_view()` builds a
-//! 16-field `CanonicalCdpView` (ADR-011 Part 3) and hashes it via
+//! `CanonicalCdpView` (ADR-011 Part 3) and hashes it via
 //! `nanorix_rzl::canonical::canonical_hash` = `hex(sha512(serde_jcs(view)))`.
 //! Because the AuditProof JSON already contains every value in its exact
 //! serialized shape, we rebuild only the *view* — mapping `FullCdp` wire field
@@ -127,6 +127,10 @@ pub fn recompute_canonical_hash(proof: &Value) -> String {
 
     insert_if_present(&mut v, "parent_proofs_merkle_root", proof);
     insert_if_present(&mut v, "record_receipts_merkle_root", proof);
+    // ADR-056 — the one signed root over the customer's own activity record.
+    // Same skip_serializing_if mechanic as the two Merkle roots above, so a
+    // document without it hashes byte-identically to a pre-ADR-056 document.
+    insert_if_present(&mut v, "customer_declared_activity_root", proof);
 
     // No skip attribute -> null when absent.
     v.insert(
@@ -181,8 +185,12 @@ fn insert_if_present(view: &mut Map<String, Value>, key: &str, proof: &Value) {
 /// `services/api/src/routes/verify.rs`:
 /// - `1.0` -> `final_hash` (ASCII hex, prefix-stripped)
 /// - `2.0` -> `document_hash`
-/// - `2.1` + `nanorix_only` -> recomputed `canonical_hash`
-/// - `2.1` + `dual_signature` / `tee_attested` -> `None` (not verifiable here)
+/// - `2.1` / `2.2` + `nanorix_only` -> recomputed `canonical_hash`
+/// - `2.1` / `2.2` + `dual_signature` / `tee_attested` -> `None` (not
+///   verifiable here)
+///
+/// `2.2` shares the `2.1` arm deliberately: ADR-053 / ADR-056 changed what the
+/// canonical view may carry, not how it is hashed or signed.
 fn signed_message(proof: &Value, cdp_version: &str) -> Option<String> {
     let signing_mode = proof
         .get("signing_mode")
@@ -203,7 +211,7 @@ fn signed_message(proof: &Value, cdp_version: &str) -> Option<String> {
                 .unwrap_or(""),
         )
         .to_string(),
-        "2.1" => match signing_mode {
+        "2.1" | "2.2" => match signing_mode {
             "nanorix_only" => recompute_canonical_hash(proof),
             // Any other declared mode is one this build cannot verify. It is NOT
             // "no signature" — see SignatureCheck::Unsupported. Signalled with a
@@ -345,6 +353,45 @@ mod tests {
             recompute_canonical_hash(&golden_input()),
             "402f533e81d78a05f386bee62a919436b8eacdea2c49397d54547bbd19dabce47bc95143635ee6d487e35eee037fec31ebd1f8f88b2f3f36ae2908324c74aabe",
             "offline canonical recompute drifted from the server golden"
+        );
+    }
+
+    /// `customer_declared_activity_root` (ADR-056) is canonical-bound when
+    /// present and invisible when absent. Three facts pinned: (1) the golden
+    /// input, which carries no root, still hashes to `402f533e…`; (2) a
+    /// document carrying the root hashes differently — so a signature made
+    /// without it does not cover a later-injected root, and a signature made
+    /// with it breaks if the root is altered; (3) `null` is treated as absent,
+    /// exactly like the two Merkle roots beside it.
+    #[test]
+    fn customer_declared_activity_root_is_canonical_bound_only_when_present() {
+        const GOLDEN: &str = "402f533e81d78a05f386bee62a919436b8eacdea2c49397d54547bbd19dabce47bc95143635ee6d487e35eee037fec31ebd1f8f88b2f3f36ae2908324c74aabe";
+        let without = golden_input();
+        assert_eq!(recompute_canonical_hash(&without), GOLDEN);
+
+        let mut with_root = golden_input();
+        with_root["customer_declared_activity_root"] = json!(
+            "sha512:390d7d3a3c84f59c289a33e3f1848e7208036e31b2f83837ade9e55fd3ac504550cd73baed351b139c22df78d2b6c65efebd9c27a5a237b64d0c15088f4f9ef1"
+        );
+        let with_hash = recompute_canonical_hash(&with_root);
+        assert_ne!(with_hash, GOLDEN, "a carried root must move the hash");
+
+        let mut other_root = with_root.clone();
+        other_root["customer_declared_activity_root"] = json!(
+            "sha512:cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e"
+        );
+        assert_ne!(
+            recompute_canonical_hash(&other_root),
+            with_hash,
+            "a different root must produce a different hash"
+        );
+
+        let mut null_root = golden_input();
+        null_root["customer_declared_activity_root"] = Value::Null;
+        assert_eq!(
+            recompute_canonical_hash(&null_root),
+            GOLDEN,
+            "an explicit null is absent, not a value"
         );
     }
 

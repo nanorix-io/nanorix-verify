@@ -30,21 +30,35 @@
 
 import {
   CANONICAL_SUBSYSTEMS,
+  FailureReasonType,
   GENESIS_HASH,
   computeStepHash,
+  gateDeclaredActivityRoot,
   lookupMethod,
   resolveChainTimestamp,
   stripSha512Prefix,
   verifySignature,
+  type FailureReason,
+  type VerifierPolicy,
 } from "./auditproof.js";
 import { computeStep8Amended } from "./wave_n.js";
+import {
+  CustomerDeclaredActivityStatus,
+  verifyCustomerDeclaredActivity,
+} from "./customer_activity.js";
 
 export { GENESIS_HASH, CANONICAL_SUBSYSTEMS };
 
 // ── Full-pipeline surface (structured verdicts, policy pins) ────────────────
 export {
+  CANONICAL_VIEW_SIGNED_VERSIONS,
   CHAIN_STEP_COUNT,
   FailureReasonType,
+  ROOT_MALFORMED_EMPTY,
+  ROOT_MALFORMED_NOT_A_STRING,
+  ROOT_MALFORMED_SHAPE,
+  checkDeclaredActivityRootShape,
+  gateDeclaredActivityRoot,
   METHOD_MAP,
   SUPPORTED_CDP_VERSIONS,
   SignatureFailureReason,
@@ -71,6 +85,11 @@ export type {
 } from "./auditproof.js";
 
 export interface VerifyResult {
+  /**
+   * True iff the chain reproduced, the Ed25519 signature verified, and — when
+   * an activity record was supplied — its recomputed root matched the
+   * proof's `customer_declared_activity_root`.
+   */
   ok: boolean;
   chainValid: boolean;
   signatureValid: boolean;
@@ -78,6 +97,20 @@ export interface VerifyResult {
   failedStep: number | null;
   failureReason: string;
   chainHash: string;
+  /**
+   * ADR-056. The `customer_declared_activity_root` the proof carries, as
+   * written; null when it declares none. Disclosed whether or not the record
+   * was supplied, so a reader never has to assume a declared root was
+   * checked.
+   */
+  customerDeclaredActivityRoot: string | null;
+  /**
+   * True when the record was supplied and its recomputed root matched; false
+   * when the proof declares a root but no record was supplied — declared,
+   * not checked; null when the proof declares no root. A mismatch is a
+   * failure (`ok=false`), never a false here.
+   */
+  customerDeclaredActivityChecked: boolean | null;
 }
 
 /**
@@ -93,6 +126,22 @@ export interface VerifyResult {
  */
 export type CdpKind = "workload" | "request" | "call" | "batch";
 
+/** One-line prose for the ADR-056 failure reasons the flat result can carry. */
+function renderActivityFailure(reason: FailureReason, cdpVersion: string): string {
+  switch (reason.type) {
+    case FailureReasonType.UNSIGNED_FIELD_POPULATED:
+      return `Field '${reason.field}' is populated but is outside the signature on cdp_version ${JSON.stringify(cdpVersion)}`;
+    case FailureReasonType.FIELD_MALFORMED:
+      return `Field '${reason.field}' is malformed: ${reason.reason}`;
+    case FailureReasonType.CUSTOMER_DECLARED_ACTIVITY_ROOT_MISMATCH:
+      return "customer_declared_activity_root does not reproduce from the supplied activity record (the chain itself reproduced)";
+    case FailureReasonType.REQUIRED_FIELD_MISSING:
+      return `An activity record was supplied but the proof declares no '${reason.field}'`;
+    default:
+      return `Verification failed: ${reason.type}`;
+  }
+}
+
 /**
  * Verify an AuditProof (CDP) offline.
  *
@@ -104,10 +153,22 @@ export type CdpKind = "workload" | "request" | "call" | "batch";
  * pre-ADR-047 proofs). A serialized step carries only
  * `step / subsystem / operation / evidence_hash / chain_hash`.
  *
+ * A declared `customer_declared_activity_root` (ADR-056) is gated and
+ * disclosed the way the stage ladder does it: on a version that does not sign
+ * it, or of a shape no signer emits, the proof is rejected before the chain
+ * walk; with `policy.customerActivity` supplied the root is recomputed from
+ * those bytes after the walk and a mismatch fails the verdict without
+ * blaming the chain.
+ *
  * @param proof  AuditProof as parsed JSON object.
- * @returns VerifyResult with `.ok=true` iff all three checks pass.
+ * @param policy Optional; only `customerActivity` (the record's raw bytes)
+ *   is read here — the other pins belong to `verifyAuditProof`.
+ * @returns VerifyResult with `.ok=true` iff no check that ran failed.
  */
-export async function verify(proof: unknown): Promise<VerifyResult> {
+export async function verify(
+  proof: unknown,
+  policy?: Pick<VerifierPolicy, "customerActivity">,
+): Promise<VerifyResult> {
   const result: VerifyResult = {
     ok: false,
     chainValid: false,
@@ -116,6 +177,8 @@ export async function verify(proof: unknown): Promise<VerifyResult> {
     failedStep: null,
     failureReason: "",
     chainHash: "",
+    customerDeclaredActivityRoot: null,
+    customerDeclaredActivityChecked: null,
   };
 
   if (typeof proof !== "object" || proof === null || Array.isArray(proof)) {
@@ -142,6 +205,18 @@ export async function verify(proof: unknown): Promise<VerifyResult> {
     !subsystems.every((s, i) => s === CANONICAL_SUBSYSTEMS[i])
   ) {
     result.failureReason = `Subsystem mismatch: expected ${JSON.stringify(CANONICAL_SUBSYSTEMS)}, got ${JSON.stringify(subsystems)}`;
+    return result;
+  }
+
+  const cdpVersion =
+    typeof p["cdp_version"] === "string" ? (p["cdp_version"] as string) : "";
+
+  // ADR-056 stage-2 gate, before the walk: a root on a version that does not
+  // sign it, or of a shape no signer emits, names the field as the defect
+  // rather than letting a recompute blame the signature or the record.
+  const rootGate = gateDeclaredActivityRoot(p, cdpVersion);
+  if (rootGate !== null) {
+    result.failureReason = renderActivityFailure(rootGate, cdpVersion);
     return result;
   }
 
@@ -193,6 +268,28 @@ export async function verify(proof: unknown): Promise<VerifyResult> {
   result.chainValid = true;
   result.chainHash = prevHash;
 
+  // ADR-056 sidecar check, after the walk: every step hash reproduced, so a
+  // failure here is reported without a failedStep and with chainValid true.
+  const activity = await verifyCustomerDeclaredActivity(
+    p,
+    policy?.customerActivity,
+  );
+  result.customerDeclaredActivityRoot = activity.claimed;
+  if (activity.status === CustomerDeclaredActivityStatus.FAILED) {
+    result.failureReason = renderActivityFailure(
+      activity.failure_reason as FailureReason,
+      cdpVersion,
+    );
+    return result;
+  }
+  if (activity.status === CustomerDeclaredActivityStatus.VERIFIED) {
+    result.customerDeclaredActivityChecked = true;
+  } else if (
+    activity.status === CustomerDeclaredActivityStatus.DECLARED_NOT_CHECKED
+  ) {
+    result.customerDeclaredActivityChecked = false;
+  }
+
   // Ed25519 signature over the version-appropriate message.
   const att =
     p["attestation"] && typeof p["attestation"] === "object"
@@ -203,8 +300,6 @@ export async function verify(proof: unknown): Promise<VerifyResult> {
     return result;
   }
 
-  const cdpVersion =
-    typeof p["cdp_version"] === "string" ? (p["cdp_version"] as string) : "";
   const check = await verifySignature(p, cdpVersion);
   if (check.kind === "failed") {
     result.failureReason = `Ed25519 signature did not verify (${check.reason})`;
@@ -261,6 +356,22 @@ export type {
   WaveNVerifyResult,
   VerifyRecordReceiptOptions,
 } from "./wave_n.js";
+
+// ADR-056 — customer_declared_activity_root sidecar check. The root is
+// signature-bound by the canonical view; this surface checks that a file of
+// raw activity bytes in hand is the one that root commits to.
+export {
+  CUSTOMER_DECLARED_ACTIVITY_ROOT_FIELD,
+  CustomerDeclaredActivityStatus,
+  computeCustomerDeclaredActivityRoot,
+  customerDeclaredActivityLeafHashes,
+  splitCustomerDeclaredActivityLines,
+  verifyCustomerDeclaredActivity,
+} from "./customer_activity.js";
+export type {
+  CustomerDeclaredActivityCheck,
+  CustomerDeclaredActivityStatusValue,
+} from "./customer_activity.js";
 
 // Wave B Item 7 — Portable Receipt Bundle (.prb.json) surface.
 export {

@@ -2,8 +2,8 @@
 The AuditProof verification stage ladder — the single Python implementation.
 
 Python mirror of `tools/nanorix-verify/src/lib.rs::verify_auditproof`, which is
-the reference verifier and the spec. Agreement is enforced against the 100
-pinned documents in `tools/nanorix-verify/fixtures/corpus/`, which are the
+the reference verifier and the spec. Agreement is enforced against every
+pinned document in `tools/nanorix-verify/fixtures/corpus/`, which are the
 public cross-implementation contract; a disagreement with the corpus is a
 defect in this file, never in the corpus.
 
@@ -12,7 +12,7 @@ Stage ladder:
 | Stage | Check |
 |---|---|
 | 1 | `cdp_version` present |
-| 2 | `cdp_version` recognised; authority-id pin; region pin |
+| 2 | `cdp_version` recognised (1.0 / 2.0 / 2.1 / 2.2); authority-id pin; region pin |
 | 3 | chain present, 8 steps, every step hash reproduces; Wave-N receipt + parent sets |
 | 4 | `final_hash` binds to the last step's `chain_hash` |
 | 5–7 | Ed25519 signature over the version-appropriate message, against the embedded key |
@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
@@ -130,7 +131,9 @@ class FailureReasonType:
     AUTHORITY_REVOKED = "authority_revoked"
     CDP_VERSION_UNSUPPORTED = "cdp_version_unsupported"
     CHAIN_STEP_IDENTITY_MISMATCH = "chain_step_identity_mismatch"
+    CUSTOMER_DECLARED_ACTIVITY_ROOT_MISMATCH = "customer_declared_activity_root_mismatch"
     DIAGNOSTIC_PROOF_REFUSED = "diagnostic_proof_refused"
+    FIELD_MALFORMED = "field_malformed"
     FINAL_HASH_MISMATCH = "final_hash_mismatch"
     GENESIS_HASH_MISMATCH = "genesis_hash_mismatch"
     REGION_MISMATCH = "region_mismatch"
@@ -158,15 +161,18 @@ class FailureReason:
     # `found` is a string for the version variants and an integer for
     # step_count_invalid, matching the reference wire form in each case.
     found: Optional[Union[str, int]] = None
-    field: Optional[str] = None  # required_field_missing, unsigned_field_populated
+    # required_field_missing, unsigned_field_populated, field_malformed
+    field: Optional[str] = None
     expected: Optional[int] = None  # step_count_invalid
     step_idx: Optional[int] = None  # step_hash_mismatch, chain_step_identity_mismatch
     subsystem: Optional[str] = None  # step_hash_mismatch
     expected_subsystem: Optional[str] = None  # chain_step_identity_mismatch
     found_subsystem: Optional[str] = None  # chain_step_identity_mismatch
-    claimed: Optional[str] = None  # final_hash_mismatch, streaming_merkle_root_mismatch
-    computed: Optional[str] = None  # final_hash_mismatch, streaming_merkle_root_mismatch
-    reason: Optional[str] = None  # signature_mismatch
+    # final_hash_mismatch, streaming_merkle_root_mismatch,
+    # customer_declared_activity_root_mismatch
+    claimed: Optional[str] = None
+    computed: Optional[str] = None
+    reason: Optional[str] = None  # signature_mismatch, field_malformed
     version: Optional[str] = None  # signing_key_version_unknown
     required: Optional[str] = None  # region_mismatch
     actual: Optional[str] = None  # region_mismatch
@@ -210,12 +216,18 @@ class FailureReason:
         elif t in (
             FailureReasonType.FINAL_HASH_MISMATCH,
             FailureReasonType.STREAMING_MERKLE_ROOT_MISMATCH,
+            FailureReasonType.CUSTOMER_DECLARED_ACTIVITY_ROOT_MISMATCH,
         ):
             if self.claimed is not None:
                 d["claimed"] = self.claimed
             if self.computed is not None:
                 d["computed"] = self.computed
         elif t == FailureReasonType.SIGNATURE_MISMATCH:
+            if self.reason is not None:
+                d["reason"] = self.reason
+        elif t == FailureReasonType.FIELD_MALFORMED:
+            if self.field is not None:
+                d["field"] = self.field
             if self.reason is not None:
                 d["reason"] = self.reason
         elif t == FailureReasonType.SIGNING_KEY_VERSION_UNKNOWN:
@@ -262,6 +274,19 @@ class VerificationMetadata:
     # a verdict that stays silent invites them to be read as attested.
     unattested_parent_attribution: Optional[int] = None
 
+    # ADR-056. The `customer_declared_activity_root` the proof carries, as
+    # written; None when it declares none. Disclosed whether or not the record
+    # was supplied — a verdict that stays silent about a declared root invites
+    # a reader to assume it was checked.
+    customer_declared_activity_root: Optional[str] = None
+
+    # True when the customer's activity record was supplied through
+    # `VerifierPolicy.customer_activity` and its recomputed root matched;
+    # False when the proof declares a root but no record was supplied —
+    # declared, not checked. None when the proof declares no root. A mismatch
+    # is a failure, never a False here.
+    customer_declared_activity_checked: Optional[bool] = None
+
 
 @dataclass
 class VerificationResult:
@@ -300,9 +325,71 @@ class VerifierPolicy:
     required_region: str = ""
     required_authority_id: str = ""
 
+    # ADR-056. The raw bytes of the customer's activity record
+    # (`activity_events.jsonl`), when the reader holds it. Recomputed and
+    # compared with the proof's `customer_declared_activity_root`; a record
+    # supplied against a proof that declares no root fails closed as
+    # `required_field_missing`. None leaves a declared root disclosed as
+    # "declared, not checked" rather than failed.
+    customer_activity: Optional[bytes] = None
+
 
 def _str_or_empty(v: Any) -> str:
     return v if isinstance(v, str) else ""
+
+
+# Matched with `fullmatch`, never `match`: `$` accepts a trailing "\n" and a
+# root with one is not a root any signer emits.
+_ACTIVITY_ROOT_SHAPE = re.compile(r"(sha512:)?[0-9a-f]{128}")
+
+CUSTOMER_DECLARED_ACTIVITY_ROOT_FIELD = "customer_declared_activity_root"
+
+
+def customer_declared_activity_root_shape_failure(raw: Any) -> Optional[FailureReason]:
+    """The shape a present, non-null `customer_declared_activity_root` must have.
+
+    A JSON string of `sha512:` + 128 lowercase hex (bare 128-hex accepted, as
+    for every other root the verifier compares); anything else is
+    `field_malformed`. The empty string is malformed rather than absent: the
+    canonical view binds `""` as a value, and a reader that called it "no
+    root" would contradict its own recompute. Reason strings are the
+    reference verifier's exact text — the corpus compares the whole object.
+    """
+    if not isinstance(raw, str):
+        reason = "expected a JSON string"
+    elif raw == "":
+        reason = "empty string"
+    elif not _ACTIVITY_ROOT_SHAPE.fullmatch(raw):
+        reason = "expected sha512: followed by 128 lowercase hex characters"
+    else:
+        return None
+    return FailureReason(
+        type=FailureReasonType.FIELD_MALFORMED,
+        field=CUSTOMER_DECLARED_ACTIVITY_ROOT_FIELD,
+        reason=reason,
+    )
+
+
+def customer_declared_activity_root_gate(
+    proof: Mapping[str, Any], cdp_version: str
+) -> Optional[FailureReason]:
+    """The two stage-2 gates on `customer_declared_activity_root`.
+
+    Fires only when the field is present and not null. The root is signed
+    only where the signed message is the canonical view (2.1 / 2.2); on any
+    other version a populated one is the reserved-slot shape. The version
+    gate precedes the shape gate: a root the signature never covered is the
+    more fundamental defect, whatever its shape.
+
+    Shared with the standalone sidecar check in `customer_activity`, so the
+    two entry points cannot disagree about which roots are readable.
+    """
+    field = CUSTOMER_DECLARED_ACTIVITY_ROOT_FIELD
+    if field not in proof or proof[field] is None:
+        return None
+    if cdp_version not in _canonical.CANONICAL_VIEW_SIGNED_VERSIONS:
+        return FailureReason(type=FailureReasonType.UNSIGNED_FIELD_POPULATED, field=field)
+    return customer_declared_activity_root_shape_failure(proof[field])
 
 
 def compute_step_hash(
@@ -714,6 +801,16 @@ def verify_auditproof(
             metadata=meta,
         )
 
+    # ADR-056 D2/D3 — customer_declared_activity_root shape gates. Off 2.1/2.2
+    # the field is outside every signed view, so a populated one is the
+    # reserved-slot shape above; on 2.1/2.2 it must be a string the recompute
+    # can consume. Rejected here so no later stage ever reads a malformed root.
+    activity_gate = customer_declared_activity_root_gate(proof, cdp_version)
+    if activity_gate is not None:
+        return VerificationResult(
+            valid=False, failure_reason=activity_gate, stage_reached=2, metadata=meta
+        )
+
     # Populate metadata
     if isinstance(proof.get("capsule_id"), str):
         meta.capsule_id = proof["capsule_id"]
@@ -913,6 +1010,32 @@ def verify_auditproof(
             return VerificationResult(
                 valid=False, failure_reason=failure, stage_reached=3, metadata=meta
             )
+
+    # ADR-056 customer-declared activity root. The root is canonical-bound, so
+    # the signature stages below bind it to the signer regardless; recomputing
+    # it needs the customer's record, which the reader supplies through the
+    # policy. Sits with the other sub-structure Merkle checks so it also covers
+    # the path where a chain reproduces with no signature to check at all.
+    # Imported here because customer_activity builds on this module's
+    # FailureReason types.
+    from nanorix.verifier.customer_activity import (
+        CustomerDeclaredActivityStatus,
+        verify_customer_declared_activity,
+    )
+
+    activity_check = verify_customer_declared_activity(proof, pol.customer_activity)
+    meta.customer_declared_activity_root = activity_check.claimed
+    if activity_check.status is CustomerDeclaredActivityStatus.FAILED:
+        return VerificationResult(
+            valid=False,
+            failure_reason=activity_check.failure_reason,
+            stage_reached=3,
+            metadata=meta,
+        )
+    if activity_check.status is CustomerDeclaredActivityStatus.VERIFIED:
+        meta.customer_declared_activity_checked = True
+    elif activity_check.status is CustomerDeclaredActivityStatus.DECLARED_NOT_CHECKED:
+        meta.customer_declared_activity_checked = False
 
     # Stage 4: final_hash binding
     claimed_final = _str_or_empty(proof.get("final_hash"))

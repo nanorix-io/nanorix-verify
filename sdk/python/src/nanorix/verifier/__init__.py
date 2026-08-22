@@ -16,7 +16,7 @@ Usage:
         print("FAIL:", result.failure_reason)
 
 `verify()` and `nanorix.debug.verify_auditproof()` are two surfaces over one
-implementation (`_ladder.py`), held to the 100-document reference corpus at
+implementation (`_ladder.py`), held to the pinned reference corpus at
 `tools/nanorix-verify/fixtures/corpus/` — the same contract as the Rust
 verifier. `verify()` returns a flat result with an `.ok` that requires a verified
 signature; `verify_auditproof()` returns the staged wire verdict
@@ -61,6 +61,15 @@ from nanorix.verifier._ladder import (
     verify_auditproof,
 )
 from nanorix.verifier._verify import VerifyResult, verify
+from nanorix.verifier.customer_activity import (
+    CUSTOMER_DECLARED_ACTIVITY_ROOT_FIELD,
+    CustomerDeclaredActivityCheck,
+    CustomerDeclaredActivityStatus,
+    compute_customer_declared_activity_root,
+    customer_declared_activity_leaf_hashes,
+    split_customer_declared_activity_lines,
+    verify_customer_declared_activity,
+)
 from nanorix.verifier.bundle import (
     PORTABLE_RECEIPT_BUNDLE_DISCLAIMER,
     AuditProofAnchors,
@@ -120,6 +129,14 @@ __all__ = [
     "recompute_canonical_hash",
     "signed_message",
     "recover_timestamp_from_key_id",
+    # ADR-056 — customer_declared_activity_root sidecar check.
+    "CUSTOMER_DECLARED_ACTIVITY_ROOT_FIELD",
+    "CustomerDeclaredActivityCheck",
+    "CustomerDeclaredActivityStatus",
+    "compute_customer_declared_activity_root",
+    "customer_declared_activity_leaf_hashes",
+    "split_customer_declared_activity_lines",
+    "verify_customer_declared_activity",
     # Wave-N (ADR-039 + ADR-041) surface.
     "GENESIS_SHA512_HEX",
     "PARENT_PROOF_MAX_DEPTH",

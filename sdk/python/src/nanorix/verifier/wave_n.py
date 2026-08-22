@@ -756,7 +756,7 @@ def verify_full_audit_proof(proof: Mapping[str, Any]) -> WaveNVerifyResult:
     cdp_version = proof.get("cdp_version")
     if not isinstance(cdp_version, str):
         return WaveNVerifyResult(valid=False, failure_reason="cdp_version missing", stage_reached=1)
-    if cdp_version not in {"1.0", "2.0", "2.1"}:
+    if cdp_version not in {"1.0", "2.0", "2.1", "2.2"}:
         return WaveNVerifyResult(
             valid=False, failure_reason=f"cdp_version unsupported: {cdp_version}", stage_reached=2
         )

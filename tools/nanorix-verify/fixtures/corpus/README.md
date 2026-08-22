@@ -1,6 +1,6 @@
 # AuditProof verifier reference corpus
 
-100 pinned AuditProof documents and their expected verdicts. This is the
+110 pinned AuditProof documents and their expected verdicts. This is the
 artifact a skeptic runs first, and the contract every Nanorix verifier
 implementation (Rust, Go, Python, TypeScript) is held to.
 
@@ -10,7 +10,7 @@ implementation (Rust, Go, Python, TypeScript) is held to.
 cargo test -p nanorix-verify --test corpus_sweep
 ```
 
-That sweeps all 100 fixtures, asserts each one's `valid`, `stage_reached`, and
+That sweeps all 110 fixtures, asserts each one's `valid`, `stage_reached`, and
 full `failure_reason` against its committed verdict, and — importantly —
 re-runs the generator into a tempdir and diffs, so the committed bytes cannot
 drift away from the code that produced them.
@@ -54,6 +54,7 @@ than a fixture, so the corpus does not pin it.
 | `07_failure_version_unsupported` | 10 | Unrecognised `cdp_version` is rejected at stage 2 |
 | `08_failure_canonical_hash_drift` | 10 | Mutating any canonical-bound field breaks the signature |
 | `09_tamper_patterns/*` | 20 | Byte-flip, step re-order, version downgrade, signature substitution |
+| `10_v2_2` | 10 | CDP 2.2 verifies exactly as 2.1; ADR-053 `policy_denial_summary` and ADR-056 `customer_declared_activity_root` are canonical-bound, so a count or root rewritten after signing breaks the signature. A root on a version that does not sign the canonical view (1.0 / 2.0) is `unsigned_field_populated`; a root that is not a `sha512:` + 128-lowercase-hex string (the empty string, a number) is `field_malformed` — both at stage 2, before the chain walk |
 
 ## The signed message
 
@@ -70,8 +71,26 @@ properties, and only the latter was broken.
 |---|---|
 | `1.0` | `final_hash` (hex, prefix stripped) |
 | `2.0` | `document_hash` |
-| `2.1` + `nanorix_only` | recomputed canonical-view hash |
-| `2.1` + `dual_signature` / `tee_attested` | not verifiable by this build |
+| `2.1` / `2.2` + `nanorix_only` | recomputed canonical-view hash |
+| `2.1` / `2.2` + `dual_signature` / `tee_attested` | not verifiable by this build |
+
+`2.2` (ADR-053 + ADR-056) shares the `2.1` arm on purpose: it changed what a
+document may carry, not how it is hashed or signed. The canonical view includes
+`customer_declared_activity_root` whenever the document carries it, so a root
+tampered after signing is a signature failure, not a new verdict. The separate
+`customer_declared_activity_root_mismatch` verdict is reached only when the
+customer's record is supplied beside a genuine proof and does not reproduce the
+signed root; the corpus carries no records, so it does not exercise that path
+(the CLI integration tests do).
+
+Two gates run before the chain walk, at stage 2, whenever a document carries a
+present non-null root. The root is signed only where the signed message is the
+canonical view, so on `1.0` or `2.0` it is `unsigned_field_populated` — the
+same verdict the reserved attestation slots get — and is never reported as
+checked. On `2.1` / `2.2` the root must be a JSON string of `sha512:` + 128
+lowercase hex (bare 128-hex accepted); anything else is `field_malformed` with
+`field` and a short `reason`, named before any recompute consumes it. The empty
+string is malformed, not absent: the canonical view binds it as a value.
 
 The signature covers the ASCII hex characters of that hash (128 bytes), not its
 64 raw digest bytes.
@@ -94,16 +113,14 @@ to make that mistake fail loudly.
 The corpus is the contract. Treat any implementation's disagreement with it as a
 defect in that implementation, not in the corpus.
 
-Two automated sweeps run against it and live in this repository:
-`tools/nanorix-verify/tests/corpus_sweep.rs` and
-`tools/auditproof-verifier-go/corpus_sweep_test.go`. Both compare `valid`,
-`stage_reached` and `failure_reason` against each fixture's committed verdict.
-
-The Python and TypeScript verifiers are ports of the Rust implementation and are
-written to be byte-equivalent to it, but their corpus runners are not yet in
-this repository. Until they are, treat their conformance as asserted rather than
-demonstrated. Adding either runner is a welcome contribution and is the most
-useful one available.
+Four automated sweeps run against it and live in this repository:
+`tools/nanorix-verify/tests/corpus_sweep.rs`,
+`tools/auditproof-verifier-go/corpus_sweep_test.go`,
+`sdk/python/tests/test_verifier.py` (`test_reference_corpus_agreement`) and
+`sdk/typescript/tests/verifier_corpus.test.ts`. All four compare `valid`,
+`stage_reached` and the full `failure_reason` object against each fixture's
+committed verdict, so a `reason` string that differs by one character in one
+port fails that port's sweep.
 
 One difference worth stating so it is not mistaken for a divergence: the Go
 build implements stages 1-7 and does not implement stage 8, trust-chain

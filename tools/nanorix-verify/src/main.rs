@@ -84,6 +84,16 @@ struct Cli {
     /// `NANORIX_IDENTITY_FINGERPRINT` when omitted.
     #[arg(long)]
     identity_fingerprint: Option<String>,
+
+    /// Path to the customer's activity record (`activity_events.jsonl`) for a
+    /// proof that carries `customer_declared_activity_root` (ADR-056). The
+    /// verifier recomputes the root from the file's raw bytes and compares;
+    /// a mismatch fails verification. Supplying a record to a proof that
+    /// declares no root also fails (`required_field_missing`). Without this
+    /// flag a declared root is reported as "declared, not checked".
+    /// Single-proof verification only.
+    #[arg(long)]
+    customer_activity: Option<PathBuf>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -287,6 +297,27 @@ fn main() -> Result<()> {
         }
         policy.trust_chain = Some(manifest);
         policy.pinned_identity_fingerprint = Some(pin);
+    }
+
+    // ADR-056: the customer's activity record is read as raw bytes — never
+    // parsed — and handed to the verifier, which recomputes the committed
+    // root from it. A record belongs to exactly one proof, so batch mode
+    // refuses it rather than applying one file to every document.
+    if let Some(path) = cli.customer_activity.as_ref() {
+        if matches!(cli.command, Some(Commands::Batch { .. })) {
+            eprintln!(
+                "✗ usage: --customer-activity applies to exactly one proof (the record is \
+                 committed per-capsule); verify each proof with its own record."
+            );
+            std::process::exit(2);
+        }
+        let record = std::fs::read(path).with_context(|| {
+            format!(
+                "failed to read customer activity record: {}",
+                path.display()
+            )
+        })?;
+        policy.customer_activity = Some(record);
     }
 
     match cli.command {
@@ -990,6 +1021,7 @@ fn print_human(r: &VerificationResult) {
                     .dimmed()
             );
         }
+        print_customer_activity_disclosure(r);
         if r.stage_reached < 7 {
             println!(
                 "  {}",
@@ -1006,6 +1038,40 @@ fn print_human(r: &VerificationResult) {
             println!("  Stage reached: {} / 8", r.stage_reached);
             println!();
             print_resolution_hint(reason);
+        }
+    }
+}
+
+/// ADR-056 — say what was and was not established about a declared
+/// customer activity root. Silence here would let "Signature valid" be read
+/// as covering a record this build never saw.
+fn print_customer_activity_disclosure(r: &VerificationResult) {
+    let Some(root) = r.metadata.customer_declared_activity_root.as_deref() else {
+        return;
+    };
+    match r.metadata.customer_declared_activity_checked {
+        Some(true) => {
+            println!("  Customer-declared activity root: {root}");
+            println!(
+                "  {}",
+                "Recomputed from the supplied --customer-activity record and matched. \
+                 The root commits to the record's raw bytes; Nanorix did not read or \
+                 validate their content, and this check does not either."
+                    .dimmed()
+            );
+        }
+        _ => {
+            println!(
+                "  {}",
+                format!("Customer-declared activity root: {root} — declared, NOT checked").yellow()
+            );
+            println!(
+                "  {}",
+                "The proof commits to the customer's activity record, but no record was \
+                 supplied. Pass --customer-activity <activity_events.jsonl> to recompute \
+                 the root and compare. The signature covers the root either way."
+                    .dimmed()
+            );
         }
     }
 }
@@ -1079,6 +1145,14 @@ fn format_reason(r: &FailureReason) -> String {
         FailureReason::StreamingMerkleRootMismatch { claimed, computed } => {
             format!("streaming_merkle_root_mismatch (claimed: {claimed}, computed: {computed})")
         }
+        FailureReason::CustomerDeclaredActivityRootMismatch { claimed, computed } => {
+            format!(
+                "customer_declared_activity_root_mismatch (claimed: {claimed}, computed: {computed})"
+            )
+        }
+        FailureReason::FieldMalformed { field, reason } => {
+            format!("field_malformed (field: {field}, reason: {reason})")
+        }
         FailureReason::UnsignedFieldPopulated { field } => {
             format!("unsigned_field_populated (field: {field})")
         }
@@ -1089,7 +1163,7 @@ fn format_reason(r: &FailureReason) -> String {
 fn print_resolution_hint(r: &FailureReason) {
     let hint = match r {
         FailureReason::CdpVersionUnsupported { .. } => {
-            "→ This verifier supports cdp_version 1.0 / 2.0 / 2.1. Update nanorix-verify."
+            "→ This verifier supports cdp_version 1.0 / 2.0 / 2.1 / 2.2. Update nanorix-verify."
         }
         FailureReason::RequiredFieldMissing { .. } => {
             "→ The AuditProof is structurally invalid. It may not be a Nanorix-issued proof."
@@ -1158,6 +1232,20 @@ fn print_resolution_hint(r: &FailureReason) {
              reproduced — this is the record of what the capsule streamed out, not the record of \
              its destruction. Treat the streamed-response evidence as unreliable and ask the \
              capsule producer to re-issue the proof."
+        }
+        FailureReason::CustomerDeclaredActivityRootMismatch { .. } => {
+            "→ The supplied --customer-activity record does not reproduce the root the proof \
+             declares. The destruction chain reproduced; this says only that the bytes in hand \
+             are not the bytes the declared root commits to. Obtain the record returned with \
+             the destroy response (byte-exact) and re-run — a record that has been reformatted, \
+             re-encoded or re-ordered will not match. Verify the proof without the record to \
+             learn whether the declared root itself is the signed one."
+        }
+        FailureReason::FieldMalformed { .. } => {
+            "→ The named field is present but is not the JSON type or shape the document \
+             format defines for it, so no Nanorix signer could have emitted this value. \
+             Nothing was recomputed against it. The document was altered or produced by \
+             something other than a Nanorix signer; obtain a fresh copy from the issuer."
         }
         FailureReason::UnsignedFieldPopulated { .. } => {
             "→ The named field is outside the signature's coverage and no Nanorix signer \

@@ -1,0 +1,53 @@
+{
+  "_algorithm": "ADR-056 customer_declared_activity_root: split the buffer on 0x0A, drop only a trailing empty segment, never trim or parse; leaf = SHA-512 hex of the raw line bytes; root = merkle_root_sha512_null_separated (pairs hashed as SHA-512(left_hex || 0x00 || right_hex), odd last node duplicated); zero lines = GENESIS (SHA-512 of empty string); wire form sha512:<hex>.",
+  "vectors": [
+    {
+      "name": "empty",
+      "input_utf8": "",
+      "line_count": 0,
+      "leaf_hashes": [],
+      "root": "sha512:cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e"
+    },
+    {
+      "name": "single",
+      "input_utf8": "{\"event\":\"tool_call_attempted\",\"tool\":\"search\",\"ts\":\"2026-08-22T00:00:00Z\"}\n",
+      "line_count": 1,
+      "leaf_hashes": [
+        "b7797a325a3e1011dc7435b49b2f6ba10431623298cebe31bce52ca267cc1417f9d7c1453d43084af9fbd73787a6a53a05c6f18a359cbb17929a3bd734fc9825"
+      ],
+      "root": "sha512:b7797a325a3e1011dc7435b49b2f6ba10431623298cebe31bce52ca267cc1417f9d7c1453d43084af9fbd73787a6a53a05c6f18a359cbb17929a3bd734fc9825"
+    },
+    {
+      "name": "three",
+      "input_utf8": "{\"event\":\"tool_call_attempted\",\"tool\":\"search\",\"ts\":\"2026-08-22T00:00:00Z\"}\n{\"event\":\"tool_call_completed\",\"tool\":\"search\",\"ts\":\"2026-08-22T00:00:01Z\"}\n{\"event\":\"reasoning_step_completed\",\"ts\":\"2026-08-22T00:00:02Z\"}\n",
+      "line_count": 3,
+      "leaf_hashes": [
+        "b7797a325a3e1011dc7435b49b2f6ba10431623298cebe31bce52ca267cc1417f9d7c1453d43084af9fbd73787a6a53a05c6f18a359cbb17929a3bd734fc9825",
+        "bf548e61687fc592068e033b7f385bc0faf95fe8e98f3da6da286ad099f6b7ecf53e788000b43444dcdfb11cab265a33c50f8528a26f425a0fc801f15d473bc0",
+        "c4410d60146fb50d59cebac05848d7c940130143c24eb349a311c9da05a56121797234c3ca9b6f1aa093b5e25e34598538bcbe2a200d16051f587edff036a21f"
+      ],
+      "root": "sha512:390d7d3a3c84f59c289a33e3f1848e7208036e31b2f83837ade9e55fd3ac504550cd73baed351b139c22df78d2b6c65efebd9c27a5a237b64d0c15088f4f9ef1"
+    },
+    {
+      "name": "three_no_trailing_newline",
+      "input_utf8": "{\"event\":\"tool_call_attempted\",\"tool\":\"search\",\"ts\":\"2026-08-22T00:00:00Z\"}\n{\"event\":\"tool_call_completed\",\"tool\":\"search\",\"ts\":\"2026-08-22T00:00:01Z\"}\n{\"event\":\"reasoning_step_completed\",\"ts\":\"2026-08-22T00:00:02Z\"}",
+      "line_count": 3,
+      "leaf_hashes": [
+        "b7797a325a3e1011dc7435b49b2f6ba10431623298cebe31bce52ca267cc1417f9d7c1453d43084af9fbd73787a6a53a05c6f18a359cbb17929a3bd734fc9825",
+        "bf548e61687fc592068e033b7f385bc0faf95fe8e98f3da6da286ad099f6b7ecf53e788000b43444dcdfb11cab265a33c50f8528a26f425a0fc801f15d473bc0",
+        "c4410d60146fb50d59cebac05848d7c940130143c24eb349a311c9da05a56121797234c3ca9b6f1aa093b5e25e34598538bcbe2a200d16051f587edff036a21f"
+      ],
+      "root": "sha512:390d7d3a3c84f59c289a33e3f1848e7208036e31b2f83837ade9e55fd3ac504550cd73baed351b139c22df78d2b6c65efebd9c27a5a237b64d0c15088f4f9ef1"
+    },
+    {
+      "name": "whitespace_is_content",
+      "input_utf8": " {\"a\":1}\n{\"a\":1}\n",
+      "line_count": 2,
+      "leaf_hashes": [
+        "c4f5313f3c2cfca74794f07bad4f791d17bb58a6aafe6199d9b7e0daf133720764bfe4b4dc95de503b9c4ec7af1e9a1b78f8b25f42158a165f02fd27d67388b5",
+        "efb7a8298f905ae743dbe2152e162415f62a16d2d5ac5c78816dcd57114e7a574729b813988f1d0984cf6f38c4fcc9a37ea9fec3da351983536f72785d7ab707"
+      ],
+      "root": "sha512:1def1027998788ca05439ffdfa0604905b9f00811179cb9cd9e823b867349b83a8c51bcd6216e0164bcba83b74d85717a5e038fa907bcb9efae8b750419056f5"
+    }
+  ]
+}

@@ -272,3 +272,19 @@ Stated rather than omitted:
 3. **Version resolution** for any registry embedded in a document requires that historical
    versions resolve permanently; serving only the current version silently rewrites the
    meaning of records already issued.
+4. **§2.2 and the shipped optional fields disagree, and CDP 2.2 widens the gap by one field.**
+   §2.2 says a field present in some documents and absent in others must not appear in the
+   canonical hash input, with optional semantics expressed as an always-present nullable slot.
+   The reference implementation ships four canonical fields that do the opposite —
+   `parent_audit_proof_id`, `cdp_kind`, `parent_proofs_merkle_root`,
+   `record_receipts_merkle_root` are omitted from the canonical bytes when absent, and every
+   conforming verifier inserts them only when present. CDP 2.2 adds `customer_declared_activity_root`
+   under that same skip-when-absent mechanic, so that a proof which did not opt in hashes exactly as
+   it did before the field existed. The stripping concern §2.2 names is answered differently than
+   §2.2 says: the signature covers the view *with* the field, so removing a present field changes
+   the hash and the signature fails; what cannot be detected is the absence of a field that was
+   never there, which is the intended meaning of "did not opt in". This is a wording item for the
+   next revision of this specification (tracked as the v1.1 reconciliation), not a change to any
+   verifier: following §2.2 literally for a new field would change the hash of every document
+   already issued. §2.2 itself is left as published here so that the revision, not this note,
+   carries the corrected text.

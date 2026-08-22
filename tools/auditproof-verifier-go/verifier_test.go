@@ -317,7 +317,7 @@ func TestPolicyPinCustomerHsmAuditProofMatchesAuthorityAccepted(t *testing.T) {
 	}
 }
 
-// TestFixtureCorpusByteEquivalentWithRust walks the 100-fixture corpus shipped
+// TestFixtureCorpusByteEquivalentWithRust walks the reference corpus shipped
 // at `tools/nanorix-verify/fixtures/corpus/`, runs the Go verifier on each
 // proof JSON, runs the Rust verifier (via the binary at
 // `target/debug/nanorix-verify` if present), and asserts byte-identical JSON
@@ -443,22 +443,24 @@ func TestPropertyFault10kIterations(t *testing.T) {
 	rng := rand.New(rand.NewSource(int64(0x40DE_5117_FACE_FEED)))
 
 	closedSet := map[FailureReasonType]bool{
-		ReasonAlgorithmUnsupported:     true,
-		ReasonAuthorityIDMismatch:      true,
-		ReasonAuthorityModeMismatch:    true,
-		ReasonAuthorityRevoked:         true,
-		ReasonCdpVersionUnsupported:    true,
-		ReasonChainStepIdentity:        true,
-		ReasonDiagnosticProofRefused:   true,
-		ReasonFinalHashMismatch:        true,
-		ReasonGenesisHashMismatch:      true,
-		ReasonRegionMismatch:           true,
-		ReasonRequiredFieldMissing:     true,
-		ReasonReserved:                 true,
-		ReasonSignatureMismatch:        true,
-		ReasonSigningKeyVersionUnknown: true,
-		ReasonStepCountInvalid:         true,
-		ReasonStepHashMismatch:         true,
+		ReasonAlgorithmUnsupported:                 true,
+		ReasonAuthorityIDMismatch:                  true,
+		ReasonAuthorityModeMismatch:                true,
+		ReasonAuthorityRevoked:                     true,
+		ReasonCdpVersionUnsupported:                true,
+		ReasonChainStepIdentity:                    true,
+		ReasonCustomerDeclaredActivityRootMismatch: true,
+		ReasonDiagnosticProofRefused:               true,
+		ReasonFieldMalformed:                       true,
+		ReasonFinalHashMismatch:                    true,
+		ReasonGenesisHashMismatch:                  true,
+		ReasonRegionMismatch:                       true,
+		ReasonRequiredFieldMissing:                 true,
+		ReasonReserved:                             true,
+		ReasonSignatureMismatch:                    true,
+		ReasonSigningKeyVersionUnknown:             true,
+		ReasonStepCountInvalid:                     true,
+		ReasonStepHashMismatch:                     true,
 	}
 
 	// 8 fault families. Each iteration picks one and applies a random mutation.
@@ -655,7 +657,7 @@ func TestSignatureFailureReasonWireForm(t *testing.T) {
 }
 
 // TestJCSCanonicalizeBasic exercises the JCS canonicalization path. The
-// 100-fixture corpus is currently V1 (chain-only verification) so JCS is not
+// reference corpus is currently V1 (chain-only verification) so JCS is not
 // on the critical path for fixture byte-equivalence, but the implementation
 // must hold under simple inputs as a foundation for V2.
 func TestJCSCanonicalizeBasic(t *testing.T) {

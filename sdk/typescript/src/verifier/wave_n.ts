@@ -781,7 +781,7 @@ export async function verifyFullAuditProof(
   if (typeof cdpVersion !== "string") {
     return { valid: false, failureReason: "cdp_version missing", stageReached: 1 };
   }
-  if (!["1.0", "2.0", "2.1"].includes(cdpVersion)) {
+  if (!["1.0", "2.0", "2.1", "2.2"].includes(cdpVersion)) {
     return {
       valid: false,
       failureReason: `cdp_version unsupported: ${cdpVersion}`,

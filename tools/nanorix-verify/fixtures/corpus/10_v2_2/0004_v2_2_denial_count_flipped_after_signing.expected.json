@@ -1,0 +1,9 @@
+{
+  "failure_reason": {
+    "reason": "does_not_verify",
+    "type": "signature_mismatch"
+  },
+  "note": "policy_denial_summary.by_reason[0].count was 3 when signed and is 0 here. The activity trail is canonical-bound, so a rewritten count is detected as a signature failure over the recomputed canonical hash.",
+  "stage_reached": 7,
+  "valid": false
+}

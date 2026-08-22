@@ -20,7 +20,7 @@
 //   {"valid":true,"failure_reason":null,"stage_reached":7,"metadata":{...}}
 //
 //   $ auditproof-verifier-go --fixture-dir tools/nanorix-verify/fixtures/corpus
-//   100 fixtures · 41 verified · 59 failed
+//   110 fixtures · 25 verified · 85 failed
 //
 // Exit codes:
 //   0  — verified: chain walked AND Ed25519 signature checked (stage 7)
@@ -77,6 +77,7 @@ func main() {
 	requiredRegion := flag.String("required-region", "", "Required region (e.g., 'europe-west1'). When set, AuditProofs whose region disagrees fail.")
 	requiredAuthorityID := flag.String("required-authority-id", "", "Required signing-authority id (e.g., 'customer-hsm-example-org-v1').")
 	fixtureDir := flag.String("fixture-dir", "", "Path to fixture corpus root; runs verification on every fixture and reports pass/fail counts.")
+	customerActivity := flag.String("customer-activity", "", "Path to the customer's activity record (activity_events.jsonl) for a proof carrying customer_declared_activity_root (ADR-056). The root is recomputed from the file's raw bytes and compared; a mismatch fails. Single-proof verification only.")
 	versionFlag := flag.Bool("version", false, "Print version and exit.")
 	helpFlag := flag.Bool("help", false, "Print help and exit.")
 	flag.Parse()
@@ -94,6 +95,22 @@ func main() {
 		RejectDiagnostic:    *rejectDiagnostic,
 		RequiredRegion:      *requiredRegion,
 		RequiredAuthorityID: *requiredAuthorityID,
+	}
+
+	// ADR-056: the record is read as raw bytes — never parsed — and handed to
+	// the verifier. A record belongs to exactly one proof, so corpus mode
+	// refuses it rather than applying one file to every document.
+	if *customerActivity != "" {
+		if *fixtureDir != "" {
+			fmt.Fprintln(os.Stderr, "usage: -customer-activity applies to exactly one proof (the record is committed per-capsule); verify each proof with its own record.")
+			os.Exit(2)
+		}
+		record, err := os.ReadFile(*customerActivity)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: cannot read customer activity record %s: %v\n", *customerActivity, err)
+			os.Exit(2)
+		}
+		policy.CustomerActivity = record
 	}
 
 	if *fixtureDir != "" {
@@ -416,6 +433,19 @@ func printHuman(r auditproof.AuditProofVerificationResult) {
 		}
 		if r.Metadata.StepCount != nil {
 			fmt.Printf("  Chain steps: %d / 8\n", *r.Metadata.StepCount)
+		}
+		// ADR-056 — say what was and was not established about a declared
+		// customer activity root. Silence here would let "Verified" be read as
+		// covering a record this build never saw.
+		if r.Metadata.CustomerDeclaredActivityRoot != nil {
+			root := *r.Metadata.CustomerDeclaredActivityRoot
+			if r.Metadata.CustomerDeclaredActivityChecked != nil && *r.Metadata.CustomerDeclaredActivityChecked {
+				fmt.Printf("  Customer-declared activity root: %s\n", root)
+				fmt.Println("  Recomputed from the supplied -customer-activity record and matched. The root commits to the record's raw bytes; Nanorix did not read or validate their content, and this check does not either.")
+			} else {
+				fmt.Printf("  Customer-declared activity root: %s — declared, NOT checked\n", root)
+				fmt.Println("  The proof commits to the customer's activity record, but no record was supplied. Pass -customer-activity <activity_events.jsonl> to recompute the root and compare. The signature covers the root either way.")
+			}
 		}
 		if r.StageReached < 7 {
 			fmt.Printf("  Note: stages 1-%d only. No Ed25519 signature was checked on this\n"+

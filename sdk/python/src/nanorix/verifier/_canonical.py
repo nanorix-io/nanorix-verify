@@ -16,8 +16,12 @@ the v1.0 message. It is signed over the ADR-011 Part-3 canonical-view hash,
 |---|---|
 | `1.0` | `final_hash` (hex, prefix stripped) |
 | `2.0` | `document_hash` |
-| `2.1` + `nanorix_only` | recomputed canonical-view hash |
-| `2.1` + `dual_signature` / `tee_attested` | not verifiable by this build |
+| `2.1` / `2.2` + `nanorix_only` | recomputed canonical-view hash |
+| `2.1` / `2.2` + `dual_signature` / `tee_attested` | not verifiable by this build |
+
+`2.2` (ADR-053 + ADR-056) signs the same canonical view as `2.1`; the only
+difference a verifier can see is the optional `customer_declared_activity_root`
+field, which the recompute inserts when present (like the two Merkle roots).
 
 The signature covers the ASCII hex characters of that hash (128 bytes), not
 its 64 raw digest bytes.
@@ -50,7 +54,12 @@ SIG_MESSAGE_FORMAT_MISMATCH = "message_format_mismatch"
 _ED25519_SIGNATURE_LEN = 64
 _ED25519_PUBLIC_KEY_LEN = 32
 
-SUPPORTED_CDP_VERSIONS = frozenset({"1.0", "2.0", "2.1"})
+SUPPORTED_CDP_VERSIONS = frozenset({"1.0", "2.0", "2.1", "2.2"})
+
+# Versions whose signature covers the ADR-011 Part-3 canonical-view hash.
+# `cdp_version` is itself inside that view, so a 2.1 document re-labelled 2.2
+# (or vice versa) is accepted by the allowlist and then fails the signature.
+CANONICAL_VIEW_SIGNED_VERSIONS = frozenset({"2.1", "2.2"})
 
 
 class SignatureOutcome(Enum):
@@ -177,6 +186,10 @@ def recompute_canonical_hash(proof: Mapping[str, Any]) -> str:
 
     _insert_if_present(view, "parent_proofs_merkle_root", proof)
     _insert_if_present(view, "record_receipts_merkle_root", proof)
+    # ADR-056: a root over bytes the customer wrote and Nanorix never parsed.
+    # Same skip-when-absent mechanic as the two Merkle roots, so a proof that
+    # did not opt in hashes to exactly what it did before the field existed.
+    _insert_if_present(view, "customer_declared_activity_root", proof)
 
     view["runtime_attestation"] = _get(proof, "runtime_attestation")
 
@@ -205,9 +218,9 @@ UNSUPPORTED_MODE_SENTINEL = "\x00unsupported-signing-mode:"
 def signed_message(proof: Mapping[str, Any], cdp_version: str) -> Optional[str]:
     """The message this proof's signature covers, or None if unverifiable here.
 
-    None means "this build cannot check it" (unrecognised version, or a v2.1
-    signing mode whose second signature this build has no key for) — never
-    "the signature is bad".
+    None means "this build cannot check it" (unrecognised version, or a v2.1 /
+    v2.2 signing mode whose second signature this build has no key for) —
+    never "the signature is bad".
     """
     signing_mode = proof.get("signing_mode")
     if not isinstance(signing_mode, str):
@@ -219,7 +232,7 @@ def signed_message(proof: Mapping[str, Any], cdp_version: str) -> Optional[str]:
     if cdp_version == "2.0":
         raw = proof.get("document_hash")
         return strip_hash_prefix(raw if isinstance(raw, str) else "")
-    if cdp_version == "2.1":
+    if cdp_version in CANONICAL_VIEW_SIGNED_VERSIONS:
         if signing_mode == "nanorix_only":
             return recompute_canonical_hash(proof)
         # Any other declared mode is one this build cannot verify. NOT the same

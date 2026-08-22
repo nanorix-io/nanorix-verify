@@ -13,6 +13,8 @@
 //!   (10 each = 60 fixtures)
 //! - Tamper patterns — byte-flip, re-order, version downgrade, signature
 //!   substitution (5 each = 20 fixtures)
+//! - CDP 2.2 — ADR-053 `policy_denial_summary` in the trail and ADR-056
+//!   `customer_declared_activity_root`, positive and tampered (7 fixtures)
 //!
 //! Each fixture is written as `corpus/<category>/<NNNN>_<descriptor>.json`
 //! plus a sibling `<NNNN>_<descriptor>.expected.json` describing the expected
@@ -195,13 +197,9 @@ impl FixtureBuilder {
     }
 
     /// Build a minimal AuditProof v1.0 fixture (no canonical-hash binding;
-    /// chain + final_hash only). Suitable for stage 1-4 verification tests.
-    ///
-    /// Currently unused — the corpus ships v2.1 fixtures only. Retained as a
-    /// reference helper for the next corpus expansion that adds v1.0 backward-
-    /// compatibility fixtures (Forever-Standard requirement: a verifier built
-    /// today must verify a v1.0 AuditProof issued years ago).
-    #[allow(dead_code)]
+    /// chain + final_hash only). Signing is a separate step — see
+    /// `sign_v1_in_place`, because the 1.0 signed message is `final_hash`,
+    /// not the canonical view.
     fn build_v1_minimal(&self, capsule_idx: usize) -> Value {
         let capsule_id = self.capsule_id(capsule_idx);
         let (chain, last_hash) = self.build_chain(FIXTURE_TIMESTAMP);
@@ -284,6 +282,35 @@ impl FixtureBuilder {
         });
     }
 
+    /// Sign a 1.0 document over its prefix-stripped `final_hash` — the 1.0
+    /// signed message — and attach the attestation block. Everything outside
+    /// the chain is unsigned on this version, which is what the ADR-056
+    /// version-gate fixture demonstrates.
+    fn sign_v1_in_place(&self, proof: &mut Value) {
+        use base64::{engine::general_purpose::STANDARD as B64, Engine};
+
+        let final_hash = proof["final_hash"].as_str().unwrap_or_default();
+        let message = final_hash.strip_prefix("sha512:").unwrap_or(final_hash);
+        let signature_b64 = B64.encode(self.signing_key.sign(message.as_bytes()).to_bytes());
+
+        let capsule_id = proof["capsule_id"].as_str().unwrap_or_default().to_string();
+        let destroyed_at = proof["destroyed_at"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+
+        proof["attestation"] = json!({
+            "algorithm": "Ed25519",
+            "public_key": format!("base64:{}", self.public_key_b64),
+            "signature": format!("base64:{}", signature_b64),
+            "key_id": format!(
+                "nrx-verify-{}-{}",
+                destroyed_at.replace(':', "-"),
+                &capsule_id[..8.min(capsule_id.len())]
+            ),
+        });
+    }
+
     /// Build a signed v2.1 AuditProof.
     fn build_v2_1_signed(&self, capsule_idx: usize, region: &str) -> Value {
         let mut proof = self.build_v2_1_unsigned(capsule_idx, region);
@@ -296,6 +323,53 @@ impl FixtureBuilder {
     fn build_v2_1_with_parent(&self, capsule_idx: usize, parent_capsule_idx: usize) -> Value {
         let mut proof = self.build_v2_1_unsigned(capsule_idx, "us-central1");
         proof["parent_audit_proof_id"] = Value::String(self.capsule_id(parent_capsule_idx));
+        self.sign_in_place(&mut proof);
+        proof
+    }
+
+    /// Build an UNSIGNED v2.2 AuditProof. CDP 2.2 (ADR-053 + ADR-056) is the
+    /// 2.1 shape with a different version string; what it adds rides in the
+    /// activity trail (`policy_denial_summary`) and in the optional
+    /// `customer_declared_activity_root`, both of which the caller sets
+    /// before `sign_in_place`.
+    fn build_v2_2_unsigned(&self, capsule_idx: usize, region: &str) -> Value {
+        let mut proof = self.build_v2_1_unsigned(capsule_idx, region);
+        proof["cdp_version"] = Value::String("2.2".into());
+        proof
+    }
+
+    /// Build a signed v2.2 AuditProof whose trail ends with an ADR-053
+    /// `policy_denial_summary` event carrying `by_reason`. An empty
+    /// `by_reason` is "no enumerated check ran"; a `count: 0` row is the
+    /// honest zero — the check ran and refused nothing.
+    fn build_v2_2_with_denial_summary(&self, capsule_idx: usize, by_reason: Value) -> Value {
+        let mut proof = self.build_v2_2_unsigned(capsule_idx, "us-central1");
+        proof["activity"]
+            .as_array_mut()
+            .expect("activity array")
+            .push(json!({
+                "event": "policy_denial_summary",
+                "by_reason": by_reason,
+                "at": FIXTURE_TIMESTAMP,
+            }));
+        self.sign_in_place(&mut proof);
+        proof
+    }
+
+    /// Build a signed v2.2 AuditProof declaring `customer_declared_activity_root`.
+    /// The root is canonical-bound, so it is set BEFORE signing. The corpus
+    /// carries the root only — the customer's record is not a fixture — so
+    /// the verdict discloses it as declared, not checked.
+    fn build_v2_2_with_activity_root(&self, capsule_idx: usize, root: &str) -> Value {
+        self.build_v2_2_with_activity_root_value(capsule_idx, Value::String(root.to_string()))
+    }
+
+    /// The same, with an arbitrary JSON value in the root's place. Signed over
+    /// the value as written, so the signature would verify — which is why a
+    /// shape no signer emits has to be rejected before the signature stage.
+    fn build_v2_2_with_activity_root_value(&self, capsule_idx: usize, root: Value) -> Value {
+        let mut proof = self.build_v2_2_unsigned(capsule_idx, "us-central1");
+        proof["customer_declared_activity_root"] = root;
         self.sign_in_place(&mut proof);
         proof
     }
@@ -937,6 +1011,212 @@ fn generate_tamper_patterns(builder: &FixtureBuilder, root: &Path) -> usize {
     count
 }
 
+/// The "three" vector from `fixtures/customer_declared_activity_root_vectors.json`
+/// — three JSONL lines, pinned across every implementation.
+const ACTIVITY_ROOT_THREE_VECTOR: &str = "sha512:390d7d3a3c84f59c289a33e3f1848e7208036e31b2f83837ade9e55fd3ac504550cd73baed351b139c22df78d2b6c65efebd9c27a5a237b64d0c15088f4f9ef1";
+
+/// Category 10 — CDP 2.2 (7 fixtures). ADR-053's `policy_denial_summary`
+/// trail event and ADR-056's `customer_declared_activity_root`, each positive
+/// and each tampered after signing. 2.2 is verified exactly as 2.1, so every
+/// tamper here is caught where a 2.1 tamper of the same field would be: the
+/// trail and the root are canonical-bound, and the rejection is the signature.
+fn generate_v2_2(builder: &FixtureBuilder, root: &Path) -> usize {
+    let dir = root.join("10_v2_2");
+    let mut count = 0;
+
+    // A 2.2 label alone, nothing new carried, verifies.
+    let plain = {
+        let mut p = builder.build_v2_2_unsigned(900, "us-central1");
+        builder.sign_in_place(&mut p);
+        p
+    };
+    write_fixture(&dir, "0000_v2_2_plain", &plain, &expected_success());
+    count += 1;
+
+    // No enumerated check ran.
+    let empty = builder.build_v2_2_with_denial_summary(901, json!([]));
+    write_fixture(
+        &dir,
+        "0001_v2_2_denial_summary_empty",
+        &empty,
+        &expected_success(),
+    );
+    count += 1;
+
+    // The check ran and refused nothing — the honest zero.
+    let zero = builder.build_v2_2_with_denial_summary(
+        902,
+        json!([{ "reason": "proxy_connect_denied", "count": 0 }]),
+    );
+    write_fixture(
+        &dir,
+        "0002_v2_2_denial_summary_zero_row",
+        &zero,
+        &expected_success(),
+    );
+    count += 1;
+
+    // Refusals happened.
+    let nonzero = builder.build_v2_2_with_denial_summary(
+        903,
+        json!([
+            { "reason": "egress_profile_denied", "count": 2 },
+            { "reason": "proxy_connect_denied", "count": 3 },
+        ]),
+    );
+    write_fixture(
+        &dir,
+        "0003_v2_2_denial_summary_nonzero",
+        &nonzero,
+        &expected_success(),
+    );
+    count += 1;
+
+    // A count rewritten after signing. The trail is inside the canonical
+    // view, so the signature no longer covers the document in front of us.
+    let mut flipped_count = builder.build_v2_2_with_denial_summary(
+        904,
+        json!([{ "reason": "proxy_connect_denied", "count": 3 }]),
+    );
+    flipped_count["activity"][1]["by_reason"][0]["count"] = json!(0);
+    write_fixture(
+        &dir,
+        "0004_v2_2_denial_count_flipped_after_signing",
+        &flipped_count,
+        &with_note(
+            expected_failure(
+                "signature_mismatch",
+                json!({ "reason": "does_not_verify" }),
+                7,
+            ),
+            "policy_denial_summary.by_reason[0].count was 3 when signed and is 0 \
+             here. The activity trail is canonical-bound, so a rewritten count is \
+             detected as a signature failure over the recomputed canonical hash.",
+        ),
+    );
+    count += 1;
+
+    // A declared customer activity root (ADR-056). The corpus carries no
+    // record, so the verdict discloses the root as declared, not checked.
+    let with_root = builder.build_v2_2_with_activity_root(905, ACTIVITY_ROOT_THREE_VECTOR);
+    write_fixture(
+        &dir,
+        "0005_v2_2_customer_declared_activity_root",
+        &with_root,
+        &with_note(
+            expected_success(),
+            "customer_declared_activity_root is the `three` vector from \
+             fixtures/customer_declared_activity_root_vectors.json. The corpus does \
+             not carry the customer's record, so the root is declared, not checked; \
+             the signature covers it either way.",
+        ),
+    );
+    count += 1;
+
+    // The root byte-flipped after signing. Canonical-bound, so the signature
+    // catches it — the record is not needed to detect a tampered root.
+    let mut flipped_root = builder.build_v2_2_with_activity_root(906, ACTIVITY_ROOT_THREE_VECTOR);
+    let mut chars: Vec<char> = ACTIVITY_ROOT_THREE_VECTOR.chars().collect();
+    // "sha512:" prefix has length 7; flip the first hex character.
+    chars[7] = if chars[7] == '3' { '4' } else { '3' };
+    flipped_root["customer_declared_activity_root"] = Value::String(chars.into_iter().collect());
+    write_fixture(
+        &dir,
+        "0006_v2_2_customer_declared_activity_root_flipped_after_signing",
+        &flipped_root,
+        &with_note(
+            expected_failure(
+                "signature_mismatch",
+                json!({ "reason": "does_not_verify" }),
+                7,
+            ),
+            "customer_declared_activity_root is inside the canonical view, so a root \
+             altered after signing is detected as a signature failure without the \
+             customer's record. customer_declared_activity_root_mismatch is reserved \
+             for a genuine root whose supplied record does not reproduce it.",
+        ),
+    );
+    count += 1;
+
+    // A genuine 1.0 proof carrying a root. The 1.0 signed message is
+    // `final_hash`, so the root sits outside the signature and anyone holding
+    // the document can write one — and then present any bytes as "the
+    // record" it commits to. Rejected before the chain walk, the way the
+    // reserved attestation slots are; never "declared, not checked".
+    let mut v1_with_root = builder.build_v1_minimal(907);
+    v1_with_root["customer_declared_activity_root"] = json!(ACTIVITY_ROOT_THREE_VECTOR);
+    builder.sign_v1_in_place(&mut v1_with_root);
+    write_fixture(
+        &dir,
+        "0007_v1_0_customer_declared_activity_root_unsigned",
+        &v1_with_root,
+        &with_note(
+            expected_failure(
+                "unsigned_field_populated",
+                json!({ "field": "customer_declared_activity_root" }),
+                2,
+            ),
+            "The signature on a 1.0 proof covers final_hash only, so a \
+             customer_declared_activity_root on it is a value the signature never \
+             saw. The root is signed only where the signed message is the canonical \
+             view (2.1 and 2.2); on any other version a present non-null root is \
+             rejected before the chain walk and is never reported as checked.",
+        ),
+    );
+    count += 1;
+
+    // An empty-string root on 2.2, signed over as written. The canonical view
+    // binds "" as a value, so it is malformed, not absent — and it is named
+    // as malformed before the signature stage, which would have verified it.
+    let empty_root = builder.build_v2_2_with_activity_root_value(908, json!(""));
+    write_fixture(
+        &dir,
+        "0008_v2_2_customer_declared_activity_root_empty_string",
+        &empty_root,
+        &with_note(
+            expected_failure(
+                "field_malformed",
+                json!({
+                    "field": "customer_declared_activity_root",
+                    "reason": "empty string",
+                }),
+                2,
+            ),
+            "A present non-null root must be a JSON string of sha512: + 128 \
+             lowercase hex (bare 128-hex accepted). The empty string is malformed, \
+             not absent: every verifier binds it as a value in the canonical view, \
+             so one that read it as \"no root\" would contradict its own recompute. \
+             The document is signed over the empty string, so the defect is named \
+             at stage 2 before the signature stage could have verified it.",
+        ),
+    );
+    count += 1;
+
+    // A numeric root on 2.2, likewise signed over as written.
+    let numeric_root = builder.build_v2_2_with_activity_root_value(909, json!(42));
+    write_fixture(
+        &dir,
+        "0009_v2_2_customer_declared_activity_root_numeric",
+        &numeric_root,
+        &with_note(
+            expected_failure(
+                "field_malformed",
+                json!({
+                    "field": "customer_declared_activity_root",
+                    "reason": "expected a JSON string",
+                }),
+                2,
+            ),
+            "A root that is not a JSON string is a shape no signer emits. Named as \
+             malformed at stage 2, before any recompute consumes it, so the verdict \
+             blames the field and not the signature or the record.",
+        ),
+    );
+    count += 1;
+
+    count
+}
+
 // ── Index manifest ───────────────────────────────────────────────────
 
 /// Write a top-level index.json describing every fixture in the corpus,
@@ -956,6 +1236,7 @@ fn write_index(root: &Path, total: usize) {
         ("09_tamper_patterns/b_re_order", 5),
         ("09_tamper_patterns/c_version_downgrade", 5),
         ("09_tamper_patterns/d_signature_substitution", 5),
+        ("10_v2_2", 10),
     ];
 
     let categories_json: Vec<Value> = categories
@@ -979,7 +1260,7 @@ fn write_index(root: &Path, total: usize) {
             "policy": "optional — VerifierPolicy pins REQUIRED to reach this verdict; absent means defaults",
             "note": "optional — prose for verdicts that are not the obvious guess from the category name",
         },
-        "signed_message": "v1.0 signs final_hash; v2.0 signs document_hash; v2.1 nanorix_only signs the ADR-011 Part-3 canonical-view hash (hex(sha512(jcs(view))))",
+        "signed_message": "v1.0 signs final_hash; v2.0 signs document_hash; v2.1 and v2.2 nanorix_only sign the ADR-011 Part-3 canonical-view hash (hex(sha512(jcs(view)))) — 2.2 is verified exactly as 2.1",
         "anchor_timestamp": FIXTURE_TIMESTAMP,
         "anchor_signing_seed_sha256": {
             "_note": "Public anchor for cross-impl reproducibility. The seed itself is constant in source.",
@@ -1026,6 +1307,7 @@ fn main() {
     total += generate_version_unsupported_failures(&builder, &root);
     total += generate_canonical_hash_drift_failures(&builder, &root);
     total += generate_tamper_patterns(&builder, &root);
+    total += generate_v2_2(&builder, &root);
 
     write_index(&root, total);
 

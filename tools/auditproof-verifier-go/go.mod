@@ -1,6 +1,6 @@
 // Module auditproof-verifier-go — Go reference implementation of the Nanorix
 // AuditProof verifier, providing cross-implementation byte-equivalence with the
-// Rust verifier (`tools/nanorix-verify/`) on the 100-fixture corpus shipped at
+// Rust verifier (`tools/nanorix-verify/`) on the reference corpus (110 fixtures) shipped at
 // commit ba1d51a (Wave 6 verification-surface scaffolds).
 //
 // Discipline anchors:

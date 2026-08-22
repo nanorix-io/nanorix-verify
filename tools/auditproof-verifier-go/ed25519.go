@@ -7,7 +7,7 @@
 //
 // Cross-impl byte-equivalence: this Go implementation must verify every
 // AuditProof signature that the Rust verifier accepts and reject every one
-// the Rust verifier rejects. The 100-fixture corpus exercises both
+// the Rust verifier rejects. The reference corpus exercises both
 // success-path and 5 failure-path (signature-mismatch) variants.
 
 package auditproof

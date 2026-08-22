@@ -89,7 +89,7 @@ $ nanorix-verify print-trust-chain
 ## Verification stages
 
 1. Schema validation — required fields present, types correct
-2. cdp_version recognized (`1.0` / `2.0` / `2.1`)
+2. cdp_version recognized (`1.0` / `2.0` / `2.1` / `2.2` — 2.2 is verified exactly as 2.1)
 3. Chain reproducibility — recompute the SHA-512 chain from genesis
 4. Final hash binding — `final_hash` matches the last step's `chain_hash`
 5. Canonical hash binding — recomputed `canonical_hash` matches

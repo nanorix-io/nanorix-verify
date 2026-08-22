@@ -20,9 +20,12 @@
  *    `method`, no `timestamp`. Reading them off the step yields empty strings
  *    and a chain that reproduces nothing.
  * 2. The signed message depends on the CDP version: v1.0 signs `final_hash`,
- *    v2.0 signs `document_hash`, v2.1 `nanorix_only` signs the ADR-011 Part-3
- *    canonical-view hash. Verifying the wrong message accepts a downgraded
- *    proof.
+ *    v2.0 signs `document_hash`, v2.1 and v2.2 `nanorix_only` sign the
+ *    ADR-011 Part-3 canonical-view hash. Verifying the wrong message accepts
+ *    a downgraded proof. v2.2 (ADR-053 + ADR-056) changes what a document may
+ *    carry, not how it is canonicalised, hashed or signed; the version label
+ *    is itself inside the canonical view, so a 2.1 document re-labelled 2.2
+ *    clears the allowlist and then fails the signature.
  *
  * Pure Web Crypto — no Node built-ins, so the browser verifier can consume it.
  */
@@ -35,6 +38,10 @@ import {
   merkleRootSha512NullSeparated,
 } from "./wave_n.js";
 import { verifyStreamingMerkleRoots } from "./streaming_merkle.js";
+import {
+  CustomerDeclaredActivityStatus,
+  verifyCustomerDeclaredActivity,
+} from "./customer_activity.js";
 
 /** Genesis hash — SHA-512(""). Forever-stable per ADR-006 I0. */
 export const GENESIS_HASH =
@@ -69,6 +76,17 @@ export const SUPPORTED_CDP_VERSIONS: ReadonlySet<string> = new Set([
   "1.0",
   "2.0",
   "2.1",
+  "2.2",
+]);
+
+/**
+ * Versions whose signature covers the ADR-011 Part-3 canonical-view hash.
+ * `cdp_version` is inside that view, so re-labelling a document across
+ * these is accepted by the allowlist and rejected by the signature.
+ */
+export const CANONICAL_VIEW_SIGNED_VERSIONS: ReadonlySet<string> = new Set([
+  "2.1",
+  "2.2",
 ]);
 export const CHAIN_STEP_COUNT = 8;
 
@@ -111,7 +129,10 @@ export const FailureReasonType = {
   AUTHORITY_REVOKED: "authority_revoked",
   CDP_VERSION_UNSUPPORTED: "cdp_version_unsupported",
   CHAIN_STEP_IDENTITY_MISMATCH: "chain_step_identity_mismatch",
+  CUSTOMER_DECLARED_ACTIVITY_ROOT_MISMATCH:
+    "customer_declared_activity_root_mismatch",
   DIAGNOSTIC_PROOF_REFUSED: "diagnostic_proof_refused",
+  FIELD_MALFORMED: "field_malformed",
   FINAL_HASH_MISMATCH: "final_hash_mismatch",
   GENESIS_HASH_MISMATCH: "genesis_hash_mismatch",
   REGION_MISMATCH: "region_mismatch",
@@ -190,6 +211,21 @@ export interface VerificationMetadata {
    * stays silent invites them to be read as attested.
    */
   unattestedParentAttribution?: number | null;
+  /**
+   * ADR-056. The `customer_declared_activity_root` the proof carries, as
+   * written; null when it declares none. Disclosed whether or not the record
+   * was supplied — a verdict that stays silent about a declared root invites
+   * a reader to assume it was checked.
+   */
+  customerDeclaredActivityRoot?: string | null;
+  /**
+   * True when the customer's activity record was supplied through
+   * `VerifierPolicy.customerActivity` and its recomputed root matched; false
+   * when the proof declares a root but no record was supplied — declared,
+   * not checked. Null when the proof declares no root. A mismatch is a
+   * failure, never a false here.
+   */
+  customerDeclaredActivityChecked?: boolean | null;
 }
 
 /** Result of AuditProof verification. */
@@ -211,6 +247,15 @@ export interface VerifierPolicy {
   rejectDiagnostic?: boolean;
   requiredRegion?: string;
   requiredAuthorityId?: string;
+  /**
+   * ADR-056. The raw bytes of the customer's activity record
+   * (`activity_events.jsonl`), when the reader holds it. Recomputed and
+   * compared with the proof's `customer_declared_activity_root`; a record
+   * supplied against a proof that declares no root fails closed as
+   * `required_field_missing`. Omitted, a declared root is disclosed as
+   * "declared, not checked" rather than failed.
+   */
+  customerActivity?: Uint8Array;
 }
 
 /** Return the wire-form projection for fixture corpus comparison. */
@@ -415,6 +460,10 @@ export async function recomputeCanonicalHash(
 
   insertIfPresent(view, "parent_proofs_merkle_root", proof);
   insertIfPresent(view, "record_receipts_merkle_root", proof);
+  // ADR-056: a root over bytes the customer wrote and Nanorix never parsed.
+  // Same skip-when-absent mechanic as the two Merkle roots, so a proof that
+  // did not opt in hashes to exactly what it did before the field existed.
+  insertIfPresent(view, "customer_declared_activity_root", proof);
 
   view["runtime_attestation"] = orNull("runtime_attestation");
 
@@ -487,8 +536,8 @@ export type SignatureCheck =
  * Select the signed message for a proof by version/mode:
  * - `1.0` -> `final_hash`
  * - `2.0` -> `document_hash`
- * - `2.1` + `nanorix_only` -> recomputed canonical hash
- * - `2.1` + `dual_signature` / `tee_attested` -> null (not verifiable here)
+ * - `2.1` / `2.2` + `nanorix_only` -> recomputed canonical hash
+ * - `2.1` / `2.2` + `dual_signature` / `tee_attested` -> null (not verifiable here)
  */
 async function signedMessage(
   proof: Record<string, unknown>,
@@ -499,7 +548,8 @@ async function signedMessage(
       return stripSha512Prefix(strOrEmpty(proof["final_hash"]));
     case "2.0":
       return stripSha512Prefix(strOrEmpty(proof["document_hash"]));
-    case "2.1": {
+    case "2.1":
+    case "2.2": {
       const mode = proof["signing_mode"];
       const signingMode = typeof mode === "string" ? mode : "nanorix_only";
       // Any other declared mode is one this build cannot verify. NOT the same as
@@ -604,6 +654,8 @@ function makeEmptyMetadata(): VerificationMetadata {
     activityEventCount: null,
     recoveredChainTimestamp: null,
     unattestedParentAttribution: null,
+    customerDeclaredActivityRoot: null,
+    customerDeclaredActivityChecked: null,
   };
 }
 
@@ -622,6 +674,85 @@ function populatedUnsignedSlot(proof: Record<string, unknown>): string | null {
     if (v !== undefined && v !== null) return slot;
   }
   return null;
+}
+
+export const CUSTOMER_DECLARED_ACTIVITY_ROOT_FIELD =
+  "customer_declared_activity_root";
+
+/** `field_malformed.reason` when the root is present but not a JSON string. */
+export const ROOT_MALFORMED_NOT_A_STRING = "expected a JSON string";
+/** `field_malformed.reason` when the root is the empty string. */
+export const ROOT_MALFORMED_EMPTY = "empty string";
+/**
+ * `field_malformed.reason` for any other string that is not `sha512:` + 128
+ * lowercase hex (bare 128-hex accepted).
+ */
+export const ROOT_MALFORMED_SHAPE =
+  "expected sha512: followed by 128 lowercase hex characters";
+
+const LOWERCASE_HEX_128 = /^[0-9a-f]{128}$/;
+
+/**
+ * The shape check a present, non-null `customer_declared_activity_root` must
+ * pass before anything reads it: a JSON string of `sha512:` + 128 lowercase
+ * hex characters, or a bare 128-hex digest. Anything else — a number, an
+ * object, an array, the empty string, uppercase or wrong-length hex — is
+ * `field_malformed`, named before any recompute would consume the value and
+ * blame a signature or a record instead. The empty string is malformed, not
+ * absent: the canonical view binds `""` as a value, and a verifier that read
+ * it as "no root" would contradict its own recompute.
+ *
+ * Returns the string as written on success so the caller can report it
+ * verbatim. Reason strings mirror the Rust reference byte-for-byte because
+ * corpus verdicts compare the whole failure object.
+ */
+export function checkDeclaredActivityRootShape(
+  value: unknown,
+): { root: string } | { failure: FailureReason } {
+  const malformed = (reason: string): { failure: FailureReason } => ({
+    failure: {
+      type: FailureReasonType.FIELD_MALFORMED,
+      field: CUSTOMER_DECLARED_ACTIVITY_ROOT_FIELD,
+      reason,
+    },
+  });
+  if (typeof value !== "string") return malformed(ROOT_MALFORMED_NOT_A_STRING);
+  if (value === "") return malformed(ROOT_MALFORMED_EMPTY);
+  if (!LOWERCASE_HEX_128.test(stripSha512Prefix(value))) {
+    return malformed(ROOT_MALFORMED_SHAPE);
+  }
+  return { root: value };
+}
+
+/**
+ * The pre-chain-walk gate for a declared root (ADR-056), run at stage 2 in
+ * the same position and on the same reasoning as the reserved-slot gate.
+ *
+ * The root is signed only where the signed message is the canonical view
+ * (2.1 / 2.2); on 1.0 the message is `final_hash` and on 2.0 the
+ * `document_hash` field, so a root there is a value anyone can write and the
+ * signature cannot tell — `unsigned_field_populated`. On 2.1 / 2.2 a root of
+ * a shape no signer emits is `field_malformed`. Absent or JSON `null` is
+ * "did not opt in" and passes. The version gate precedes the shape gate: a
+ * root the signature never covered is the more fundamental defect, whatever
+ * its shape. Shared with the standalone sidecar check in
+ * `customer_activity.ts`, so the two entry points cannot disagree about which
+ * roots are readable.
+ */
+export function gateDeclaredActivityRoot(
+  proof: Record<string, unknown>,
+  cdpVersion: string,
+): FailureReason | null {
+  const value = proof[CUSTOMER_DECLARED_ACTIVITY_ROOT_FIELD];
+  if (value === undefined || value === null) return null;
+  if (!CANONICAL_VIEW_SIGNED_VERSIONS.has(cdpVersion)) {
+    return {
+      type: FailureReasonType.UNSIGNED_FIELD_POPULATED,
+      field: CUSTOMER_DECLARED_ACTIVITY_ROOT_FIELD,
+    };
+  }
+  const shape = checkDeclaredActivityRootShape(value);
+  return "failure" in shape ? shape.failure : null;
 }
 
 /** Parent links carrying attribution the signed Merkle root does not bind. */
@@ -757,6 +888,21 @@ export async function verifyAuditProof(
         type: FailureReasonType.UNSIGNED_FIELD_POPULATED,
         field: populatedSlot,
       },
+      stage_reached: 2,
+      metadata: meta,
+    };
+  }
+
+  // ADR-056 gate on `customer_declared_activity_root`, same position and
+  // same reasoning as the reserved-slot gate: a root on a version that does
+  // not sign it, or of a shape no signer emits, is named here before any
+  // recompute consumes it so the verdict blames the field and not the
+  // signature or the record.
+  const rootGate = gateDeclaredActivityRoot(proof, cdpVersion);
+  if (rootGate !== null) {
+    return {
+      valid: false,
+      failure_reason: rootGate,
       stage_reached: 2,
       metadata: meta,
     };
@@ -988,6 +1134,35 @@ export async function verifyAuditProof(
         metadata: meta,
       };
     }
+  }
+
+  // ADR-056 customer-declared activity root. The stage-2 gate has already
+  // rejected a root on a version that does not sign it and a root of any
+  // shape no signer emits, so a root read here is a well-formed string on
+  // 2.1 / 2.2 and is canonical-bound: the signature stages below bind it to
+  // the signer regardless. Recomputing it needs the customer's record, which
+  // the reader supplies through the policy. Sits with the other
+  // sub-structure Merkle checks so it also covers the path where a chain
+  // reproduces with no signature to check at all.
+  const activityCheck = await verifyCustomerDeclaredActivity(
+    proof,
+    pol.customerActivity,
+  );
+  meta.customerDeclaredActivityRoot = activityCheck.claimed;
+  if (activityCheck.status === CustomerDeclaredActivityStatus.FAILED) {
+    return {
+      valid: false,
+      failure_reason: activityCheck.failure_reason,
+      stage_reached: 3,
+      metadata: meta,
+    };
+  }
+  if (activityCheck.status === CustomerDeclaredActivityStatus.VERIFIED) {
+    meta.customerDeclaredActivityChecked = true;
+  } else if (
+    activityCheck.status === CustomerDeclaredActivityStatus.DECLARED_NOT_CHECKED
+  ) {
+    meta.customerDeclaredActivityChecked = false;
   }
 
   // Stage 4: final_hash binding

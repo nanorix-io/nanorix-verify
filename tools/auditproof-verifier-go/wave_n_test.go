@@ -136,7 +136,7 @@ func TestCrossImplReferenceVectorStep8AmendedAllArms(t *testing.T) {
 func TestStep8AmendedNoneNoneByteEquivalence(t *testing.T) {
 	// The LOAD-BEARING test: when neither receipts nor parents present, Step 8
 	// MUST be byte-identical to the pre-Wave-N legacy `ComputeStepHash`. Every
-	// pre-Wave-N AuditProof on the 100-fixture corpus depends on this.
+	// pre-Wave-N AuditProof on the reference corpus depends on this.
 	prev := NanorixGenesisHash
 	ts := "2026-05-12T00:00:00Z"
 

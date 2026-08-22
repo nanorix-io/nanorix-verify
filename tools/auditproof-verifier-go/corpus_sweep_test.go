@@ -105,7 +105,7 @@ func failureReasonAsValue(t *testing.T, r *FailureReason) interface{} {
 }
 
 // TestEveryCorpusFixtureVerifiesToItsCommittedVerdict is the binding
-// cross-implementation contract: 100/100 agreement with the Rust-authored
+// cross-implementation contract: full agreement with the Rust-authored
 // expected verdicts.
 func TestEveryCorpusFixtureVerifiesToItsCommittedVerdict(t *testing.T) {
 	fixtures := collectFixtures(t, corpusRoot)

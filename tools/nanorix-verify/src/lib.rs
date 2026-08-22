@@ -25,7 +25,7 @@
 //!
 //! Per ADR-011 I8:
 //! 1. Schema validation (required fields present, types correct)
-//! 2. cdp_version recognized (1.0 / 2.0 / 2.1)
+//! 2. cdp_version recognized (1.0 / 2.0 / 2.1 / 2.2)
 //! 3. Chain reproducibility (recompute SHA-512 chain from genesis)
 //! 4. Final hash binding (final_hash matches last step's chain_hash)
 //! 5. Canonical hash binding (v2.x; canonical_hash recompute matches)
@@ -42,6 +42,7 @@ pub mod boundary;
 pub mod bundle;
 pub mod canonical_recompute;
 pub mod checkpoint;
+pub mod customer_activity;
 pub mod pubkey_bundle;
 pub mod streaming_merkle;
 pub mod trust_chain;
@@ -55,6 +56,11 @@ pub use bundle::{
     bundle_verdict_text, extract_receipt_bundle, verify_receipt_bundle, AuditProofAnchors,
     BundleError, PortableReceiptBundle, PORTABLE_RECEIPT_BUNDLE_DISCLAIMER,
     SIGNATURE_TARGET_DOCUMENT_CANONICAL_HASH, SIGNATURE_TARGET_STEP8_CHAIN_HASH,
+};
+pub use customer_activity::{
+    check_declared_activity_root_shape, compute_customer_declared_activity_root,
+    gate_declared_activity_root, verify_customer_declared_activity, CANONICAL_VIEW_SIGNED_VERSIONS,
+    CUSTOMER_DECLARED_ACTIVITY_ROOT_FIELD,
 };
 pub use pubkey_bundle::{
     build_pubkey_bundle, resolve_parent_key, resolve_parent_key_forever, verify_pubkey_bundle,
@@ -207,6 +213,23 @@ pub struct VerificationMetadata {
     /// "integrity verified" will take them as attested unless told otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unattested_parent_attribution: Option<usize>,
+
+    /// The `customer_declared_activity_root` the proof carries (ADR-056), as
+    /// written. `None` when the proof declares none. Disclosed whether or not
+    /// the record was supplied: a verdict that stays silent about a declared
+    /// root invites a reader to assume it was checked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub customer_declared_activity_root: Option<String>,
+
+    /// `Some(true)` when the customer's activity record was supplied
+    /// (`VerifierPolicy::customer_activity`) and its recomputed root matched
+    /// the declared one; `Some(false)` when the proof declares a root but no
+    /// record was supplied — declared, not checked. `None` when the proof
+    /// declares no root. A mismatch is a failure, not a `false` here. Never
+    /// `Some(true)` outside cdp_version 2.1 / 2.2: on any other version a
+    /// declared root is unsigned and the proof is rejected before this point.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub customer_declared_activity_checked: Option<bool>,
 }
 
 // EO-07 sub-B (commit landing this re-export): closed-enum verification
@@ -269,6 +292,15 @@ pub struct VerifierPolicy {
     /// was verified against. Carried for provenance/auditability. `None` when
     /// no trust root is in use.
     pub pinned_identity_fingerprint: Option<String>,
+
+    /// ADR-056 — the raw bytes of the customer's activity record, when the
+    /// reader has it. The proof carries only `customer_declared_activity_root`;
+    /// with the record in hand the verifier recomputes the root and compares
+    /// (`customer_activity`). Supplying a record to a proof that declares no
+    /// root is a failure (`RequiredFieldMissing`), not a no-op. `None`
+    /// (default) → a declared root is disclosed in the verdict as "declared,
+    /// not checked".
+    pub customer_activity: Option<Vec<u8>>,
 }
 
 /// Stub trusted-authority record. Real implementation reads from trust-chain
@@ -305,6 +337,8 @@ pub fn verify_auditproof(
         activity_event_count: None,
         recovered_chain_timestamp: None,
         unattested_parent_attribution: None,
+        customer_declared_activity_root: None,
+        customer_declared_activity_checked: None,
     };
 
     // Stage 1: schema validation — cdp_version present
@@ -325,8 +359,14 @@ pub fn verify_auditproof(
         }
     };
 
-    // Stage 2: cdp_version recognized
-    if !["1.0", "2.0", "2.1"].contains(&cdp_version.as_str()) {
+    // Stage 2: cdp_version recognized.
+    //
+    // "2.2" (ADR-053 + ADR-056) is verified exactly as "2.1": the canonical
+    // view, the signed-message form and every stage below are unchanged. What
+    // 2.2 adds is carried inside fields the 2.1 recompute already covers — new
+    // activity-trail events, and `customer_declared_activity_root`, which the
+    // recompute includes whenever present.
+    if !["1.0", "2.0", "2.1", "2.2"].contains(&cdp_version.as_str()) {
         return VerificationResult {
             valid: false,
             failure_reason: Some(FailureReason::CdpVersionUnsupported { found: cdp_version }),
@@ -348,6 +388,23 @@ pub fn verify_auditproof(
             failure_reason: Some(FailureReason::UnsignedFieldPopulated {
                 field: slot.to_string(),
             }),
+            stage_reached: 2,
+            metadata,
+        };
+    }
+
+    // ADR-056 gate on `customer_declared_activity_root`, same position and
+    // same reasoning as the reserved-slot gate. The root is signed only where
+    // the signed message is the canonical view (2.1 / 2.2); on 1.0 the message
+    // is `final_hash` and on 2.0 the `document_hash` field, so a root there is
+    // a value anyone can write and the signature cannot tell. On 2.1 / 2.2 a
+    // root that is not a `sha512:` + 128-lowercase-hex string is a shape no
+    // signer emits, named here before any recompute consumes it so the
+    // verdict blames the field and not the signature or the record.
+    if let Err(failure) = customer_activity::gate_declared_activity_root(json, &cdp_version) {
+        return VerificationResult {
+            valid: false,
+            failure_reason: Some(failure),
             stage_reached: 2,
             metadata,
         };
@@ -649,6 +706,35 @@ pub fn verify_auditproof(
                 stage_reached: 3,
                 metadata,
             };
+        }
+    }
+
+    // ── ADR-056 customer-declared activity root ──
+    // The stage-2 gate above has already rejected a root on a version that
+    // does not sign it and a root of any shape no signer emits, so a root
+    // read here is a well-formed string on 2.1 / 2.2 and is canonical-bound:
+    // the signature stages below bind it to the signer regardless.
+    // Recomputing it needs the customer's record, which the reader supplies
+    // through the policy. With the other sub-structure Merkle checks, so it
+    // also covers the `SignatureCheck::Absent` path.
+    metadata.customer_declared_activity_root =
+        customer_activity::declared_activity_root(json).map(String::from);
+    match policy.customer_activity.as_deref() {
+        Some(record) => match customer_activity::verify_customer_declared_activity(json, record) {
+            Ok(_) => metadata.customer_declared_activity_checked = Some(true),
+            Err(failure) => {
+                return VerificationResult {
+                    valid: false,
+                    failure_reason: Some(failure),
+                    stage_reached: 3,
+                    metadata,
+                };
+            }
+        },
+        None => {
+            if metadata.customer_declared_activity_root.is_some() {
+                metadata.customer_declared_activity_checked = Some(false);
+            }
         }
     }
 
