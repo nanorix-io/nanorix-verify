@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 	"unicode/utf16"
 )
 
@@ -131,17 +132,59 @@ func jcsEmitNumber(buf *bytes.Buffer, raw string) error {
 		buf.WriteString("0")
 		return nil
 	}
-	// strconv.FormatFloat with -1 precision + 'g' produces shortest-round-trip.
-	// However Go uses lowercase 'e' and ECMAScript produces signed exponents
-	// without leading zeros — the 'g' format already complies.
-	s := strconv.FormatFloat(f, 'g', -1, 64)
-	// Strip the '+' from positive exponents (Go: "1e+20"; ECMAScript: "1e20").
-	// Per RFC 8785 §3.2.2.3 the "+" sign is omitted for positive exponents.
-	if idx := bytes.IndexByte([]byte(s), 'e'); idx >= 0 && idx+1 < len(s) && s[idx+1] == '+' {
-		s = s[:idx+1] + s[idx+2:]
-	}
-	buf.WriteString(s)
+	buf.WriteString(es6FloatToString(f))
 	return nil
+}
+
+// es6FloatToString renders a finite, non-zero float64 exactly as ECMAScript
+// Number::toString (ECMA-262 §6.1.6.1.20) does, which is what RFC 8785
+// §3.2.2.3 requires. Go's 'g' format is NOT equivalent: it uses exponential
+// notation from a different threshold (|x| < 1e-4 rather than < 1e-6), zero-
+// pads the exponent to two digits ("1e-07"), and — with the sign stripped —
+// omits the mandatory '+' on positive exponents ("1e21"). All three diverge
+// from ECMAScript, e.g. String(1e21) === "1e+21", String(1e-7) === "1e-7",
+// String(1e-5) === "0.00001".
+//
+// The shortest round-tripping digit sequence and its decimal exponent are
+// taken from strconv (format 'e', precision -1); the ES6 positional-vs-
+// exponential rules are then applied to those digits.
+func es6FloatToString(f float64) string {
+	neg := f < 0
+	if neg {
+		f = -f
+	}
+	// e.g. "1.5e+19", "5e-324", "1e+21"; always one digit before the point.
+	sci := strconv.FormatFloat(f, 'e', -1, 64)
+	ePos := strings.IndexByte(sci, 'e')
+	exp, _ := strconv.Atoi(sci[ePos+1:])
+	digits := strings.Replace(sci[:ePos], ".", "", 1) // significant digits only
+	k := len(digits)
+	n := exp + 1 // position of the decimal point relative to the first digit
+
+	var out string
+	switch {
+	case k <= n && n <= 21:
+		out = digits + strings.Repeat("0", n-k)
+	case 0 < n && n <= 21:
+		out = digits[:n] + "." + digits[n:]
+	case -6 < n && n <= 0:
+		out = "0." + strings.Repeat("0", -n) + digits
+	default:
+		e := n - 1
+		expStr := strconv.Itoa(e) // Itoa keeps the leading '-' for negatives
+		if e >= 0 {
+			expStr = "+" + expStr
+		}
+		if k == 1 {
+			out = digits + "e" + expStr
+		} else {
+			out = digits[:1] + "." + digits[1:] + "e" + expStr
+		}
+	}
+	if neg {
+		out = "-" + out
+	}
+	return out
 }
 
 // jcsEmitString emits a JSON string per RFC 8785 §3.2.2.2 with minimal
