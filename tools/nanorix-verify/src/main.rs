@@ -914,6 +914,42 @@ fn print_human(r: &VerificationResult) {
                  resolved against the Nanorix trust-chain manifest (EO-07 sub-B)."
                     .dimmed()
             );
+            // Tell them how to finish, here, where they are reading.
+            //
+            // This warning is what a first-time auditor sees, because bare
+            // `nanorix-verify proof.json` is the obvious thing to type. It is
+            // accurate and it reads exactly like a broken trust chain. The two
+            // inputs that turn it into a clean pass are both public, and until
+            // 2026-08-21 nothing in the output said so -- the flags were
+            // discoverable only from `--help`, which nobody reads after seeing
+            // a warning.
+            //
+            // This binary deliberately has no HTTP client (air-gap posture), so
+            // fetching is the reader's step. Give them the exact commands.
+            println!();
+            println!(
+                "  {}",
+                "To resolve authenticity offline, fetch both public files and re-run:".bold()
+            );
+            println!(
+                "    {}",
+                "curl -sO https://nanorix.io/.well-known/trust-chain.json".cyan()
+            );
+            println!(
+                "    {}",
+                "FP=$(curl -s https://nanorix.io/.well-known/identity.txt)".cyan()
+            );
+            println!(
+                "    {}",
+                "nanorix-verify <proof.json> --trust-chain trust-chain.json --identity-fingerprint \"$FP\"".cyan()
+            );
+            println!(
+                "  {}",
+                "Neither file is fetched for you on purpose. Verifying without \
+                 trusting Nanorix means you obtain the trust root yourself, and \
+                 an auditor should archive it at evidence-receipt time."
+                    .dimmed()
+            );
         } else {
             println!(
                 "{} Chain verified · signature NOT checked · capsule {} · region {}",

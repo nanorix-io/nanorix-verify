@@ -126,6 +126,13 @@ the stage ladder, conformance requirements, and a mapping to the OWASP Agentic
 Security Initiative top ten. That mapping lists the entries this evidence
 doesn't address as explicitly as the ones it does.
 
+## Holes we found in our own verifier
+
+Five shapes an outsider could hand-edit into a genuine signed proof verified under 1.0.x
+and fail under 1.1.0. Each is listed in [`SECURITY.md`](SECURITY.md) with the attack, the
+fix and the test that reproduces it. Read the breaks before you read the spec; a verifier
+nobody has attacked is not evidence of anything.
+
 ## What isn't here
 
 This repository is the verification algorithm, and it's complete on its own. An
