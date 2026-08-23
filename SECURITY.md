@@ -5,7 +5,7 @@ anything. Every hole below was found by writing the attack first and confirming 
 released verifier returned exit 0 on it. Each entry names the reproducing test, so you can
 read the break before you read the fix.
 
-## Disclosed holes, closed in 1.1.0 (2026-08-19)
+## Disclosed holes, closed in 1.1.0 (fixed 2026-08-19; released 2026-08-22)
 
 All five accepted a document an attacker could edit by hand, holding no key, against a
 genuine signed proof. Documents carrying these shapes verified under 1.0.x and fail under

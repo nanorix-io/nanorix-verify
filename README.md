@@ -86,6 +86,15 @@ verifier rejects a document it has to say which of the fixed reasons applied.
 That's part of the wire contract, and it's what makes a disagreement between two
 implementations something you can detect instead of argue about.
 
+## Install the CLI
+
+Download a binary from the [Releases page](https://github.com/nanorix-io/nanorix-verify/releases),
+or build from this repository (the crate is not published to crates.io):
+
+```
+cargo install --git https://github.com/nanorix-io/nanorix-verify nanorix-verify
+```
+
 ## Conformance
 
 `tools/nanorix-verify/fixtures/corpus` holds 110 cases in ten categories:
