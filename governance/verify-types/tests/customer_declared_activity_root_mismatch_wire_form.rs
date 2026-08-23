@@ -1,8 +1,8 @@
 //! Wire-format-locked round-trip tests for
-//! `FailureReason::CustomerDeclaredActivityRootMismatch` (ADR-056 — the
+//! `FailureReason::CustomerDeclaredActivityRootMismatch` (the specification — the
 //! customer-declared activity root recomputed from the customer's own record).
 //!
-//! **Forever-Standard discipline (ADR-006 I0).** These tests pin the exact wire
+//! **Forever-Standard discipline (the Forever-Standard wire discipline).** These tests pin the exact wire
 //! form (variant tag + field names + serialization shape) so that:
 //!
 //! - any future rename of the variant or its fields fails CI immediately,
@@ -25,9 +25,9 @@ use nanorix_verify_types::FailureReason;
 
 /// The "three" vector from
 /// `tools/nanorix-verify/fixtures/customer_declared_activity_root_vectors.json`.
-const CLAIMED: &str = "sha512:390d7d3a3c84f59c289a33e3f1848e7208036e31b2f83837ade9e55fd3ac504550cd73baed351b139c22df78d2b6c65efebd9c27a5a237b64d0c15088f4f9ef1";
-/// The "empty" vector — the genesis root.
-const COMPUTED: &str = "sha512:cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e";
+const CLAIMED: &str = "sha512:eeaf4d8e1236e12b43441daafff96d0cd178e2785664eea2ff261574522204a9f908540a12eac5a2292b487c49f2c24f008e8e6e07ea9b9508fb07dcec90f87b";
+/// The "empty" vector — genesis with the line count `0` bound in.
+const COMPUTED: &str = "sha512:e2e0379c1f7e2243f9459a9f3d1fb4fd0dbc810dfefc34b940e1bf0523a68a7fa704182112a1f5d3bd72951b8040c47f3330b1e79caddcef76abb5d647724434";
 
 /// Test 1 — byte pin of the canonical serialization shape.
 ///
@@ -88,7 +88,7 @@ fn customer_declared_activity_root_mismatch_missing_required_fields_fails() {
     );
 }
 
-/// Test 4 — a pre-ADR-056 deserializer fails cleanly on the new variant tag.
+/// Test 4 — a pre-the specification deserializer fails cleanly on the new variant tag.
 ///
 /// **Forever-Standard discipline:** an older consumer that does not have
 /// `CustomerDeclaredActivityRootMismatch` in its compiled enum MUST fail with
@@ -115,6 +115,6 @@ fn pre_adr_056_deserializer_rejects_new_variant_cleanly() {
     let result: Result<PreAdr056FailureReason, _> = serde_json::from_str(&wire);
     assert!(
         result.is_err(),
-        "a pre-ADR-056 deserializer must reject the new tag, got {result:?}"
+        "a pre-the specification deserializer must reject the new tag, got {result:?}"
     );
 }

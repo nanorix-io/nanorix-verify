@@ -54,12 +54,12 @@ than a fixture, so the corpus does not pin it.
 | `07_failure_version_unsupported` | 10 | Unrecognised `cdp_version` is rejected at stage 2 |
 | `08_failure_canonical_hash_drift` | 10 | Mutating any canonical-bound field breaks the signature |
 | `09_tamper_patterns/*` | 20 | Byte-flip, step re-order, version downgrade, signature substitution |
-| `10_v2_2` | 10 | CDP 2.2 verifies exactly as 2.1; ADR-053 `policy_denial_summary` and ADR-056 `customer_declared_activity_root` are canonical-bound, so a count or root rewritten after signing breaks the signature. A root on a version that does not sign the canonical view (1.0 / 2.0) is `unsigned_field_populated`; a root that is not a `sha512:` + 128-lowercase-hex string (the empty string, a number) is `field_malformed` — both at stage 2, before the chain walk |
+| `10_v2_2` | 10 | CDP 2.2 verifies exactly as 2.1; the specification `policy_denial_summary` and the specification `customer_declared_activity_root` are canonical-bound, so a count or root rewritten after signing breaks the signature. A root on a version that does not sign the canonical view (1.0 / 2.0) is `unsigned_field_populated`; a root that is not a `sha512:` + 128-lowercase-hex string (the empty string, a number) is `field_malformed` — both at stage 2, before the chain walk |
 
 ## The signed message
 
 A v2.1 `nanorix_only` AuditProof is **not** signed over `final_hash` — that is
-the v1.0 message. It is signed over the ADR-011 Part-3 canonical-view hash,
+the v1.0 message. It is signed over the specification Part-3 canonical-view hash,
 `hex(sha512(jcs(canonical_view)))`. Getting this wrong is not a theoretical
 concern: the corpus previously shipped with every success fixture signed over
 the v1.0 message inside a document stamped `cdp_version: "2.1"`, so every one
@@ -74,7 +74,7 @@ properties, and only the latter was broken.
 | `2.1` / `2.2` + `nanorix_only` | recomputed canonical-view hash |
 | `2.1` / `2.2` + `dual_signature` / `tee_attested` | not verifiable by this build |
 
-`2.2` (ADR-053 + ADR-056) shares the `2.1` arm on purpose: it changed what a
+`2.2` (the specification + the specification) shares the `2.1` arm on purpose: it changed what a
 document may carry, not how it is hashed or signed. The canonical view includes
 `customer_declared_activity_root` whenever the document carries it, so a root
 tampered after signing is a signature failure, not a new verdict. The separate

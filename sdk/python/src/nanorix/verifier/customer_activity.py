@@ -1,5 +1,5 @@
 """
-ADR-056 — `customer_declared_activity_root` recompute-and-compare.
+the specification — `customer_declared_activity_root` recompute-and-compare.
 
 The proof carries ONE field about the customer's own activity record: a root
 over the raw bytes of the file the SDK's activity helpers append to inside the
@@ -12,10 +12,16 @@ bytes — the root is a commitment to content, not a statement about it.
 1. Split the sidecar on `0x0A`. Drop only a trailing empty segment (a file
    that ends in a newline has no extra empty line). Never trim, never parse.
 2. Leaf = SHA-512 hex of each line's raw bytes.
-3. Root = `merkle_root_sha512_null_separated(leaves)` — pairs hashed as
-   `SHA-512(left_hex || 0x00 || right_hex)`, odd last node duplicated.
-4. Zero lines → GENESIS (SHA-512 of the empty string), so "opted in, wrote
-   nothing" is distinguishable from "did not opt in" (field absent).
+3. `m` = `merkle_root_sha512_null_separated(leaves)` — pairs hashed as
+   `SHA-512(left_hex || 0x00 || right_hex)`, odd last node duplicated — or
+   GENESIS (SHA-512 of the empty string) for zero lines.
+4. Root = `SHA-512(m_hex_ascii || 0x00 || count_decimal_ascii)`, the count
+   being the number of lines as ASCII base-10 digits, no sign, no leading
+   zeros (`"0"` for the empty record). The tree alone does not commit to the
+   count: its odd-level duplication gives an odd record and the same record
+   with its last line repeated one tree, and `b""` and `b"\\n"` one tree too.
+   Binding the count closes both. "Opted in, wrote nothing" stays a present,
+   fixed value, distinguishable from "did not opt in" (field absent).
 5. Wire form `sha512:<hex>`.
 
 ## The three verdicts
@@ -82,16 +88,17 @@ def customer_declared_activity_leaf_hashes(data: Union[bytes, bytearray]) -> Lis
 
 
 def compute_customer_declared_activity_root(data: Union[bytes, bytearray]) -> str:
-    """The ADR-056 root over a sidecar's raw bytes, in wire form `sha512:<hex>`.
+    """The the specification root over a sidecar's raw bytes, in wire form `sha512:<hex>`.
 
     Byte-equivalent with the Rust, Go, TypeScript and browser verifiers; every
     vector in `customer_declared_activity_root_vectors.json` pins it.
     """
     leaves = customer_declared_activity_leaf_hashes(data)
-    root = merkle_root_sha512_null_separated(leaves)
-    if root is None:
-        root = GENESIS_SHA512_HEX
-    return f"sha512:{root}"
+    merkle = merkle_root_sha512_null_separated(leaves)
+    if merkle is None:
+        merkle = GENESIS_SHA512_HEX
+    bound = merkle.encode("ascii") + b"\x00" + str(len(leaves)).encode("ascii")
+    return f"sha512:{hashlib.sha512(bound).hexdigest()}"
 
 
 class CustomerDeclaredActivityStatus(Enum):

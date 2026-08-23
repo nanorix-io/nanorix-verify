@@ -2,7 +2,7 @@
 //! `FailureReason::StreamingMerkleRootMismatch` (B1.1 — verify the streaming
 //! Merkle root when the chunk leaves are present).
 //!
-//! **Forever-Standard discipline (ADR-006 I0).** These tests pin the exact wire
+//! **Forever-Standard discipline (the Forever-Standard wire discipline).** These tests pin the exact wire
 //! form (variant tag + field names + serialization shape) so that:
 //!
 //! - any future rename of the variant or its fields fails CI immediately,

@@ -48,7 +48,7 @@ const EMPTY_SHA512_HEX: &str = "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc
 /// `SHA-512(0x01 || left || right)`. An odd tail node is promoted unchanged.
 /// Returns 128 lowercase hex characters, unprefixed.
 ///
-/// **Forever-Standard (ADR-006 I0).** Changing any of the three rules above
+/// **Forever-Standard (the Forever-Standard wire discipline).** Changing any of the three rules above
 /// invalidates every streaming Merkle root ever emitted.
 pub fn merkle_root_from_leaves(leaves: &[[u8; 64]]) -> String {
     if leaves.is_empty() {
@@ -166,7 +166,7 @@ impl StreamAccumulator {
 /// `streaming_egress_completed` closes and checks. Events of any other kind
 /// are ignored, so an interleaved trail is walked correctly as long as each
 /// stream's own events stay in order — which is how the API emits them
-/// (`services/api/src/routes/capsules.rs:1866`).
+/// (the reference server implementation).
 pub fn verify_streaming_merkle_roots(activity: &[Value]) -> Option<FailureReason> {
     let mut acc = StreamAccumulator::default();
 

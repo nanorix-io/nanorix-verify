@@ -5,7 +5,7 @@
 // auditor receiving a Nanorix AuditProof who needs to confirm authenticity
 // without any Nanorix SaaS dependency.
 //
-// Per ADR-033 (verifier release framing): cross-implementation byte-equivalence
+// Per the specification (verifier release framing): cross-implementation byte-equivalence
 // across Rust + Go (and future browser TS) is the binding contract. If a
 // single language ecosystem suffers a supply-chain compromise or a runtime
 // bug, the alternate-language verifier provides cross-validation. This is what
@@ -73,11 +73,11 @@ func main() {
 	}
 
 	jsonOutput := flag.Bool("json", false, "Output result as JSON instead of human-readable text.")
-	rejectDiagnostic := flag.Bool("reject-diagnostic", false, "Refuse AuditProofs in diagnostic mode (EO-09).")
+	rejectDiagnostic := flag.Bool("reject-diagnostic", false, "Refuse AuditProofs in diagnostic mode (the specification).")
 	requiredRegion := flag.String("required-region", "", "Required region (e.g., 'europe-west1'). When set, AuditProofs whose region disagrees fail.")
 	requiredAuthorityID := flag.String("required-authority-id", "", "Required signing-authority id (e.g., 'customer-hsm-example-org-v1').")
 	fixtureDir := flag.String("fixture-dir", "", "Path to fixture corpus root; runs verification on every fixture and reports pass/fail counts.")
-	customerActivity := flag.String("customer-activity", "", "Path to the customer's activity record (activity_events.jsonl) for a proof carrying customer_declared_activity_root (ADR-056). The root is recomputed from the file's raw bytes and compared; a mismatch fails. Single-proof verification only.")
+	customerActivity := flag.String("customer-activity", "", "Path to the customer's activity record (activity_events.jsonl) for a proof carrying customer_declared_activity_root (the specification). The root is recomputed from the file's raw bytes and compared; a mismatch fails. Single-proof verification only.")
 	versionFlag := flag.Bool("version", false, "Print version and exit.")
 	helpFlag := flag.Bool("help", false, "Print help and exit.")
 	flag.Parse()
@@ -97,7 +97,7 @@ func main() {
 		RequiredAuthorityID: *requiredAuthorityID,
 	}
 
-	// ADR-056: the record is read as raw bytes — never parsed — and handed to
+	// the specification: the record is read as raw bytes — never parsed — and handed to
 	// the verifier. A record belongs to exactly one proof, so corpus mode
 	// refuses it rather than applying one file to every document.
 	if *customerActivity != "" {
@@ -434,7 +434,7 @@ func printHuman(r auditproof.AuditProofVerificationResult) {
 		if r.Metadata.StepCount != nil {
 			fmt.Printf("  Chain steps: %d / 8\n", *r.Metadata.StepCount)
 		}
-		// ADR-056 — say what was and was not established about a declared
+		// the specification — say what was and was not established about a declared
 		// customer activity root. Silence here would let "Verified" be read as
 		// covering a record this build never saw.
 		if r.Metadata.CustomerDeclaredActivityRoot != nil {

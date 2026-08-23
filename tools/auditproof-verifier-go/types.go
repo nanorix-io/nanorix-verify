@@ -1,7 +1,7 @@
 // Package auditproof — verification result types mirroring the Rust
 // `nanorix-verify-types` crate at `governance/verify-types/src/lib.rs`.
 //
-// **Forever-Standard discipline (ADR-006 I0):** every variant shipped here is
+// **Forever-Standard discipline (the Forever-Standard wire discipline):** every variant shipped here is
 // permanent. New failure modes ship as ADDITIVE variants. Existing variants
 // NEVER renamed, NEVER removed, NEVER repurposed.
 //
@@ -12,12 +12,12 @@
 // Variant catalog (alphabetical by snake_case wire tag):
 //
 //   - algorithm_unsupported            V1 only supports Ed25519
-//   - authority_id_mismatch            policy-pin failure (ADR-031 G7)
+//   - authority_id_mismatch            policy-pin failure (the customer-authority specification G7)
 //   - authority_mode_mismatch          customer-authority Ed25519 verify failure
 //   - authority_revoked                trust-chain marks authority revoked
 //   - cdp_version_unsupported          version not in {1.0, 2.0, 2.1, 2.2}
-//   - customer_declared_activity_root_mismatch  the proof's signed root disagrees with the root recomputed from the supplied record (ADR-056)
-//   - diagnostic_proof_refused         policy refuses diagnostic-mode (ADR-019 D2)
+//   - customer_declared_activity_root_mismatch  the proof's signed root disagrees with the root recomputed from the supplied record (the specification)
+//   - diagnostic_proof_refused         policy refuses diagnostic-mode (the diagnostic-proof policy)
 //   - final_hash_mismatch              final_hash != last step's chain_hash
 //   - genesis_hash_mismatch            first step's prev_hash != SHA-512(empty)
 //   - region_mismatch                  region differs from policy-required
@@ -47,7 +47,7 @@ type AuditProofVerificationResult struct {
 	// FailureReason is populated when Valid is false. Closed-set enum.
 	FailureReason *FailureReason `json:"failure_reason"`
 
-	// StageReached: 1..=8 highest stage reached (advisory; matches ADR-011 I8).
+	// StageReached: 1..=8 highest stage reached (advisory; matches the AuditProof specification).
 	StageReached uint8 `json:"stage_reached"`
 
 	// Metadata: structural-only diagnostic data; no payload bytes.
@@ -66,7 +66,7 @@ type VerificationMetadata struct {
 
 	// RecoveredChainTimestamp is set only when the document carried no usable
 	// `destroyed_at` and the chain timestamp was recovered from
-	// `attestation.key_id` (ADR-047 pre-restoration proofs). Nil means the
+	// `attestation.key_id` (the chain-timestamp recovery rule pre-restoration proofs). Nil means the
 	// timestamp came from the document's own field, so an auditor reading a
 	// verdict can always tell which route produced it. Omitted from the wire
 	// form when nil, mirroring the Rust `skip_serializing_if = "Option::is_none"`.
@@ -81,7 +81,7 @@ type VerificationMetadata struct {
 	UnattestedParentAttribution *int `json:"unattested_parent_attribution,omitempty"`
 
 	// CustomerDeclaredActivityRoot is the `customer_declared_activity_root`
-	// the proof carries (ADR-056), as written. Nil when the proof declares
+	// the proof carries (the specification), as written. Nil when the proof declares
 	// none. Disclosed whether or not the record was supplied: a verdict that
 	// stays silent about a declared root invites a reader to assume it was
 	// checked.
@@ -97,9 +97,9 @@ type VerificationMetadata struct {
 	CustomerDeclaredActivityChecked *bool `json:"customer_declared_activity_checked,omitempty"`
 }
 
-// CdpKind is the ADR-006 Wave 16-A reserved-slot scope discriminator
-// (2026-05-10). Forever-stable per ADR-006 I0. Mirrors the Rust enum
-// `nanorix_rzl::cdp::CdpKind`.
+// CdpKind is the specification an earlier release-A reserved-slot scope discriminator
+// (2026-05-10). Forever-stable per the Forever-Standard wire discipline. Mirrors the Rust enum
+// the reference chain implementation.
 //
 // AuditProof scope. V1 always absent in serialized JSON (workload scope is
 // implicit). Future Items 2 (sealed-proxy = "call") and 4 (sealed-middleware
@@ -108,7 +108,7 @@ type VerificationMetadata struct {
 //
 // The Go verifier treats `cdp_kind` as OPAQUE — chain integrity verification
 // is independent of cdp_kind. The field lives at the canonical_hash
-// outer-document layer (services/api/src/cdp_document.rs), not in the
+// outer-document layer (the AuditProof document builder), not in the
 // 8-step destruction chain that this verifier reproduces.
 type CdpKind string
 
@@ -120,7 +120,7 @@ const (
 )
 
 // FailureReasonType is the closed-set wire-form discriminator. Forever-stable
-// per ADR-006 I0. Additive only — new variants land here without breaking
+// per the Forever-Standard wire discipline. Additive only — new variants land here without breaking
 // existing parsers.
 type FailureReasonType string
 
@@ -226,7 +226,7 @@ type FailureReason struct {
 // `map[string]interface{}` marshalling sorts keys alphabetically and would
 // drift from Rust's wire form; therefore we hand-emit the bytes here.
 //
-// Forever-Standard discipline (ADR-006 I0): the wire form (key ordering, key
+// Forever-Standard discipline (the Forever-Standard wire discipline): the wire form (key ordering, key
 // names, value encoding) is the cryptographic-attestation contract. Any
 // future change must produce byte-identical output to Rust's `serde_json::
 // to_string(&FailureReason)` on the reference corpus.
@@ -360,7 +360,7 @@ func (r *FailureReason) MarshalJSON() ([]byte, error) {
 			return nil, err
 		}
 	default:
-		return nil, fmt.Errorf("unknown FailureReason type %q (closed-set enum violation; Forever-Standard ADR-006 I0)", r.Type)
+		return nil, fmt.Errorf("unknown FailureReason type %q (closed-set enum violation; Forever-Standard the Forever-Standard wire discipline)", r.Type)
 	}
 	buf.WriteByte('}')
 	return buf.Bytes(), nil

@@ -2,7 +2,7 @@
 Offline AuditProof (CDP) verifier — pure Python, no network.
 
 Re-implements the canonical 8-step SHA-512 chain + Ed25519 attestation defined
-in `governance/rzl/src/cdp.rs` and `governance/rzl/src/proofs/mod.rs`.
+in the chain specification and the chain specification.
 Customers, auditors, and air-gapped systems can verify any AuditProof
 independently without trusting the Nanorix API.
 
@@ -33,7 +33,7 @@ The stages:
    `chain_hash`.
 
 3. **Ed25519 attestation** — verify `signature` over the message that version
-   signs: `final_hash` for v1.0, `document_hash` for v2.0, and the ADR-011
+   signs: `final_hash` for v1.0, `document_hash` for v2.0, and the specification
    Part-3 canonical-view hash for v2.1 `nanorix_only`, which is what
    production emits.
 
@@ -129,7 +129,7 @@ __all__ = [
     "recompute_canonical_hash",
     "signed_message",
     "recover_timestamp_from_key_id",
-    # ADR-056 — customer_declared_activity_root sidecar check.
+    # the specification — customer_declared_activity_root sidecar check.
     "CUSTOMER_DECLARED_ACTIVITY_ROOT_FIELD",
     "CustomerDeclaredActivityCheck",
     "CustomerDeclaredActivityStatus",
@@ -137,7 +137,7 @@ __all__ = [
     "customer_declared_activity_leaf_hashes",
     "split_customer_declared_activity_lines",
     "verify_customer_declared_activity",
-    # Wave-N (ADR-039 + ADR-041) surface.
+    # the receipt pipeline (the per-record receipt specification + the receipt-batching specification) surface.
     "GENESIS_SHA512_HEX",
     "PARENT_PROOF_MAX_DEPTH",
     "PATTERN_TAGS_WIRE",

@@ -1,4 +1,4 @@
-//! Wave-N (ADR-039 + ADR-041) fixture corpus extension tests.
+//! the receipt pipeline (the per-record receipt specification + the receipt-batching specification) fixture corpus extension tests.
 //!
 //! Synthesizes 10 NEW fixtures spanning receipt set sizes + parent-proof
 //! depths + cyclic-rejection + missing-signature variants. Each fixture
@@ -7,7 +7,7 @@
 //! reproducibility + Merkle root binding + per-receipt chain hash
 //! roundtrip), the failure-mode fixtures fail at the expected stage.
 //!
-//! The 100-fixture pre-Wave-N corpus baseline is verified separately
+//! The 100-fixture pre-the receipt pipeline corpus baseline is verified separately
 //! (`tests/integration_tests.rs`) — this file ADDS to that surface
 //! WITHOUT mutating it.
 
@@ -47,7 +47,7 @@ fn compute_record_chain_hash_local(
     data.extend_from_slice(out_h.as_bytes());
     data.push(0x00);
     data.extend_from_slice(activity_root.as_bytes());
-    // ADR-039 conformance (2026-08-08): a declared pattern_tag is bound into
+    // the per-record receipt specification conformance (2026-08-08): a declared pattern_tag is bound into
     // the chain hash — the fixture mirror must match the production formula
     // or every tagged fixture verifies against the wrong hash.
     if let Some(tag) = pattern_tag_wire {
@@ -103,9 +103,9 @@ fn build_parent(seed: u32, role: &str, org: &str) -> serde_json::Value {
     })
 }
 
-/// Synthesize a Wave-N AuditProof with N receipts and M parent links.
+/// Synthesize a receipt pipeline AuditProof with N receipts and M parent links.
 /// `parent_chain_hashes` field is the Merkle root computed over receipts/
-/// parents; Step 8 is amended via the combined ADR-039+041 formula.
+/// parents; Step 8 is amended via the combined the per-record receipt specification+041 formula.
 fn synthesize_wave_n_proof(
     n_receipts: u32,
     parent_seeds: &[(&'static str, &'static str)],
@@ -213,7 +213,7 @@ fn fixture_01_n0_no_receipts_no_parents_byte_equivalent_baseline() {
     let result = verify_auditproof(&proof, &[], &VerifierPolicy::default());
     assert!(
         result.valid,
-        "N=0 (pre-Wave-N) MUST verify cleanly; got {result:?}"
+        "N=0 (pre-the receipt pipeline) MUST verify cleanly; got {result:?}"
     );
     assert!(proof.get("record_receipts").is_none());
     assert!(proof.get("parent_proof_hashes").is_none());
@@ -305,7 +305,7 @@ fn fixture_09_cyclic_parent_rejected() {
     // proof; verify_auditproof returns invalid at stage 3 because the
     // proof's claimed parent_proofs_merkle_root doesn't match the
     // recomputed root over the cyclic parent set.
-    // Construct a Wave-N proof WITH parents declared. Then mutate the
+    // Construct a receipt pipeline proof WITH parents declared. Then mutate the
     // single parent to be a self-cycle referencing this proof's own
     // Step 8. Crucially, we update the claimed `parent_proofs_merkle_root`
     // to match the cycle (N=1 root = leaf), so the parent Merkle-root
@@ -402,8 +402,8 @@ fn regression_tampered_receipt_chain_hash_rejected() {
 
 #[test]
 fn forever_standard_pre_wave_n_proof_byte_identical() {
-    // A pre-Wave-N proof (no record_receipts, no parent_proof_hashes
-    // fields) MUST produce the EXACT same Step 8 hash as a Wave-N
+    // A pre-the receipt pipeline proof (no record_receipts, no parent_proof_hashes
+    // fields) MUST produce the EXACT same Step 8 hash as a receipt pipeline
     // verifier walking it. This is the load-bearing test for the
     // 100-fixture corpus baseline preservation guarantee.
     let subsystems = [
@@ -442,7 +442,7 @@ fn forever_standard_pre_wave_n_proof_byte_identical() {
     let result = verify_auditproof(&pre_wave_n_proof, &[], &VerifierPolicy::default());
     assert!(
         result.valid,
-        "Pre-Wave-N proof MUST verify byte-identically post-amendment; got {result:?}"
+        "Pre-the receipt pipeline proof MUST verify byte-identically post-amendment; got {result:?}"
     );
     assert_eq!(result.stage_reached, 4);
 }
@@ -466,7 +466,7 @@ fn parent_attribution_rewrite_still_verifies_and_is_still_reported() {
     // The honest statement of what this release does and does not fix.
     // Rewriting `parent_organization_tag` on a genuine proof leaves the
     // signature intact — the field is not covered, and binding it is an
-    // ADR-041 wire change that would move the signed Step-8 root. What
+    // the receipt-batching specification wire change that would move the signed Step-8 root. What
     // changed is that the verdict no longer stays silent about the exposure.
     let mut proof = synthesize_wave_n_proof(0, &[("safety-review", "example-health")]);
     proof["parent_proof_hashes"][0]["parent_organization_tag"] =

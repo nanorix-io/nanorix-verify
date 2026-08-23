@@ -1,4 +1,4 @@
-//! `nanorix-verify --customer-activity <record>` end to end (ADR-056).
+//! `nanorix-verify --customer-activity <record>` end to end (the specification).
 //!
 //! The proof carries `customer_declared_activity_root`; the customer holds the
 //! record. Four situations, each pinned against the real binary so the exit

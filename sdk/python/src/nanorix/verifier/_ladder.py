@@ -13,16 +13,16 @@ Stage ladder:
 |---|---|
 | 1 | `cdp_version` present |
 | 2 | `cdp_version` recognised (1.0 / 2.0 / 2.1 / 2.2); authority-id pin; region pin |
-| 3 | chain present, 8 steps, every step hash reproduces; Wave-N receipt + parent sets |
+| 3 | chain present, 8 steps, every step hash reproduces; the receipt pipeline receipt + parent sets |
 | 4 | `final_hash` binds to the last step's `chain_hash` |
 | 5–7 | Ed25519 signature over the version-appropriate message, against the embedded key |
 
-Stage 8 (anchoring the key to a signed trust-chain manifest, EO-07 sub-B) needs
+Stage 8 (anchoring the key to a signed trust-chain manifest, trust-chain anchoring) needs
 an operator-supplied manifest and is not implemented here; a proof whose
 embedded-key signature verifies tops out at the honest stage 7 — integrity
 proven, authenticity not established.
 
-## The chain hash formula (Forever-Standard, ADR-006 I0)
+## The chain hash formula (Forever-Standard, the Forever-Standard wire discipline)
 
     chain_hash[n] = SHA-512(prev || 0x00 || subsystem || 0x00 || "destroy"
                             || 0x00 || method || 0x00 || timestamp)
@@ -30,7 +30,7 @@ proven, authenticity not established.
 `method` is a FIXED per-step canonical constant looked up from the subsystem
 name — it is NOT the serialized `operation` field and NOT a per-step JSON
 field. `timestamp` is the document's `destroyed_at` (or the value recovered
-from `attestation.key_id` per ADR-047), the same value for every step.
+from `attestation.key_id` per the chain-timestamp recovery rule), the same value for every step.
 Production `CdpChainStep` carries only `step`, `subsystem`, `operation`,
 `evidence_hash`, and `chain_hash`; a verifier that reads per-step `method` or
 `timestamp` fields reproduces nothing on a real proof.
@@ -57,13 +57,13 @@ from nanorix.verifier.wave_n import (
     merkle_root_sha512_null_separated,
 )
 
-# Canonical genesis hash — SHA-512("") (Forever-Standard, ADR-006 I0)
+# Canonical genesis hash — SHA-512("") (Forever-Standard, the Forever-Standard wire discipline)
 GENESIS_HASH = (
     "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce"
     "47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e"
 )
 
-# Canonical method strings per subsystem (Forever-Standard, ADR-006 I0).
+# Canonical method strings per subsystem (Forever-Standard, the Forever-Standard wire discipline).
 METHOD_MAP: Dict[str, str] = {
     "eee_namespace": "procfs_verification",
     "eee_tmpfs": "mountinfo_verification",
@@ -89,8 +89,8 @@ CANONICAL_SUBSYSTEMS = [
 
 CHAIN_STEP_COUNT = 8
 
-# Reserved attestation slots outside CanonicalCdpView (ADR-011 I18-I21, I24-I25
-# + ADR-012 D2/D3) that no Nanorix signer populates. Every construction site
+# Reserved attestation slots outside CanonicalCdpView (the specification-I21, I24-I25
+# + the specification/D3) that no Nanorix signer populates. Every construction site
 # hard-codes them to None, so the signature never covered them and a genuine
 # document never carries them; a populated one was added after signing by
 # someone holding no key, and the signature cannot tell, because it never
@@ -120,7 +120,7 @@ _PARENT_ATTRIBUTION_FIELDS = (
 
 
 class FailureReasonType:
-    """Closed-set wire-form discriminators (Forever-Standard, ADR-006 I0).
+    """Closed-set wire-form discriminators (Forever-Standard, the Forever-Standard wire discipline).
 
     New variants ADDITIVE ONLY. Existing variants never renamed/removed.
     """
@@ -262,7 +262,7 @@ class VerificationMetadata:
     activity_event_count: Optional[int] = None
 
     # Set only when the document carried no usable `destroyed_at` and the chain
-    # timestamp was recovered from `attestation.key_id` (ADR-047). An auditor
+    # timestamp was recovered from `attestation.key_id` (the chain-timestamp recovery rule). An auditor
     # can therefore always tell which route produced a verdict.
     recovered_chain_timestamp: Optional[str] = None
 
@@ -274,7 +274,7 @@ class VerificationMetadata:
     # a verdict that stays silent invites them to be read as attested.
     unattested_parent_attribution: Optional[int] = None
 
-    # ADR-056. The `customer_declared_activity_root` the proof carries, as
+    # the specification. The `customer_declared_activity_root` the proof carries, as
     # written; None when it declares none. Disclosed whether or not the record
     # was supplied — a verdict that stays silent about a declared root invites
     # a reader to assume it was checked.
@@ -316,7 +316,7 @@ class VerificationResult:
 class VerifierPolicy:
     """Customer-side policy configuration for AuditProof verification.
 
-    Field-additive per ADR-006 I0 + ADR-031 G7. Every field defaults to its
+    Field-additive per the Forever-Standard wire discipline + the customer-authority specification G7. Every field defaults to its
     "accept anything" semantics, so a default policy behaves identically to no
     policy at all.
     """
@@ -325,7 +325,7 @@ class VerifierPolicy:
     required_region: str = ""
     required_authority_id: str = ""
 
-    # ADR-056. The raw bytes of the customer's activity record
+    # the specification. The raw bytes of the customer's activity record
     # (`activity_events.jsonl`), when the reader holds it. Recomputed and
     # compared with the proof's `customer_declared_activity_root`; a record
     # supplied against a proof that declares no root fails closed as
@@ -400,7 +400,7 @@ def compute_step_hash(
 ) -> str:
     """Reproduce one chain step's SHA-512 hash.
 
-    Formula (Forever-Standard, ADR-006 I0):
+    Formula (Forever-Standard, the Forever-Standard wire discipline):
         SHA-512(prev_hash || 0x00 || subsystem || 0x00 ||
                 "destroy"  || 0x00 || method    || 0x00 || timestamp)
     """
@@ -455,7 +455,7 @@ def _verify_record_receipts(
     capsule_id: str,
     claimed_root: Optional[str],
 ) -> Optional[FailureReason]:
-    """ADR-039 Mode A step 3 — recompute each receipt's chain hash + the root.
+    """the per-record receipt specification Mode A step 3 — recompute each receipt's chain hash + the root.
 
     Returns None when there is nothing to check or everything reproduces. A
     non-empty receipt set with no root is refused rather than skipped: the
@@ -518,7 +518,7 @@ def _verify_parent_proofs(
     parents: Sequence[Any],
     claimed_root: Optional[str],
 ) -> Optional[FailureReason]:
-    """ADR-041 — recompute the parent-proof Merkle root and compare to claimed.
+    """the receipt-batching specification — recompute the parent-proof Merkle root and compare to claimed.
 
     A parent set with no root is anchored by nothing, and the emitter never
     produces one: ``parent_proofs_merkle_root`` is set iff ``parent_proof_hashes``
@@ -567,7 +567,7 @@ def merkle_root_from_leaves(leaves: Sequence[bytes]) -> str:
 
     Returns 128 lowercase hex characters, unprefixed.
 
-    Forever-Standard (ADR-006 I0): changing any of those three rules
+    Forever-Standard (the Forever-Standard wire discipline): changing any of those three rules
     invalidates every streaming Merkle root ever emitted.
     """
     if not leaves:
@@ -801,7 +801,7 @@ def verify_auditproof(
             metadata=meta,
         )
 
-    # ADR-056 D2/D3 — customer_declared_activity_root shape gates. Off 2.1/2.2
+    # the specification/D3 — customer_declared_activity_root shape gates. Off 2.1/2.2
     # the field is outside every signed view, so a populated one is the
     # reserved-slot shape above; on 2.1/2.2 it must be a string the recompute
     # can consume. Rejected here so no later stage ever reads a malformed root.
@@ -834,7 +834,7 @@ def verify_auditproof(
         meta.signing_key_version = proof["signing_key_version"]
     meta.algorithm = _pointer_str(proof, "attestation", "algorithm")
 
-    # Policy-pin gate — authority ID (ADR-031 G7 / VP Security F4.3).
+    # Policy-pin gate — authority ID (the customer-authority specification G7 / VP Security F4.3).
     #
     # Runs BEFORE the chain walk because the policy decision is independent of
     # chain validity: a customer who pinned the wrong authority should learn
@@ -868,7 +868,7 @@ def verify_auditproof(
                 metadata=meta,
             )
 
-    # Residency-pin gate (EO-03 G1 / ADR-018 D3). A proof carrying no region at
+    # Residency-pin gate (the specification G1 / the region policy). A proof carrying no region at
     # all cannot satisfy a residency pin — it is rejected with an empty
     # `actual` rather than accepted, so the pin fails closed.
     if pol.required_region:
@@ -915,8 +915,8 @@ def verify_auditproof(
     timestamp, recovered = _canonical.resolve_chain_timestamp(proof)
     meta.recovered_chain_timestamp = recovered
 
-    # ADR-039 + ADR-041 Wave-N — optional Merkle roots amend step 8. Absent on
-    # pre-Wave-N proofs, where both branches collapse to the legacy formula.
+    # the per-record receipt specification + the receipt-batching specification the receipt pipeline — optional Merkle roots amend step 8. Absent on
+    # pre-the receipt pipeline proofs, where both branches collapse to the legacy formula.
     rrmr = proof.get("record_receipts_merkle_root")
     rrmr = rrmr if isinstance(rrmr, str) else None
     ppmr = proof.get("parent_proofs_merkle_root")
@@ -1011,7 +1011,7 @@ def verify_auditproof(
                 valid=False, failure_reason=failure, stage_reached=3, metadata=meta
             )
 
-    # ADR-056 customer-declared activity root. The root is canonical-bound, so
+    # the specification customer-declared activity root. The root is canonical-bound, so
     # the signature stages below bind it to the signer regardless; recomputing
     # it needs the customer's record, which the reader supplies through the
     # policy. Sits with the other sub-structure Merkle checks so it also covers
@@ -1056,7 +1056,7 @@ def verify_auditproof(
             metadata=meta,
         )
 
-    # Algorithm dispatch precedes byte-shape checks (ADR-051 C.1): a proof
+    # Algorithm dispatch precedes byte-shape checks (the specification C.1): a proof
     # declaring a non-Ed25519 signature algorithm fails typed as
     # algorithm_unsupported here — it must never fall through to the 64/32-byte
     # decode gates and report as "malformed". Absent or "Ed25519" proceeds

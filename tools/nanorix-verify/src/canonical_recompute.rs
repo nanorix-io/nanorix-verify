@@ -1,4 +1,4 @@
-//! EO-07 sub-A — independent canonical-hash recompute + Ed25519 signature
+//! embedded-key verification — independent canonical-hash recompute + Ed25519 signature
 //! verification for the single-proof path (`verify_auditproof`).
 //!
 //! ## Why this lives here (and not in a shared product crate)
@@ -8,7 +8,7 @@
 //! `nanorix-rzl` and their transitive deps. `nanorix-verify-types` is a
 //! pure-types crate (serde only) and cannot host the JCS + SHA-512 + Ed25519
 //! runtime code. So — consistent with how this crate already mirrors
-//! `nanorix_rzl::compute_step_hash` and the Wave-N primitives — we mirror the
+//! the reference chain implementation and the receipt pipeline primitives — we mirror the
 //! server's canonical view here and lock byte-identity with the cross-impl
 //! corpus (`fixtures/corpus/01_single_capsule_success` must verify; the
 //! `04_failure_signature_invalid` and `08_failure_canonical_hash_drift`
@@ -16,9 +16,9 @@
 //!
 //! ## What is mirrored
 //!
-//! `services/api/src/cdp_document.rs::FullCdp::canonical_view()` builds a
-//! `CanonicalCdpView` (ADR-011 Part 3) and hashes it via
-//! `nanorix_rzl::canonical::canonical_hash` = `hex(sha512(serde_jcs(view)))`.
+//! the AuditProof document builder::FullCdp::canonical_view()` builds a
+//! `CanonicalCdpView` (the AuditProof specification) and hashes it via
+//! the reference chain implementation = `hex(sha512(serde_jcs(view)))`.
 //! Because the AuditProof JSON already contains every value in its exact
 //! serialized shape, we rebuild only the *view* — mapping `FullCdp` wire field
 //! names to the canonical-view keys and applying the two transforms the server
@@ -31,10 +31,10 @@
 //! ## Trust scope (sub-A vs sub-B)
 //!
 //! This verifies the signature against the public key EMBEDDED in the proof —
-//! identical to what `services/api/src/routes/verify.rs` does today. That
+//! identical to what the hosted verification endpoint does today. That
 //! detects tampering of a signed proof. It does NOT establish that the key
 //! belongs to Nanorix; binding the key to a Nanorix-rooted trust anchor is
-//! EO-07 sub-B (the trust-chain manifest in `trust_chain.rs`).
+//! trust-chain anchoring (the trust-chain manifest in `trust_chain.rs`).
 
 use crate::{strip_base64_prefix, strip_hash_prefix};
 use base64::Engine;
@@ -70,7 +70,7 @@ pub enum SignatureCheck {
     Failed(SignatureFailureReason),
 }
 
-/// Rebuild the ADR-011 Part-3 canonical view from a proof's JSON and return its
+/// Rebuild the specification Part-3 canonical view from a proof's JSON and return its
 /// RFC-8785 JCS SHA-512 hex digest — byte-identical to the server's
 /// `FullCdp::canonical_hash()`. Lowercase 128-char hex (or empty on the
 /// impossible JCS-serialize failure, which fails the signature check closed).
@@ -127,9 +127,9 @@ pub fn recompute_canonical_hash(proof: &Value) -> String {
 
     insert_if_present(&mut v, "parent_proofs_merkle_root", proof);
     insert_if_present(&mut v, "record_receipts_merkle_root", proof);
-    // ADR-056 — the one signed root over the customer's own activity record.
+    // the specification — the one signed root over the customer's own activity record.
     // Same skip_serializing_if mechanic as the two Merkle roots above, so a
-    // document without it hashes byte-identically to a pre-ADR-056 document.
+    // document without it hashes byte-identically to a pre-the specification document.
     insert_if_present(&mut v, "customer_declared_activity_root", proof);
 
     // No skip attribute -> null when absent.
@@ -182,14 +182,14 @@ fn insert_if_present(view: &mut Map<String, Value>, key: &str, proof: &Value) {
 }
 
 /// Select the signed message for a proof by version/mode — mirrors
-/// `services/api/src/routes/verify.rs`:
+/// the hosted verification endpoint:
 /// - `1.0` -> `final_hash` (ASCII hex, prefix-stripped)
 /// - `2.0` -> `document_hash`
 /// - `2.1` / `2.2` + `nanorix_only` -> recomputed `canonical_hash`
 /// - `2.1` / `2.2` + `dual_signature` / `tee_attested` -> `None` (not
 ///   verifiable here)
 ///
-/// `2.2` shares the `2.1` arm deliberately: ADR-053 / ADR-056 changed what the
+/// `2.2` shares the `2.1` arm deliberately: the specification / the specification changed what the
 /// canonical view may carry, not how it is hashed or signed.
 fn signed_message(proof: &Value, cdp_version: &str) -> Option<String> {
     let signing_mode = proof
@@ -225,7 +225,7 @@ fn signed_message(proof: &Value, cdp_version: &str) -> Option<String> {
 
 /// Decode base64 Ed25519 signature + public key and verify `message` under
 /// them. Shared by the embedded-key (sub-A) and manifest-key (sub-B) paths,
-/// and by the ADR-050 BoundaryAttestation sibling pipeline (`boundary.rs`).
+/// and by the boundary-attestation specification BoundaryAttestation sibling pipeline (`boundary.rs`).
 pub(crate) fn verify_message_with_key(
     message: &str,
     sig_b64: &str,
@@ -319,7 +319,7 @@ mod tests {
     use ed25519_dalek::{Signer, SigningKey};
     use serde_json::json;
 
-    /// The wire form of `services/api/src/cdp_document.rs::test_cdp()` — the
+    /// The wire form of the AuditProof document builder::test_cdp()` — the
     /// fixed input behind the server's `golden_canonical_hash` test. Only the
     /// fields the canonical view actually reads are present; excluded fields
     /// (residency, final_hash, destruction_trigger, the main attestation, the
@@ -356,7 +356,7 @@ mod tests {
         );
     }
 
-    /// `customer_declared_activity_root` (ADR-056) is canonical-bound when
+    /// `customer_declared_activity_root` (the specification) is canonical-bound when
     /// present and invisible when absent. Three facts pinned: (1) the golden
     /// input, which carries no root, still hashes to `402f533e…`; (2) a
     /// document carrying the root hashes differently — so a signature made
@@ -371,7 +371,7 @@ mod tests {
 
         let mut with_root = golden_input();
         with_root["customer_declared_activity_root"] = json!(
-            "sha512:390d7d3a3c84f59c289a33e3f1848e7208036e31b2f83837ade9e55fd3ac504550cd73baed351b139c22df78d2b6c65efebd9c27a5a237b64d0c15088f4f9ef1"
+            "sha512:eeaf4d8e1236e12b43441daafff96d0cd178e2785664eea2ff261574522204a9f908540a12eac5a2292b487c49f2c24f008e8e6e07ea9b9508fb07dcec90f87b"
         );
         let with_hash = recompute_canonical_hash(&with_root);
         assert_ne!(with_hash, GOLDEN, "a carried root must move the hash");

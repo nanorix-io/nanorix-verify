@@ -1,4 +1,4 @@
-//! ADR-056 — `customer_declared_activity_root`: recompute the customer's
+//! the specification — `customer_declared_activity_root`: recompute the customer's
 //! activity-record commitment from the raw record bytes and compare it with
 //! the root the proof carries.
 //!
@@ -21,13 +21,18 @@
 //!    lines. Nothing is trimmed: a leading space is content; an empty line in
 //!    the middle is a leaf.
 //! 2. Leaf = lowercase SHA-512 hex of the line's raw bytes.
-//! 3. Root = the ADR-039 null-separated Merkle root over the leaves in order
+//! 3. `m` = the per-record receipt specification null-separated Merkle root over the leaves in order
 //!    (pairs hashed as `SHA-512(left_hex || 0x00 || right_hex)`, odd last node
 //!    duplicated), the same construction `record_receipts_merkle_root` and
-//!    `parent_proofs_merkle_root` use.
-//! 4. Zero lines = the genesis hash (SHA-512 of the empty string), so "opted in
-//!    and declared nothing" is a distinct, signed value rather than an absent
-//!    field.
+//!    `parent_proofs_merkle_root` use — or the genesis hash (SHA-512 of the
+//!    empty string) for zero lines.
+//! 4. Root = `SHA-512(m_hex_ascii || 0x00 || count_decimal_ascii)`, the count
+//!    being the number of lines as ASCII base-10 digits, no sign, no leading
+//!    zeros (`"0"` for the empty record). The tree alone does not commit to
+//!    the count: its odd-level duplication gives an odd record and the same
+//!    record with its last line repeated one tree, and `""` and `"\n"` one
+//!    tree too. Binding the count closes both. "Opted in and declared
+//!    nothing" is still a distinct, signed value rather than an absent field.
 //! 5. Wire form `sha512:<hex>`.
 //!
 //! ## Which proofs can carry it
@@ -74,7 +79,7 @@ use nanorix_verify_types::FailureReason;
 use serde_json::Value;
 use sha2::{Digest, Sha512};
 
-/// The proof field that carries the root (ADR-056).
+/// The proof field that carries the root (the specification).
 pub const CUSTOMER_DECLARED_ACTIVITY_ROOT_FIELD: &str = "customer_declared_activity_root";
 
 /// The cdp_versions whose signed message is the canonical view, and so the
@@ -169,12 +174,16 @@ pub fn customer_declared_activity_leaf_hashes(record: &[u8]) -> Vec<String> {
         .collect()
 }
 
-/// The root over a record, in wire form `sha512:<hex>`. Zero lines yield the
-/// genesis hash.
+/// The root over a record, in wire form `sha512:<hex>`: the tree over the
+/// leaves (genesis for zero lines), then the line count bound in as
+/// `SHA-512(m_hex || 0x00 || count_decimal)`.
 pub fn compute_customer_declared_activity_root(record: &[u8]) -> String {
     let leaves = customer_declared_activity_leaf_hashes(record);
-    let root = verifier_merkle_root(&leaves).unwrap_or_else(|| NANORIX_GENESIS_HASH.to_string());
-    format!("sha512:{root}")
+    let merkle = verifier_merkle_root(&leaves).unwrap_or_else(|| NANORIX_GENESIS_HASH.to_string());
+    let mut data = merkle.into_bytes();
+    data.push(0x00);
+    data.extend_from_slice(leaves.len().to_string().as_bytes());
+    format!("sha512:{}", hex::encode(Sha512::digest(&data)))
 }
 
 /// The root a proof declares, when it carries one. `null` is absent.
@@ -265,35 +274,62 @@ mod tests {
         }
     }
 
+    /// The empty record is genesis with the count `0` bound in — a present,
+    /// fixed value, not the bare genesis hash.
     #[test]
-    fn the_empty_record_is_the_genesis_hash() {
+    fn the_empty_record_is_the_count_bound_genesis_hash() {
+        let mut data = NANORIX_GENESIS_HASH.as_bytes().to_vec();
+        data.push(0x00);
+        data.push(b'0');
         assert_eq!(
+            compute_customer_declared_activity_root(b""),
+            format!("sha512:{}", hex::encode(Sha512::digest(&data)))
+        );
+        assert_ne!(
             compute_customer_declared_activity_root(b""),
             format!("sha512:{NANORIX_GENESIS_HASH}")
         );
     }
 
     /// A lone newline is one empty line, not zero lines — only the trailing
-    /// empty segment is dropped. Its root nevertheless equals the genesis
-    /// root: a single leaf is its own root, and the leaf of an empty line is
-    /// SHA-512 of nothing, which is what genesis is. The pinned algorithm
-    /// makes "declared nothing" and "declared one empty line" the same
-    /// commitment; stated here so nobody reads the coincidence as a bug.
+    /// empty segment is dropped. Its tree equals the empty record's (a single
+    /// leaf is its own root, and the leaf of an empty line is SHA-512 of
+    /// nothing, which is genesis); the count binding is what separates the
+    /// two roots.
     #[test]
-    fn a_lone_newline_is_one_empty_leaf() {
+    fn a_lone_newline_is_one_empty_leaf_and_differs_from_the_empty_record() {
         assert_eq!(split_activity_lines(b"\n"), vec![&b""[..]]);
         assert_eq!(
             split_activity_lines(b"a\n\nb\n"),
             vec![&b"a"[..], &b""[..], &b"b"[..]]
         );
         assert_eq!(customer_declared_activity_leaf_hashes(b"\n").len(), 1);
-        assert_eq!(
+        assert_ne!(
             compute_customer_declared_activity_root(b"\n"),
             compute_customer_declared_activity_root(b"")
         );
         assert_ne!(
             compute_customer_declared_activity_root(b"\n\n"),
             compute_customer_declared_activity_root(b"")
+        );
+    }
+
+    /// The tree duplicates the last node of an odd level, so an odd record
+    /// and the same record with its last line repeated share a tree; the
+    /// root binds the count and the two differ.
+    #[test]
+    fn an_odd_record_and_its_last_line_duplicated_differ() {
+        assert_eq!(
+            verifier_merkle_root(&customer_declared_activity_leaf_hashes(b"a\nb\nc\n")),
+            verifier_merkle_root(&customer_declared_activity_leaf_hashes(b"a\nb\nc\nc\n"))
+        );
+        assert_ne!(
+            compute_customer_declared_activity_root(b"a\nb\nc\n"),
+            compute_customer_declared_activity_root(b"a\nb\nc\nc\n")
+        );
+        assert_ne!(
+            compute_customer_declared_activity_root(b"a\nb\nc\nd\ne\nf\n"),
+            compute_customer_declared_activity_root(b"a\nb\nc\nd\ne\nf\ne\nf\n")
         );
     }
 

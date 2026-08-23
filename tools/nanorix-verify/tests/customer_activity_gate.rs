@@ -1,4 +1,4 @@
-//! The stage-2 gate on `customer_declared_activity_root` (ADR-056), pinned
+//! The stage-2 gate on `customer_declared_activity_root` (the specification), pinned
 //! from the outside through `verify_auditproof`.
 //!
 //! Two things the gate must hold:

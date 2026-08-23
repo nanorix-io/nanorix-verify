@@ -1,4 +1,4 @@
-// Tests for the ADR-056 customer-declared activity root — the Go peer of the
+// Tests for the specification customer-declared activity root — the Go peer of the
 // test module in `tools/nanorix-verify/src/customer_activity.rs`. Every vector
 // in the shared JSON file is exercised; the file is read, not copied, so Go
 // cannot drift from what Rust, Python and TypeScript test against.
@@ -6,6 +6,8 @@
 package auditproof
 
 import (
+	"crypto/sha512"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"strings"
@@ -75,18 +77,25 @@ func TestCustomerActivityEveryPinnedVectorReproduces(t *testing.T) {
 	}
 }
 
-func TestCustomerActivityEmptyRecordIsGenesis(t *testing.T) {
-	if got := ComputeCustomerDeclaredActivityRoot(nil); got != "sha512:"+NanorixGenesisHash {
-		t.Fatalf("empty record root: got %s", got)
+// The empty record is genesis with the count "0" bound in — a present, fixed
+// value, not the bare genesis hash.
+func TestCustomerActivityEmptyRecordIsTheCountBoundGenesis(t *testing.T) {
+	data := append([]byte(NanorixGenesisHash), 0x00, '0')
+	sum := sha512.Sum512(data)
+	want := "sha512:" + hex.EncodeToString(sum[:])
+	if got := ComputeCustomerDeclaredActivityRoot(nil); got != want {
+		t.Fatalf("empty record root: got %s, want %s", got, want)
+	}
+	if got := ComputeCustomerDeclaredActivityRoot(nil); got == "sha512:"+NanorixGenesisHash {
+		t.Fatal("the empty record's root must not be the bare genesis hash")
 	}
 }
 
 // A lone newline is one empty line, not zero lines — only the trailing empty
-// segment is dropped. Its root nevertheless equals the genesis root: a single
-// leaf is its own root, and the leaf of an empty line is SHA-512 of nothing.
-// The pinned algorithm makes "declared nothing" and "declared one empty line"
-// the same commitment; stated here so nobody reads the coincidence as a bug.
-func TestCustomerActivityLoneNewlineIsOneEmptyLeaf(t *testing.T) {
+// segment is dropped. Its tree equals the empty record's (a single leaf is its
+// own root, and the leaf of an empty line is SHA-512 of nothing, which is
+// genesis); the count binding is what separates the two roots.
+func TestCustomerActivityLoneNewlineIsOneEmptyLeafAndDiffersFromEmpty(t *testing.T) {
 	if got := SplitActivityLines([]byte("\n")); len(got) != 1 || len(got[0]) != 0 {
 		t.Fatalf("lone newline: got %v", got)
 	}
@@ -94,11 +103,28 @@ func TestCustomerActivityLoneNewlineIsOneEmptyLeaf(t *testing.T) {
 	if len(got) != 3 || string(got[0]) != "a" || len(got[1]) != 0 || string(got[2]) != "b" {
 		t.Fatalf("a\\n\\nb\\n: got %v", got)
 	}
-	if ComputeCustomerDeclaredActivityRoot([]byte("\n")) != ComputeCustomerDeclaredActivityRoot(nil) {
-		t.Fatal("one empty leaf must equal the genesis root (single leaf = leaf hash = SHA-512(\"\"))")
+	if ComputeCustomerDeclaredActivityRoot([]byte("\n")) == ComputeCustomerDeclaredActivityRoot(nil) {
+		t.Fatal("one empty line and the empty record must not share a root")
 	}
 	if ComputeCustomerDeclaredActivityRoot([]byte("\n\n")) == ComputeCustomerDeclaredActivityRoot(nil) {
-		t.Fatal("two empty leaves must differ from genesis")
+		t.Fatal("two empty leaves must differ from the empty record")
+	}
+}
+
+// The tree duplicates the last node of an odd level, so an odd record and the
+// same record with its last line repeated share a tree; the root binds the
+// count and the two differ.
+func TestCustomerActivityOddRecordAndItsLastLineDuplicatedDiffer(t *testing.T) {
+	treeA, _ := MerkleRootSHA512NullSeparated(CustomerDeclaredActivityLeafHashes([]byte("a\nb\nc\n")))
+	treeB, _ := MerkleRootSHA512NullSeparated(CustomerDeclaredActivityLeafHashes([]byte("a\nb\nc\nc\n")))
+	if treeA != treeB {
+		t.Fatal("the bare tree is expected to collide on the odd pair")
+	}
+	if ComputeCustomerDeclaredActivityRoot([]byte("a\nb\nc\n")) == ComputeCustomerDeclaredActivityRoot([]byte("a\nb\nc\nc\n")) {
+		t.Fatal("an odd record and its last line duplicated must not share a root")
+	}
+	if ComputeCustomerDeclaredActivityRoot([]byte("a\nb\nc\nd\ne\nf\n")) == ComputeCustomerDeclaredActivityRoot([]byte("a\nb\nc\nd\ne\nf\ne\nf\n")) {
+		t.Fatal("a six-line record and its last pair duplicated must not share a root")
 	}
 }
 

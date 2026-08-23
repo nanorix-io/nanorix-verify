@@ -1,6 +1,6 @@
 //! `cdp_version: "2.2"` is verified exactly as `"2.1"`.
 //!
-//! CDP 2.2 (ADR-053 policy-denial summary + ADR-056 customer-declared activity
+//! CDP 2.2 (the specification policy-denial summary + the specification customer-declared activity
 //! root) changes what a document may carry, not how it is canonicalised,
 //! hashed or signed. The verifier therefore routes 2.2 through the 2.1 arm at
 //! every version switch. These tests pin that from the outside, against a

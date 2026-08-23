@@ -88,13 +88,14 @@ implementations something you can detect instead of argue about.
 
 ## Conformance
 
-`tools/nanorix-verify/fixtures/corpus` holds 100 cases in nine categories:
+`tools/nanorix-verify/fixtures/corpus` holds 110 cases in ten categories:
 single-capsule and multi-step successes, chain mismatches, invalid signatures,
-region and authority mismatches, unsupported versions, canonical-hash drift, and
-a set of targeted tamper patterns. Every case ships with the verdict it should
-produce.
+region and authority mismatches, unsupported versions, canonical-hash drift, a
+set of targeted tamper patterns, and the version 2.2 shapes (signed policy-denial
+summaries and the customer-declared activity root). Every case ships with the
+verdict it should produce.
 
-An implementation conforms if it produces the expected verdict on all 100. The
+An implementation conforms if it produces the expected verdict on all 110. The
 corpus is generated rather than written by hand, and the generator is in the
 repository, so you can regenerate the expected verdicts and diff them instead of
 taking our word for it.
@@ -112,7 +113,7 @@ node --experimental-strip-types --import ./ts-resolve-register.mjs \
 
 Worth being precise about what that proves. Rust and Go were written against
 the specification independently, which is the evidence that matters: two
-implementations reaching identical verdicts on 100 cases, including every
+implementations reaching identical verdicts on 110 cases, including every
 failure and tamper case, is what shows the document is unambiguous enough to
 build from twice. Python and TypeScript are ports of the Rust implementation,
 so their agreement confirms the ports are faithful rather than independently

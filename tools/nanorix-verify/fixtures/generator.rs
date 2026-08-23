@@ -13,7 +13,7 @@
 //!   (10 each = 60 fixtures)
 //! - Tamper patterns — byte-flip, re-order, version downgrade, signature
 //!   substitution (5 each = 20 fixtures)
-//! - CDP 2.2 — ADR-053 `policy_denial_summary` in the trail and ADR-056
+//! - CDP 2.2 — the specification `policy_denial_summary` in the trail and the specification
 //!   `customer_declared_activity_root`, positive and tampered (7 fixtures)
 //!
 //! Each fixture is written as `corpus/<category>/<NNNN>_<descriptor>.json`
@@ -42,9 +42,9 @@
 //! ## The signed message (why every v2.1 fixture must carry canonical fields)
 //!
 //! A v2.1 `nanorix_only` AuditProof is NOT signed over `final_hash` — that is
-//! the v1.0 message. It is signed over the ADR-011 Part-3 canonical-view hash:
+//! the v1.0 message. It is signed over the specification Part-3 canonical-view hash:
 //! `hex(sha512(serde_jcs(canonical_view)))`, built by
-//! `services/api/src/cdp_document.rs::FullCdp::canonical_view()` and mirrored
+//! the AuditProof document builder::FullCdp::canonical_view()` and mirrored
 //! for the offline verifier in `canonical_recompute::recompute_canonical_hash`.
 //! The generator signs with that same mirrored function rather than a third
 //! private copy, so the corpus cannot drift away from the verifier; the
@@ -88,6 +88,7 @@
 
 use ed25519_dalek::{Signer, SigningKey};
 use nanorix_verify::canonical_recompute::recompute_canonical_hash;
+use nanorix_verify::customer_activity::compute_customer_declared_activity_root;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha512};
 use std::fs;
@@ -237,7 +238,7 @@ impl FixtureBuilder {
             // `activity` is inside `CanonicalCdpView`, so a region carried here
             // is covered by the signature; a top-level `region` is not, and a
             // corpus that put it there could never exercise the residency pin's
-            // real path. Production emits region the same way (EO-03 G1).
+            // real path. Production emits region the same way (the specification G1).
             "activity": [{
                 "event": "capsule_started",
                 "encryption": "aes-256-gcm",
@@ -250,7 +251,7 @@ impl FixtureBuilder {
         })
     }
 
-    /// Sign a built document over its ADR-011 Part-3 canonical hash and attach
+    /// Sign a built document over its the specification Part-3 canonical hash and attach
     /// the attestation block. Must run AFTER every canonical-bound field is
     /// set; tamper fixtures mutate only after this returns.
     fn sign_in_place(&self, proof: &mut Value) {
@@ -258,7 +259,7 @@ impl FixtureBuilder {
 
         let canonical_hash = recompute_canonical_hash(proof);
         // Ed25519 over the canonical hash's ASCII hex characters (128 bytes),
-        // not its 64 raw digest bytes — Forever-Standard per ADR-006.
+        // not its 64 raw digest bytes — Forever-Standard per the specification.
         let signature_b64 = B64.encode(self.signing_key.sign(canonical_hash.as_bytes()).to_bytes());
 
         let capsule_id = proof["capsule_id"].as_str().unwrap_or_default().to_string();
@@ -271,7 +272,7 @@ impl FixtureBuilder {
             "algorithm": "Ed25519",
             "public_key": format!("base64:{}", self.public_key_b64),
             "signature": format!("base64:{}", signature_b64),
-            // Mirrors governance/rzl/src/cdp.rs: the timestamp's ':' separators
+            // Mirrors the chain specification: the timestamp's ':' separators
             // are replaced with '-', and the suffix is the capsule_id's FIRST 8
             // characters.
             "key_id": format!(
@@ -284,7 +285,7 @@ impl FixtureBuilder {
 
     /// Sign a 1.0 document over its prefix-stripped `final_hash` — the 1.0
     /// signed message — and attach the attestation block. Everything outside
-    /// the chain is unsigned on this version, which is what the ADR-056
+    /// the chain is unsigned on this version, which is what the specification
     /// version-gate fixture demonstrates.
     fn sign_v1_in_place(&self, proof: &mut Value) {
         use base64::{engine::general_purpose::STANDARD as B64, Engine};
@@ -327,7 +328,7 @@ impl FixtureBuilder {
         proof
     }
 
-    /// Build an UNSIGNED v2.2 AuditProof. CDP 2.2 (ADR-053 + ADR-056) is the
+    /// Build an UNSIGNED v2.2 AuditProof. CDP 2.2 (the specification + the specification) is the
     /// 2.1 shape with a different version string; what it adds rides in the
     /// activity trail (`policy_denial_summary`) and in the optional
     /// `customer_declared_activity_root`, both of which the caller sets
@@ -338,7 +339,7 @@ impl FixtureBuilder {
         proof
     }
 
-    /// Build a signed v2.2 AuditProof whose trail ends with an ADR-053
+    /// Build a signed v2.2 AuditProof whose trail ends with an specification
     /// `policy_denial_summary` event carrying `by_reason`. An empty
     /// `by_reason` is "no enumerated check ran"; a `count: 0` row is the
     /// honest zero — the check ran and refused nothing.
@@ -834,7 +835,7 @@ fn generate_canonical_hash_drift_failures(builder: &FixtureBuilder, root: &Path)
         (
             "flip_signature_algorithm",
             |p| p["signature_algorithm"] = json!("RSA-PSS"),
-            // ADR-051 C.1: algorithm dispatch precedes byte-shape checks — a
+            // the specification C.1: algorithm dispatch precedes byte-shape checks — a
             // document declaring a non-Ed25519 algorithm fails typed at stage
             // 4 (this build cannot evaluate what the document declares), not
             // as a presumed-Ed25519 mismatch at stage 7. Same path is the
@@ -842,7 +843,7 @@ fn generate_canonical_hash_drift_failures(builder: &FixtureBuilder, root: &Path)
             // future-algorithm proof.
             with_note(
                 expected_failure("algorithm_unsupported", json!({ "found": "RSA-PSS" }), 4),
-                "ADR-051 C.1: algorithm dispatch precedes byte-shape checks. A \
+                "the specification C.1: algorithm dispatch precedes byte-shape checks. A \
                  document declaring a non-Ed25519 signature algorithm fails \
                  typed as algorithm_unsupported at stage 4 — this build cannot \
                  evaluate what the document declares, so presuming Ed25519 \
@@ -1011,12 +1012,35 @@ fn generate_tamper_patterns(builder: &FixtureBuilder, root: &Path) -> usize {
     count
 }
 
-/// The "three" vector from `fixtures/customer_declared_activity_root_vectors.json`
-/// — three JSONL lines, pinned across every implementation.
-const ACTIVITY_ROOT_THREE_VECTOR: &str = "sha512:390d7d3a3c84f59c289a33e3f1848e7208036e31b2f83837ade9e55fd3ac504550cd73baed351b139c22df78d2b6c65efebd9c27a5a237b64d0c15088f4f9ef1";
+/// The cross-implementation vectors, read rather than copied so the corpus
+/// cannot drift from what every verifier is held to.
+const ACTIVITY_ROOT_VECTORS: &str = include_str!("customer_declared_activity_root_vectors.json");
 
-/// Category 10 — CDP 2.2 (7 fixtures). ADR-053's `policy_denial_summary`
-/// trail event and ADR-056's `customer_declared_activity_root`, each positive
+/// The "three" vector's root — three JSONL lines, pinned across every
+/// implementation — computed by the verifier's own function over the
+/// vector's input and checked against the root the vectors file records.
+/// The generator refuses to run if the two disagree: a corpus written from
+/// a root no verifier reproduces would pin the wrong algorithm.
+fn activity_root_three_vector() -> String {
+    let doc: Value = serde_json::from_str(ACTIVITY_ROOT_VECTORS).expect("vectors file parses");
+    let three = doc["vectors"]
+        .as_array()
+        .expect("vectors array")
+        .iter()
+        .find(|v| v["name"] == "three")
+        .expect("vector `three`");
+    let input = three["input_utf8"].as_str().expect("input_utf8").as_bytes();
+    let computed = compute_customer_declared_activity_root(input);
+    let recorded = three["root"].as_str().expect("root");
+    assert_eq!(
+        computed, recorded,
+        "the verifier's activity root and the vectors file disagree on `three`"
+    );
+    computed
+}
+
+/// Category 10 — CDP 2.2 (7 fixtures). the specification's `policy_denial_summary`
+/// trail event and the specification's `customer_declared_activity_root`, each positive
 /// and each tampered after signing. 2.2 is verified exactly as 2.1, so every
 /// tamper here is caught where a 2.1 tamper of the same field would be: the
 /// trail and the root are canonical-bound, and the rejection is the signature.
@@ -1046,7 +1070,7 @@ fn generate_v2_2(builder: &FixtureBuilder, root: &Path) -> usize {
     // The check ran and refused nothing — the honest zero.
     let zero = builder.build_v2_2_with_denial_summary(
         902,
-        json!([{ "reason": "proxy_connect_denied", "count": 0 }]),
+        json!([{ "reason": "proxy_request_denied", "count": 0 }]),
     );
     write_fixture(
         &dir,
@@ -1061,7 +1085,7 @@ fn generate_v2_2(builder: &FixtureBuilder, root: &Path) -> usize {
         903,
         json!([
             { "reason": "egress_profile_denied", "count": 2 },
-            { "reason": "proxy_connect_denied", "count": 3 },
+            { "reason": "proxy_request_denied", "count": 3 },
         ]),
     );
     write_fixture(
@@ -1076,7 +1100,7 @@ fn generate_v2_2(builder: &FixtureBuilder, root: &Path) -> usize {
     // view, so the signature no longer covers the document in front of us.
     let mut flipped_count = builder.build_v2_2_with_denial_summary(
         904,
-        json!([{ "reason": "proxy_connect_denied", "count": 3 }]),
+        json!([{ "reason": "proxy_request_denied", "count": 3 }]),
     );
     flipped_count["activity"][1]["by_reason"][0]["count"] = json!(0);
     write_fixture(
@@ -1096,9 +1120,10 @@ fn generate_v2_2(builder: &FixtureBuilder, root: &Path) -> usize {
     );
     count += 1;
 
-    // A declared customer activity root (ADR-056). The corpus carries no
+    // A declared customer activity root (the specification). The corpus carries no
     // record, so the verdict discloses the root as declared, not checked.
-    let with_root = builder.build_v2_2_with_activity_root(905, ACTIVITY_ROOT_THREE_VECTOR);
+    let three_root = activity_root_three_vector();
+    let with_root = builder.build_v2_2_with_activity_root(905, &three_root);
     write_fixture(
         &dir,
         "0005_v2_2_customer_declared_activity_root",
@@ -1115,8 +1140,8 @@ fn generate_v2_2(builder: &FixtureBuilder, root: &Path) -> usize {
 
     // The root byte-flipped after signing. Canonical-bound, so the signature
     // catches it — the record is not needed to detect a tampered root.
-    let mut flipped_root = builder.build_v2_2_with_activity_root(906, ACTIVITY_ROOT_THREE_VECTOR);
-    let mut chars: Vec<char> = ACTIVITY_ROOT_THREE_VECTOR.chars().collect();
+    let mut flipped_root = builder.build_v2_2_with_activity_root(906, &three_root);
+    let mut chars: Vec<char> = three_root.chars().collect();
     // "sha512:" prefix has length 7; flip the first hex character.
     chars[7] = if chars[7] == '3' { '4' } else { '3' };
     flipped_root["customer_declared_activity_root"] = Value::String(chars.into_iter().collect());
@@ -1144,7 +1169,7 @@ fn generate_v2_2(builder: &FixtureBuilder, root: &Path) -> usize {
     // record" it commits to. Rejected before the chain walk, the way the
     // reserved attestation slots are; never "declared, not checked".
     let mut v1_with_root = builder.build_v1_minimal(907);
-    v1_with_root["customer_declared_activity_root"] = json!(ACTIVITY_ROOT_THREE_VECTOR);
+    v1_with_root["customer_declared_activity_root"] = json!(three_root);
     builder.sign_v1_in_place(&mut v1_with_root);
     write_fixture(
         &dir,
@@ -1260,7 +1285,7 @@ fn write_index(root: &Path, total: usize) {
             "policy": "optional — VerifierPolicy pins REQUIRED to reach this verdict; absent means defaults",
             "note": "optional — prose for verdicts that are not the obvious guess from the category name",
         },
-        "signed_message": "v1.0 signs final_hash; v2.0 signs document_hash; v2.1 and v2.2 nanorix_only sign the ADR-011 Part-3 canonical-view hash (hex(sha512(jcs(view)))) — 2.2 is verified exactly as 2.1",
+        "signed_message": "v1.0 signs final_hash; v2.0 signs document_hash; v2.1 and v2.2 nanorix_only sign the specification Part-3 canonical-view hash (hex(sha512(jcs(view)))) — 2.2 is verified exactly as 2.1",
         "anchor_timestamp": FIXTURE_TIMESTAMP,
         "anchor_signing_seed_sha256": {
             "_note": "Public anchor for cross-impl reproducibility. The seed itself is constant in source.",

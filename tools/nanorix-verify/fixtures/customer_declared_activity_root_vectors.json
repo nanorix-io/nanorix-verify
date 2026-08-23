@@ -1,12 +1,12 @@
 {
-  "_algorithm": "ADR-056 customer_declared_activity_root: split the buffer on 0x0A, drop only a trailing empty segment, never trim or parse; leaf = SHA-512 hex of the raw line bytes; root = merkle_root_sha512_null_separated (pairs hashed as SHA-512(left_hex || 0x00 || right_hex), odd last node duplicated); zero lines = GENESIS (SHA-512 of empty string); wire form sha512:<hex>.",
+  "_algorithm": "the specification customer_declared_activity_root: split the buffer on 0x0A, drop only a trailing empty segment, never trim or parse; leaf = SHA-512 hex of the raw line bytes; m = merkle_root_sha512_null_separated over the leaves in record order (pairs hashed as SHA-512(left_hex || 0x00 || right_hex), odd last node duplicated), or GENESIS (SHA-512 of empty string) hex for zero lines; root = SHA-512(m_hex_ascii || 0x00 || count_decimal_ascii) where count_decimal_ascii is the line count as ASCII base-10 digits, no sign, no leading zeros (\"0\" for the empty record); wire form sha512:<hex>. The count binding is what separates \"\" from \"\\n\" and an odd record from the same record with its last line repeated, which the tree alone (odd last node duplicated) does not.",
   "vectors": [
     {
       "name": "empty",
       "input_utf8": "",
       "line_count": 0,
       "leaf_hashes": [],
-      "root": "sha512:cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e"
+      "root": "sha512:e2e0379c1f7e2243f9459a9f3d1fb4fd0dbc810dfefc34b940e1bf0523a68a7fa704182112a1f5d3bd72951b8040c47f3330b1e79caddcef76abb5d647724434"
     },
     {
       "name": "single",
@@ -15,7 +15,7 @@
       "leaf_hashes": [
         "b7797a325a3e1011dc7435b49b2f6ba10431623298cebe31bce52ca267cc1417f9d7c1453d43084af9fbd73787a6a53a05c6f18a359cbb17929a3bd734fc9825"
       ],
-      "root": "sha512:b7797a325a3e1011dc7435b49b2f6ba10431623298cebe31bce52ca267cc1417f9d7c1453d43084af9fbd73787a6a53a05c6f18a359cbb17929a3bd734fc9825"
+      "root": "sha512:afaf2df353128dc5d305b5dc1352faac16136dd36165b16c5a4c865cf25d765ad3d51b293cc678c84300a9be8e24d26c5e3942fe5d4000b4e245f9fc310072f7"
     },
     {
       "name": "three",
@@ -26,7 +26,7 @@
         "bf548e61687fc592068e033b7f385bc0faf95fe8e98f3da6da286ad099f6b7ecf53e788000b43444dcdfb11cab265a33c50f8528a26f425a0fc801f15d473bc0",
         "c4410d60146fb50d59cebac05848d7c940130143c24eb349a311c9da05a56121797234c3ca9b6f1aa093b5e25e34598538bcbe2a200d16051f587edff036a21f"
       ],
-      "root": "sha512:390d7d3a3c84f59c289a33e3f1848e7208036e31b2f83837ade9e55fd3ac504550cd73baed351b139c22df78d2b6c65efebd9c27a5a237b64d0c15088f4f9ef1"
+      "root": "sha512:eeaf4d8e1236e12b43441daafff96d0cd178e2785664eea2ff261574522204a9f908540a12eac5a2292b487c49f2c24f008e8e6e07ea9b9508fb07dcec90f87b"
     },
     {
       "name": "three_no_trailing_newline",
@@ -37,7 +37,7 @@
         "bf548e61687fc592068e033b7f385bc0faf95fe8e98f3da6da286ad099f6b7ecf53e788000b43444dcdfb11cab265a33c50f8528a26f425a0fc801f15d473bc0",
         "c4410d60146fb50d59cebac05848d7c940130143c24eb349a311c9da05a56121797234c3ca9b6f1aa093b5e25e34598538bcbe2a200d16051f587edff036a21f"
       ],
-      "root": "sha512:390d7d3a3c84f59c289a33e3f1848e7208036e31b2f83837ade9e55fd3ac504550cd73baed351b139c22df78d2b6c65efebd9c27a5a237b64d0c15088f4f9ef1"
+      "root": "sha512:eeaf4d8e1236e12b43441daafff96d0cd178e2785664eea2ff261574522204a9f908540a12eac5a2292b487c49f2c24f008e8e6e07ea9b9508fb07dcec90f87b"
     },
     {
       "name": "whitespace_is_content",
@@ -47,7 +47,7 @@
         "c4f5313f3c2cfca74794f07bad4f791d17bb58a6aafe6199d9b7e0daf133720764bfe4b4dc95de503b9c4ec7af1e9a1b78f8b25f42158a165f02fd27d67388b5",
         "efb7a8298f905ae743dbe2152e162415f62a16d2d5ac5c78816dcd57114e7a574729b813988f1d0984cf6f38c4fcc9a37ea9fec3da351983536f72785d7ab707"
       ],
-      "root": "sha512:1def1027998788ca05439ffdfa0604905b9f00811179cb9cd9e823b867349b83a8c51bcd6216e0164bcba83b74d85717a5e038fa907bcb9efae8b750419056f5"
+      "root": "sha512:d720a6d032d624587efd585fe0743987e47d494508103d5d3a02ca439917a016d30047988688afe8f38af0e8f135f339f0e35ac56d5ac2a78754dc64a5cd4c3c"
     }
   ]
 }

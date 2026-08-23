@@ -21,8 +21,8 @@
  *    and a chain that reproduces nothing.
  * 2. The signed message depends on the CDP version: v1.0 signs `final_hash`,
  *    v2.0 signs `document_hash`, v2.1 and v2.2 `nanorix_only` sign the
- *    ADR-011 Part-3 canonical-view hash. Verifying the wrong message accepts
- *    a downgraded proof. v2.2 (ADR-053 + ADR-056) changes what a document may
+ *    the specification Part-3 canonical-view hash. Verifying the wrong message accepts
+ *    a downgraded proof. v2.2 (the specification + the specification) changes what a document may
  *    carry, not how it is canonicalised, hashed or signed; the version label
  *    is itself inside the canonical view, so a 2.1 document re-labelled 2.2
  *    clears the allowlist and then fails the signature.
@@ -43,12 +43,12 @@ import {
   verifyCustomerDeclaredActivity,
 } from "./customer_activity.js";
 
-/** Genesis hash — SHA-512(""). Forever-stable per ADR-006 I0. */
+/** Genesis hash — SHA-512(""). Forever-stable per the Forever-Standard wire discipline. */
 export const GENESIS_HASH =
   "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce" +
   "47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e";
 
-/** Canonical method strings per subsystem. Forever-stable per ADR-006 I0. */
+/** Canonical method strings per subsystem. Forever-stable per the Forever-Standard wire discipline. */
 export const METHOD_MAP: Record<string, string> = {
   eee_namespace: "procfs_verification",
   eee_tmpfs: "mountinfo_verification",
@@ -80,7 +80,7 @@ export const SUPPORTED_CDP_VERSIONS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Versions whose signature covers the ADR-011 Part-3 canonical-view hash.
+ * Versions whose signature covers the specification Part-3 canonical-view hash.
  * `cdp_version` is inside that view, so re-labelling a document across
  * these is accepted by the allowlist and rejected by the signature.
  */
@@ -91,8 +91,8 @@ export const CANONICAL_VIEW_SIGNED_VERSIONS: ReadonlySet<string> = new Set([
 export const CHAIN_STEP_COUNT = 8;
 
 /**
- * Reserved attestation slots outside CanonicalCdpView (ADR-011 I18-I21,
- * I24-I25 + ADR-012 D2/D3) that no Nanorix signer populates. Every
+ * Reserved attestation slots outside CanonicalCdpView (the specification-I21,
+ * I24-I25 + the specification/D3) that no Nanorix signer populates. Every
  * construction site hard-codes them to None, so the signature never covered
  * them and a genuine document never carries them; a populated one was added
  * after signing by someone holding no key, and the signature cannot tell,
@@ -121,7 +121,7 @@ const PARENT_ATTRIBUTION_FIELDS: readonly string[] = [
   "parent_organization_tag",
 ];
 
-/** Closed-set failure reason wire types. Forever-stable per ADR-006 I0. Additive only. */
+/** Closed-set failure reason wire types. Forever-stable per the Forever-Standard wire discipline. Additive only. */
 export const FailureReasonType = {
   ALGORITHM_UNSUPPORTED: "algorithm_unsupported",
   AUTHORITY_ID_MISMATCH: "authority_id_mismatch",
@@ -197,7 +197,7 @@ export interface VerificationMetadata {
   activityEventCount: number | null;
   /**
    * Set when the document carried no `destroyed_at` and the chain timestamp
-   * was recovered from `attestation.key_id` (ADR-047 pre-restoration proofs).
+   * was recovered from `attestation.key_id` (the chain-timestamp recovery rule pre-restoration proofs).
    * Never silently substituted — an auditor can always tell which route
    * produced the verdict.
    */
@@ -212,7 +212,7 @@ export interface VerificationMetadata {
    */
   unattestedParentAttribution?: number | null;
   /**
-   * ADR-056. The `customer_declared_activity_root` the proof carries, as
+   * the specification. The `customer_declared_activity_root` the proof carries, as
    * written; null when it declares none. Disclosed whether or not the record
    * was supplied — a verdict that stays silent about a declared root invites
    * a reader to assume it was checked.
@@ -242,13 +242,13 @@ export interface VerificationWireForm {
   failure_reason: FailureReason | null;
 }
 
-/** Customer-side policy configuration. Field-additive per ADR-006 I0. */
+/** Customer-side policy configuration. Field-additive per the Forever-Standard wire discipline. */
 export interface VerifierPolicy {
   rejectDiagnostic?: boolean;
   requiredRegion?: string;
   requiredAuthorityId?: string;
   /**
-   * ADR-056. The raw bytes of the customer's activity record
+   * the specification. The raw bytes of the customer's activity record
    * (`activity_events.jsonl`), when the reader holds it. Recomputed and
    * compared with the proof's `customer_declared_activity_root`; a record
    * supplied against a proof that declares no root fails closed as
@@ -315,7 +315,7 @@ function base64Decode(b64: string): Uint8Array | null {
 }
 
 /**
- * Reproduce one chain step's SHA-512 hash. Forever-stable per ADR-006 I0.
+ * Reproduce one chain step's SHA-512 hash. Forever-stable per the Forever-Standard wire discipline.
  * Formula: SHA-512(prev || 0x00 || subsystem || 0x00 || "destroy" || 0x00 || method || 0x00 || timestamp)
  */
 export async function computeStepHash(
@@ -354,7 +354,7 @@ export function lookupMethod(subsystem: string): string {
   return METHOD_MAP[subsystem] ?? "";
 }
 
-// ─── Chain timestamp resolution (ADR-047) ───────────────────────────────────
+// ─── Chain timestamp resolution (the chain-timestamp recovery rule) ───────────────────────────────────
 
 /**
  * Recover the chain timestamp from an attestation `key_id` of the form
@@ -400,7 +400,7 @@ function isIso8601Shaped(date: string, time: string): boolean {
 
 /**
  * The timestamp the chain walk must use: the document's own `destroyed_at`,
- * or — for pre-ADR-047 proofs that omit it — the value recovered from
+ * or — for pre-the chain-timestamp recovery rule proofs that omit it — the value recovered from
  * `attestation.key_id`. Returns the recovered value separately so the verdict
  * can disclose which route produced it.
  */
@@ -415,10 +415,10 @@ export function resolveChainTimestamp(proof: Record<string, unknown>): {
   return { timestamp: recovered ?? "", recovered };
 }
 
-// ─── ADR-011 Part-3 canonical view ──────────────────────────────────────────
+// ─── the specification Part-3 canonical view ──────────────────────────────────────────
 
 /**
- * Rebuild the ADR-011 Part-3 canonical view from a proof and return its
+ * Rebuild the specification Part-3 canonical view from a proof and return its
  * RFC-8785 JCS SHA-512 hex digest — byte-identical to the server's
  * `canonical_hash()` and to the Rust verifier's `recompute_canonical_hash`.
  *
@@ -460,7 +460,7 @@ export async function recomputeCanonicalHash(
 
   insertIfPresent(view, "parent_proofs_merkle_root", proof);
   insertIfPresent(view, "record_receipts_merkle_root", proof);
-  // ADR-056: a root over bytes the customer wrote and Nanorix never parsed.
+  // the specification: a root over bytes the customer wrote and Nanorix never parsed.
   // Same skip-when-absent mechanic as the two Merkle roots, so a proof that
   // did not opt in hashes to exactly what it did before the field existed.
   insertIfPresent(view, "customer_declared_activity_root", proof);
@@ -725,7 +725,7 @@ export function checkDeclaredActivityRootShape(
 }
 
 /**
- * The pre-chain-walk gate for a declared root (ADR-056), run at stage 2 in
+ * The pre-chain-walk gate for a declared root (the specification), run at stage 2 in
  * the same position and on the same reasoning as the reserved-slot gate.
  *
  * The root is signed only where the signed message is the canonical view
@@ -893,7 +893,7 @@ export async function verifyAuditProof(
     };
   }
 
-  // ADR-056 gate on `customer_declared_activity_root`, same position and
+  // the specification gate on `customer_declared_activity_root`, same position and
   // same reasoning as the reserved-slot gate: a root on a version that does
   // not sign it, or of a shape no signer emits, is named here before any
   // recompute consumes it so the verdict blames the field and not the
@@ -930,7 +930,7 @@ export async function verifyAuditProof(
   const algo = pointer(proof, "attestation", "algorithm");
   if (typeof algo === "string") meta.algorithm = algo;
 
-  // Policy-pin gate (ADR-031 G7 / VP Security F4.3). Runs BEFORE the chain
+  // Policy-pin gate (the customer-authority specification G7 / VP Security F4.3). Runs BEFORE the chain
   // walk: the policy decision is independent of chain validity, so a customer
   // who pinned the wrong authority learns it without a 7-step SHA-512 walk.
   if (pol.requiredAuthorityId) {
@@ -964,7 +964,7 @@ export async function verifyAuditProof(
     }
   }
 
-  // Residency-pin gate (EO-03 G1 / ADR-018 D3). A proof carrying no region at
+  // Residency-pin gate (the specification G1 / the region policy). A proof carrying no region at
   // all cannot satisfy a residency pin — rejected with an empty `actual`, so
   // the pin fails closed.
   if (pol.requiredRegion !== undefined) {
@@ -1017,8 +1017,8 @@ export async function verifyAuditProof(
   const { timestamp, recovered } = resolveChainTimestamp(proof);
   meta.recoveredChainTimestamp = recovered;
 
-  // ADR-039 + ADR-041 Wave-N — optional Merkle roots for the Step 8 amendment.
-  // Absent on pre-Wave-N proofs, where both branches collapse to the legacy
+  // the per-record receipt specification + the receipt-batching specification the receipt pipeline — optional Merkle roots for the Step 8 amendment.
+  // Absent on pre-the receipt pipeline proofs, where both branches collapse to the legacy
   // formula (byte-identical chain walk).
   const rrmr =
     typeof proof["record_receipts_merkle_root"] === "string"
@@ -1083,7 +1083,7 @@ export async function verifyAuditProof(
     prevHash = recomputed;
   }
 
-  // ADR-039 receipt-set verification (Mode A step 3).
+  // the per-record receipt specification receipt-set verification (Mode A step 3).
   const receipts = proof["record_receipts"];
   if (Array.isArray(receipts)) {
     const failure = await verifyRecordReceipts(
@@ -1101,7 +1101,7 @@ export async function verifyAuditProof(
     }
   }
 
-  // ADR-041 parent-proof-set verification.
+  // the receipt-batching specification parent-proof-set verification.
   const parents = proof["parent_proof_hashes"];
   if (Array.isArray(parents)) {
     const failure = await verifyParentProofs(parents, ppmr);
@@ -1136,7 +1136,7 @@ export async function verifyAuditProof(
     }
   }
 
-  // ADR-056 customer-declared activity root. The stage-2 gate has already
+  // the specification customer-declared activity root. The stage-2 gate has already
   // rejected a root on a version that does not sign it and a root of any
   // shape no signer emits, so a root read here is a well-formed string on
   // 2.1 / 2.2 and is canonical-bound: the signature stages below bind it to
@@ -1186,7 +1186,7 @@ export async function verifyAuditProof(
     };
   }
 
-  // Algorithm dispatch precedes byte-shape checks (ADR-051 C.1): a proof
+  // Algorithm dispatch precedes byte-shape checks (the specification C.1): a proof
   // declaring a non-Ed25519 signature algorithm fails typed as
   // algorithm_unsupported here — it must never fall through to the 64/32-byte
   // decode gates and report as "malformed". Absent or "Ed25519" proceeds
@@ -1256,7 +1256,7 @@ export async function verifyAuditProof(
 }
 
 /**
- * Verify the receipt set per ADR-039 Mode A step 3 — each receipt's chain hash
+ * Verify the receipt set per the per-record receipt specification Mode A step 3 — each receipt's chain hash
  * must roundtrip and the Merkle root must match the claimed root. Returns null
  * when every receipt verifies (or no root is claimed).
  */
@@ -1322,7 +1322,7 @@ async function verifyRecordReceipts(
   return null;
 }
 
-/** Verify the parent-proof-set Merkle root per ADR-041. */
+/** Verify the parent-proof-set Merkle root per the receipt-batching specification. */
 async function verifyParentProofs(
   parents: readonly unknown[],
   claimedRoot: string | null,

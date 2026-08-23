@@ -7,7 +7,7 @@ implementation, held to the pinned reference corpus at
 `verify(proof)` surface: flexible input (dict / JSON string / path / bytes) and
 a flat result object.
 
-## The chain hash formula (Forever-Standard, ADR-006 I0)
+## The chain hash formula (Forever-Standard, the Forever-Standard wire discipline)
 
     chain_hash[n] = SHA-512(prev \\x00 subsystem \\x00 "destroy"
                             \\x00 method \\x00 timestamp)
@@ -24,7 +24,7 @@ the action segment is always the literal `"destroy"`.
 ## The signed message is version-dependent
 
 v1.0 signs `final_hash`. v2.0 signs `document_hash`. v2.1 `nanorix_only` — what
-production emits — signs the ADR-011 Part-3 canonical-view hash. Verifying a
+production emits — signs the specification Part-3 canonical-view hash. Verifying a
 v2.1 proof against `final_hash` never validates. See `_canonical.py`.
 
 The signature covers the ASCII hex characters of that hash (128 bytes), not
@@ -66,7 +66,7 @@ def _compute_step_hash(
     method: str,
     timestamp: str,
 ) -> str:
-    """Re-implement compute_step_hash from governance/rzl/src/proofs/mod.rs.
+    """Re-implement compute_step_hash from the chain specification.
 
     `action` is always "destroy" — hardcoded per CDP spec.
     """
@@ -102,7 +102,7 @@ class VerifyResult:
         chain_hash: The final (step 8) chain_hash if the chain reproduced,
             else "".
         customer_declared_activity_root: The `customer_declared_activity_root`
-            the proof carries (ADR-056), as written; None when it declares
+            the proof carries (the specification), as written; None when it declares
             none. Disclosed whether or not the record was supplied, so a
             reader never has to assume a declared root was checked.
         customer_declared_activity_checked: True when the customer's record
@@ -228,7 +228,7 @@ def _chain_reproduced(stage_reached: int, wire: Optional[Dict[str, Any]]) -> boo
 
     Settled by stage 4 for anything that got past it. A stage-3 verdict is a
     chain failure unless its reason is one only the post-walk sub-structure
-    checks raise — the ADR-056 sidecar check among them, which also fails
+    checks raise — the specification sidecar check among them, which also fails
     closed as ``required_field_missing`` for its own field.
     """
     if stage_reached >= 4:

@@ -3,7 +3,7 @@
 // **Cross-impl byte-equivalence (binding contract):** every fixture in
 // `tools/nanorix-verify/fixtures/corpus/` must produce a Go-side verification
 // output that is byte-identical to the Rust verifier output. Divergence on
-// even one fixture is a P0 finding per ADR-006 I0 + ADR-033 release framing
+// even one fixture is a P0 finding per the Forever-Standard wire discipline + the specification release framing
 // + `feedback_canonical_hash_under_fault.md`.
 //
 // Property-test fault injection (per `feedback_canonical_hash_under_fault.md`):
@@ -29,7 +29,7 @@ import (
 const (
 	// FixtureCorpusRelative is the corpus path relative to this Go module.
 	// The corpus is shipped at `tools/nanorix-verify/fixtures/corpus/` from
-	// commit ba1d51a (Wave 6 verification-surface scaffolds).
+	// the published corpus (an earlier release verification-surface scaffolds).
 	FixtureCorpusRelative = "../nanorix-verify/fixtures/corpus"
 
 	// MinFixturesExpected is the corpus-size invariant. New fixtures may be
@@ -324,7 +324,7 @@ func TestPolicyPinCustomerHsmAuditProofMatchesAuthorityAccepted(t *testing.T) {
 // output.
 //
 // **This is the primary cross-impl byte-equivalence assertion.** Per
-// ADR-006 I0 + ADR-033 release framing + `feedback_canonical_hash_under_fault.md`,
+// the Forever-Standard wire discipline + the specification release framing + `feedback_canonical_hash_under_fault.md`,
 // divergence on even ONE fixture is a P0 finding.
 //
 // If the Rust binary is unavailable (`go test` running in an environment
@@ -588,7 +588,7 @@ func TestPropertyFault10kIterations(t *testing.T) {
 
 // TestComputeStepHashCrossImplAnchor pins the byte-output of ComputeStepHash
 // against a hand-computed anchor. If this drifts, the chain algorithm has
-// been tampered with — Forever-Standard ADR-006 I0 violation.
+// been tampered with — Forever-Standard the Forever-Standard wire discipline violation.
 func TestComputeStepHashCrossImplAnchor(t *testing.T) {
 	// Compute step 1 from genesis: subsystem=eee_namespace, action=destroy,
 	// method=procfs_verification, timestamp=2026-05-08T00:00:00Z.
@@ -772,7 +772,7 @@ func runRustVerifier(bin, fixture string) ([]byte, error) {
 	return stdout, nil
 }
 
-// ── ADR-051 C.1-2 — algorithm dispatch + additive-evolution tolerance ──
+// ── the specification C.1-2 — algorithm dispatch + additive-evolution tolerance ──
 
 // TestNonEd25519AlgorithmFailsTypedAtStage4: a declared non-Ed25519 algorithm
 // must fail typed as algorithm_unsupported, never fall through to the byte
@@ -805,7 +805,7 @@ func TestNonEd25519TopLevelSignatureAlgorithmFailsTyped(t *testing.T) {
 }
 
 // TestUnknownFieldsDoNotDisturbVerification: additive-evolution insurance
-// (ADR-051 C.2) — unknown fields must be ignored by the ladder.
+// (the specification C.2) — unknown fields must be ignored by the ladder.
 func TestUnknownFieldsDoNotDisturbVerification(t *testing.T) {
 	proof := makeMinimalV1Proof("2026-05-06T12:00:00Z")
 	proof["future_sibling_artifact"] = map[string]interface{}{"anything": []int{1, 2, 3}}

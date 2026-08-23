@@ -98,7 +98,7 @@ export interface VerifyResult {
   failureReason: string;
   chainHash: string;
   /**
-   * ADR-056. The `customer_declared_activity_root` the proof carries, as
+   * the specification. The `customer_declared_activity_root` the proof carries, as
    * written; null when it declares none. Disclosed whether or not the record
    * was supplied, so a reader never has to assume a declared root was
    * checked.
@@ -114,19 +114,19 @@ export interface VerifyResult {
 }
 
 /**
- * ADR-006 Wave 16-A reserved-slot scope discriminator (2026-05-10).
+ * the specification an earlier release-A reserved-slot scope discriminator (2026-05-10).
  *
  * AuditProof scope. V1 always undefined / absent (workload scope is implicit).
  * Future Items 2 (sealed-proxy = "call") and 4 (sealed-middleware = "request")
  * populate this; Pattern 4 high-volume per-record AuditProofs use "batch".
  *
- * Forever-Standard discipline (ADR-006 I0): field-additive Optional with
+ * Forever-Standard discipline (the Forever-Standard wire discipline): field-additive Optional with
  * skip_serializing_if mechanic on the Rust side. The verifier MUST treat
  * this as opaque — chain integrity verification is independent of cdp_kind.
  */
 export type CdpKind = "workload" | "request" | "call" | "batch";
 
-/** One-line prose for the ADR-056 failure reasons the flat result can carry. */
+/** One-line prose for the specification failure reasons the flat result can carry. */
 function renderActivityFailure(reason: FailureReason, cdpVersion: string): string {
   switch (reason.type) {
     case FailureReasonType.UNSIGNED_FIELD_POPULATED:
@@ -150,10 +150,10 @@ function renderActivityFailure(reason: FailureReason, cdpVersion: string): strin
  * Note that `method` and the chain timestamp are NOT read off the chain steps
  * — `method` is a fixed per-subsystem constant and the timestamp is the
  * document's `destroyed_at` (recovered from `attestation.key_id` on
- * pre-ADR-047 proofs). A serialized step carries only
+ * pre-the chain-timestamp recovery rule proofs). A serialized step carries only
  * `step / subsystem / operation / evidence_hash / chain_hash`.
  *
- * A declared `customer_declared_activity_root` (ADR-056) is gated and
+ * A declared `customer_declared_activity_root` (the specification) is gated and
  * disclosed the way the stage ladder does it: on a version that does not sign
  * it, or of a shape no signer emits, the proof is rejected before the chain
  * walk; with `policy.customerActivity` supplied the root is recomputed from
@@ -211,7 +211,7 @@ export async function verify(
   const cdpVersion =
     typeof p["cdp_version"] === "string" ? (p["cdp_version"] as string) : "";
 
-  // ADR-056 stage-2 gate, before the walk: a root on a version that does not
+  // the specification stage-2 gate, before the walk: a root on a version that does not
   // sign it, or of a shape no signer emits, names the field as the defect
   // rather than letting a recompute blame the signature or the record.
   const rootGate = gateDeclaredActivityRoot(p, cdpVersion);
@@ -268,7 +268,7 @@ export async function verify(
   result.chainValid = true;
   result.chainHash = prevHash;
 
-  // ADR-056 sidecar check, after the walk: every step hash reproduced, so a
+  // the specification sidecar check, after the walk: every step hash reproduced, so a
   // failure here is reported without a failedStep and with chainValid true.
   const activity = await verifyCustomerDeclaredActivity(
     p,
@@ -322,13 +322,13 @@ export async function verify(
   return result;
 }
 
-// ── Wave-N (ADR-039 + ADR-041) re-exports ───────────────────────────────────
+// ── the receipt pipeline (the per-record receipt specification + the receipt-batching specification) re-exports ───────────────────────────────────
 //
-// Per-record receipt + cross-org parent-proof composition surface. The Wave-N
+// Per-record receipt + cross-org parent-proof composition surface. The the receipt pipeline
 // primitives live in `./wave_n.ts` and are re-exported here so consumers can
 // `import { verifyFullAuditProof, verifyRecordReceipt } from "@nanorix/sdk/verifier"`.
 //
-// Forever-Standard (ADR-006 I0): pre-Wave-N AuditProofs verify byte-identically
+// Forever-Standard (the Forever-Standard wire discipline): pre-the receipt pipeline AuditProofs verify byte-identically
 // via the (null, null) Step 8 branch in `computeStep8Amended`.
 export {
   GENESIS_SHA512_HEX,
@@ -357,7 +357,7 @@ export type {
   VerifyRecordReceiptOptions,
 } from "./wave_n.js";
 
-// ADR-056 — customer_declared_activity_root sidecar check. The root is
+// the specification — customer_declared_activity_root sidecar check. The root is
 // signature-bound by the canonical view; this surface checks that a file of
 // raw activity bytes in hand is the one that root commits to.
 export {

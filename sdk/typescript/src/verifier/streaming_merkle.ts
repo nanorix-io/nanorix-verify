@@ -80,7 +80,7 @@ async function domainDigest(
  * `SHA-512(0x01 || left || right)`. An odd tail node is promoted unchanged.
  * Returns 128 lowercase hex characters, unprefixed.
  *
- * Forever-Standard (ADR-006 I0): changing any of those three rules
+ * Forever-Standard (the Forever-Standard wire discipline): changing any of those three rules
  * invalidates every streaming Merkle root ever emitted.
  */
 export async function merkleRootFromLeaves(

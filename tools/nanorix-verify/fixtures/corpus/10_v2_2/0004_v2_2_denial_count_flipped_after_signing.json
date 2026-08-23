@@ -11,7 +11,7 @@
       "by_reason": [
         {
           "count": 0,
-          "reason": "proxy_connect_denied"
+          "reason": "proxy_request_denied"
         }
       ],
       "event": "policy_denial_summary"
@@ -21,7 +21,7 @@
     "algorithm": "Ed25519",
     "key_id": "nrx-verify-2026-05-08T00-00-00Z-cap_0000",
     "public_key": "base64:GVHak/xHE0xBsS1K/zXf3f5XTSdINLQ568meFsvQvCw=",
-    "signature": "base64:VsSCUwnDn+1L5UE+u7mmXwZJCMBBW+cFdax0szp/Z6HE1Ts/ZGffQEpIsaavG9d/BrKkiZrQNE2ER5OC5f4lBQ=="
+    "signature": "base64:i78tAz2dj+e83suzQpjBVl2HeBiS1OjAeEro/J8mqZLn1TS8xslI/4uXikX3v054/WI9MHhj9Meyz+jUurJXAQ=="
   },
   "authority_id": "us-kms-nanorix-v1",
   "capsule_id": "cap_00000000000000000000000000000388",

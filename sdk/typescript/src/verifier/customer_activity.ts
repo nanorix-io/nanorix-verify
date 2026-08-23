@@ -1,5 +1,5 @@
 /**
- * ADR-056 — `customer_declared_activity_root` recompute-and-compare.
+ * the specification — `customer_declared_activity_root` recompute-and-compare.
  *
  * The proof carries ONE field about the customer's own activity record: a
  * root over the raw bytes of the file the SDK's activity helpers append to
@@ -13,10 +13,17 @@
  * 1. Split the sidecar on `0x0A`. Drop only a trailing empty segment (a file
  *    that ends in a newline has no extra empty line). Never trim, never parse.
  * 2. Leaf = SHA-512 hex of each line's raw bytes.
- * 3. Root = `merkleRootSha512NullSeparated(leaves)` — pairs hashed as
- *    `SHA-512(left_hex || 0x00 || right_hex)`, odd last node duplicated.
- * 4. Zero lines → GENESIS (SHA-512 of the empty string), so "opted in, wrote
- *    nothing" is distinguishable from "did not opt in" (field absent).
+ * 3. `m` = `merkleRootSha512NullSeparated(leaves)` — pairs hashed as
+ *    `SHA-512(left_hex || 0x00 || right_hex)`, odd last node duplicated — or
+ *    GENESIS (SHA-512 of the empty string) for zero lines.
+ * 4. Root = `SHA-512(m_hex_ascii || 0x00 || count_decimal_ascii)`, the count
+ *    being the number of lines as ASCII base-10 digits, no sign, no leading
+ *    zeros (`"0"` for the empty record). The tree alone does not commit to
+ *    the count: its odd-level duplication gives an odd record and the same
+ *    record with its last line repeated one tree, and `""` and `"\n"` one
+ *    tree too. Binding the count closes both. "Opted in, wrote nothing" stays
+ *    a present, fixed value, distinguishable from "did not opt in" (field
+ *    absent).
  * 5. Wire form `sha512:<hex>`.
  *
  * ## The four outcomes
@@ -116,7 +123,7 @@ export async function customerDeclaredActivityLeafHashes(
 }
 
 /**
- * The ADR-056 root over a sidecar's raw bytes, in wire form `sha512:<hex>`.
+ * The the specification root over a sidecar's raw bytes, in wire form `sha512:<hex>`.
  *
  * Byte-equivalent with the Rust, Go, Python and browser verifiers; every
  * vector in `customer_declared_activity_root_vectors.json` pins it.
@@ -125,9 +132,13 @@ export async function computeCustomerDeclaredActivityRoot(
   data: Uint8Array,
 ): Promise<string> {
   const leaves = await customerDeclaredActivityLeafHashes(data);
-  const root =
+  const merkle =
     (await merkleRootSha512NullSeparated(leaves)) ?? GENESIS_SHA512_HEX;
-  return `sha512:${root}`;
+  const bound = new TextEncoder().encode(
+    `${merkle}\u0000${leaves.length.toString(10)}`,
+  );
+  const digest = await getSubtle().digest("SHA-512", bound.buffer as ArrayBuffer);
+  return `sha512:${bytesToHex(digest)}`;
 }
 
 /** Which of the four outcomes the sidecar check reached. */

@@ -9,7 +9,7 @@ server's `cdp_document.rs::golden_canonical_hash` test pins.
 ## The signed message is version-dependent
 
 A v2.1 `nanorix_only` AuditProof is **not** signed over `final_hash` — that is
-the v1.0 message. It is signed over the ADR-011 Part-3 canonical-view hash,
+the v1.0 message. It is signed over the specification Part-3 canonical-view hash,
 `hex(sha512(jcs(canonical_view)))`.
 
 | `cdp_version` | Signed message |
@@ -19,7 +19,7 @@ the v1.0 message. It is signed over the ADR-011 Part-3 canonical-view hash,
 | `2.1` / `2.2` + `nanorix_only` | recomputed canonical-view hash |
 | `2.1` / `2.2` + `dual_signature` / `tee_attested` | not verifiable by this build |
 
-`2.2` (ADR-053 + ADR-056) signs the same canonical view as `2.1`; the only
+`2.2` (the specification + the specification) signs the same canonical view as `2.1`; the only
 difference a verifier can see is the optional `customer_declared_activity_root`
 field, which the recompute inserts when present (like the two Merkle roots).
 
@@ -43,7 +43,7 @@ from nanorix._jcs import canonicalize
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Wire-form signature failure sub-reasons (`SignatureFailureReason` in
-# governance/verify-types). Forever-Standard per ADR-006 I0.
+# governance/verify-types). Forever-Standard per the Forever-Standard wire discipline.
 # ─────────────────────────────────────────────────────────────────────────────
 
 SIG_MALFORMED = "malformed"
@@ -56,7 +56,7 @@ _ED25519_PUBLIC_KEY_LEN = 32
 
 SUPPORTED_CDP_VERSIONS = frozenset({"1.0", "2.0", "2.1", "2.2"})
 
-# Versions whose signature covers the ADR-011 Part-3 canonical-view hash.
+# Versions whose signature covers the specification Part-3 canonical-view hash.
 # `cdp_version` is itself inside that view, so a 2.1 document re-labelled 2.2
 # (or vice versa) is accepted by the allowlist and then fails the signature.
 CANONICAL_VIEW_SIGNED_VERSIONS = frozenset({"2.1", "2.2"})
@@ -116,12 +116,12 @@ def _failed(reason: str) -> SignatureCheck:
 
 
 def strip_hash_prefix(value: str) -> str:
-    """Strip the `sha512:` wire prefix. ADR-011 I0 forever-stable."""
+    """Strip the `sha512:` wire prefix. the specification forever-stable."""
     return value[len("sha512:") :] if value.startswith("sha512:") else value
 
 
 def strip_base64_prefix(value: str) -> str:
-    """Strip the `base64:` wire prefix. ADR-011 I0 forever-stable."""
+    """Strip the `base64:` wire prefix. the specification forever-stable."""
     return value[len("base64:") :] if value.startswith("base64:") else value
 
 
@@ -138,7 +138,7 @@ def _insert_if_present(view: Dict[str, Any], key: str, proof: Mapping[str, Any])
 
 
 def recompute_canonical_hash(proof: Mapping[str, Any]) -> str:
-    """Rebuild the ADR-011 Part-3 canonical view and return its JCS SHA-512 hex.
+    """Rebuild the specification Part-3 canonical view and return its JCS SHA-512 hex.
 
     Byte-identical to the server's `FullCdp::canonical_hash()`. The AuditProof
     JSON already carries every value in its exact serialized shape, so only the
@@ -186,7 +186,7 @@ def recompute_canonical_hash(proof: Mapping[str, Any]) -> str:
 
     _insert_if_present(view, "parent_proofs_merkle_root", proof)
     _insert_if_present(view, "record_receipts_merkle_root", proof)
-    # ADR-056: a root over bytes the customer wrote and Nanorix never parsed.
+    # the specification: a root over bytes the customer wrote and Nanorix never parsed.
     # Same skip-when-absent mechanic as the two Merkle roots, so a proof that
     # did not opt in hashes to exactly what it did before the field existed.
     _insert_if_present(view, "customer_declared_activity_root", proof)
@@ -348,7 +348,7 @@ def verify_signature_against(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# ADR-047 — chain-timestamp recovery from the attestation key_id
+# the chain-timestamp recovery rule — chain-timestamp recovery from the attestation key_id
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -370,7 +370,7 @@ def _is_iso8601_shaped(date: str, time: str) -> bool:
 def recover_timestamp_from_key_id(key_id: str) -> Optional[str]:
     """Recover the chain timestamp from an attestation `key_id`.
 
-    AuditProofs issued before ADR-047 restored the document-level
+    AuditProofs issued before the chain-timestamp recovery rule restored the document-level
     `destroyed_at` field carry the chain timestamp in exactly one place: the
     attestation `key_id`, built as
     `nrx-verify-{terminated_at with ':' replaced by '-'}-{capsule_id[..8]}`.

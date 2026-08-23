@@ -2,7 +2,7 @@
 //! `FailureReason::ChainStepIdentityMismatch` (B1.4 — the verifier enforces the
 //! canonical identity of the eight chain entries, not merely their count).
 //!
-//! **Forever-Standard discipline (ADR-006 I0).** These tests pin the exact wire
+//! **Forever-Standard discipline (the Forever-Standard wire discipline).** These tests pin the exact wire
 //! form (variant tag + field names + serialization shape) so that:
 //!
 //! - any future rename of the variant or its fields fails CI immediately,

@@ -8,11 +8,11 @@
 // Ed25519 signature over it distinguishes a genuine AuditProof from a fabricated
 // one.
 //
-// ## Which message is signed (mirrors services/api/src/routes/verify.rs)
+// ## Which message is signed (mirrors the hosted verification endpoint)
 //
 //   - 1.0                    → final_hash (ASCII hex, prefix-stripped)
 //   - 2.0                    → document_hash
-//   - 2.1 + nanorix_only     → the recomputed ADR-011 Part-3 canonical hash
+//   - 2.1 + nanorix_only     → the recomputed the specification Part-3 canonical hash
 //   - 2.1 + dual_signature   → not verifiable by this build → Absent
 //   - 2.1 + tee_attested     → not verifiable by this build → Absent
 //
@@ -30,7 +30,7 @@
 // the Rust verifier implements via `VerifierPolicy::trust_chain` and this Go
 // build does not yet carry.
 //
-// Forever-Standard discipline (ADR-006 I0): the canonical view's field set,
+// Forever-Standard discipline (the Forever-Standard wire discipline): the canonical view's field set,
 // wire-name mapping, and the two server-side transforms (signing_key_version
 // String → i64; the attestation subset) are part of the attestation contract.
 // Any change here must keep the reference corpus at full agreement.
@@ -88,7 +88,7 @@ type SignatureCheck struct {
 	Mode string
 }
 
-// RecomputeCanonicalHash rebuilds the ADR-011 Part-3 canonical view from a
+// RecomputeCanonicalHash rebuilds the specification Part-3 canonical view from a
 // proof's JSON and returns its RFC-8785 JCS SHA-512 hex digest — byte-identical
 // to the server's `FullCdp::canonical_hash()` and to the Rust verifier's
 // `recompute_canonical_hash`. Lowercase 128-char hex, or empty string on the
@@ -149,9 +149,9 @@ func RecomputeCanonicalHash(proof map[string]interface{}) string {
 
 	insertIfPresent(view, "parent_proofs_merkle_root", proof)
 	insertIfPresent(view, "record_receipts_merkle_root", proof)
-	// ADR-056 — the one signed root over the customer's own activity record.
+	// the specification — the one signed root over the customer's own activity record.
 	// Same insert-if-present mechanic as the two Merkle roots above, so a
-	// document without it hashes byte-identically to a pre-ADR-056 document.
+	// document without it hashes byte-identically to a pre-the specification document.
 	insertIfPresent(view, "customer_declared_activity_root", proof)
 
 	// No skip attribute → null when absent.
@@ -220,7 +220,7 @@ func signedMessage(proof map[string]interface{}, cdpVersion string) (string, boo
 		s, _ := proof["document_hash"].(string)
 		return StripHashPrefix(s), true
 	case "2.1", "2.2":
-		// 2.2 shares the 2.1 arm deliberately: ADR-053 / ADR-056 changed what
+		// 2.2 shares the 2.1 arm deliberately: the specification / the specification changed what
 		// the canonical view may carry, not how it is hashed or signed.
 		if signingMode == "nanorix_only" {
 			return RecomputeCanonicalHash(proof), true
@@ -318,15 +318,15 @@ func VerifySignatureAgainst(proof map[string]interface{}, cdpVersion, pubB64 str
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ADR-047 — chain-timestamp recovery from attestation key_id
+// the chain-timestamp recovery rule — chain-timestamp recovery from attestation key_id
 // ─────────────────────────────────────────────────────────────────────────────
 
 // RecoverTimestampFromKeyID recovers the chain timestamp from an attestation
 // `key_id`. Mirrors `nanorix_verify::recover_timestamp_from_key_id`.
 //
-// AuditProofs issued before ADR-047 restored the document-level `destroyed_at`
+// AuditProofs issued before the chain-timestamp recovery rule restored the document-level `destroyed_at`
 // field carry the chain timestamp in exactly one place: the attestation
-// `key_id`, built by `governance/rzl/src/cdp.rs` as
+// `key_id`, built by the chain specification as
 // `nrx-verify-{terminated_at with ':' replaced by '-'}-{capsule_id[..8]}`.
 // Only the TIME portion ever held colons — the ISO-8601 date carries its own
 // dashes — so restoration splits at `T` and rewrites dashes on the right-hand

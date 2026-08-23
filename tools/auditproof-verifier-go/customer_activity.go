@@ -1,4 +1,4 @@
-// ADR-056 — `customer_declared_activity_root`: recompute the customer's
+// the specification — `customer_declared_activity_root`: recompute the customer's
 // activity-record commitment from the raw record bytes and compare it with the
 // root the proof carries. Go peer of `tools/nanorix-verify/src/customer_activity.rs`.
 //
@@ -17,10 +17,16 @@
 //     lines. Nothing is trimmed: a leading space is content; an empty line in
 //     the middle is a leaf.
 //  2. Leaf = lowercase SHA-512 hex of the line's raw bytes.
-//  3. Root = the ADR-039 null-separated Merkle root over the leaves in order
+//  3. m = the per-record receipt specification null-separated Merkle root over the leaves in order
 //     (MerkleRootSHA512NullSeparated — pairs hashed as
-//     SHA-512(left_hex || 0x00 || right_hex), odd last node duplicated).
-//  4. Zero lines = the genesis hash (SHA-512 of the empty string).
+//     SHA-512(left_hex || 0x00 || right_hex), odd last node duplicated), or
+//     the genesis hash (SHA-512 of the empty string) for zero lines.
+//  4. Root = SHA-512(m_hex_ascii || 0x00 || count_decimal_ascii), the count
+//     being the number of lines as ASCII base-10 digits, no sign, no leading
+//     zeros ("0" for the empty record). The tree alone does not commit to the
+//     count: its odd-level duplication gives an odd record and the same
+//     record with its last line repeated one tree, and "" and "\n" one tree
+//     too. Binding the count closes both.
 //  5. Wire form `sha512:<hex>`.
 //
 // The root is bound only where the signed message is the canonical view —
@@ -46,6 +52,7 @@ import (
 	"bytes"
 	"crypto/sha512"
 	"encoding/hex"
+	"strconv"
 )
 
 // CustomerDeclaredActivityRootField is the proof field that carries the root.
@@ -154,14 +161,20 @@ func CustomerDeclaredActivityLeafHashes(record []byte) []string {
 }
 
 // ComputeCustomerDeclaredActivityRoot returns the root over a record in wire
-// form `sha512:<hex>`. Zero lines yield the genesis hash.
+// form `sha512:<hex>`: the tree over the leaves (genesis for zero lines),
+// then the line count bound in as SHA-512(m_hex || 0x00 || count_decimal).
 func ComputeCustomerDeclaredActivityRoot(record []byte) string {
 	leaves := CustomerDeclaredActivityLeafHashes(record)
-	root, ok := MerkleRootSHA512NullSeparated(leaves)
+	merkle, ok := MerkleRootSHA512NullSeparated(leaves)
 	if !ok {
-		root = NanorixGenesisHash
+		merkle = NanorixGenesisHash
 	}
-	return "sha512:" + root
+	data := make([]byte, 0, len(merkle)+1+20)
+	data = append(data, merkle...)
+	data = append(data, 0x00)
+	data = append(data, strconv.Itoa(len(leaves))...)
+	sum := sha512.Sum512(data)
+	return "sha512:" + hex.EncodeToString(sum[:])
 }
 
 // DeclaredActivityRoot returns the root a proof declares, when it carries one

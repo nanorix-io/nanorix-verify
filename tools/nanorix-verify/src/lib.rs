@@ -1,11 +1,11 @@
 //! Nanorix AuditProof verifier — standalone library.
 //!
-//! Implements the 8-step ADR-011 I8 verification pipeline against an AuditProof
+//! Implements the 8-step AuditProof specification verification pipeline against an AuditProof
 //! JSON document. Independent of any Nanorix service: this crate has no HTTP
 //! client, so every verification is local. The trust-chain manifest, when one
 //! is used, is supplied as a local file and is itself signed.
 //!
-//! Per Nanorix EO-07 (G3 Adoption-Blocker, dispatched 2026-05-06): "auditor
+//! Per the verifier specification : "auditor
 //! verification CLI — the literal moment-of-truth artifact when an OCR
 //! auditor walks in."
 //!
@@ -23,7 +23,7 @@
 //!
 //! # Verification stages
 //!
-//! Per ADR-011 I8:
+//! Per the AuditProof specification:
 //! 1. Schema validation (required fields present, types correct)
 //! 2. cdp_version recognized (1.0 / 2.0 / 2.1 / 2.2)
 //! 3. Chain reproducibility (recompute SHA-512 chain from genesis)
@@ -33,7 +33,7 @@
 //! 7. Ed25519 signature verification
 //! 8. Authority status (active / revoked / fingerprint stale)
 //!
-//! Each stage emits a typed `FailureReason` on failure (per Nanorix EO-02).
+//! Each stage emits a typed `FailureReason` on failure (per the verifier specification).
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha512};
@@ -75,8 +75,8 @@ pub const NANORIX_GENESIS_HASH: &str =
     "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e";
 pub const NANORIX_CHAIN_STEPS: usize = 8;
 
-/// Reserved attestation slots that sit outside `CanonicalCdpView` (ADR-011
-/// I18-I21, I24-I25 + ADR-012 D2/D3) AND that no Nanorix signer populates.
+/// Reserved attestation slots that sit outside `CanonicalCdpView` (the specification
+/// I18-I21, I24-I25 + the specification/D3) AND that no Nanorix signer populates.
 ///
 /// Every construction site in the workspace hard-codes these to `None`, so the
 /// signature never covered them and a genuine document never carries them. A
@@ -85,7 +85,7 @@ pub const NANORIX_CHAIN_STEPS: usize = 8;
 /// why presence alone has to be the rejection.
 ///
 /// `per_event_attestations` is the ninth reserved slot and is deliberately
-/// ABSENT from this list: `services/api/src/routes/capsules.rs` drains
+/// ABSENT from this list: the reference server implementation drains
 /// `capsule_event_attestations` into it at destroy, so genuine proofs do carry
 /// it. Its entries are individually signed by the customer's own key, so it is
 /// self-authenticating rather than silently injectable; verifying those
@@ -118,7 +118,7 @@ fn populated_unsigned_slot(json: &serde_json::Value) -> Option<&'static str> {
 /// does not cover.
 ///
 /// Only `parent_chain_hash` feeds the signed Merkle root
-/// (`governance/rzl/src/wave_n.rs`), so `parent_key_id`, `parent_signature`,
+/// (the reference chain implementation), so `parent_key_id`, `parent_signature`,
 /// `parent_role`, `parent_jurisdiction` and `parent_organization_tag` are
 /// rewritable by anyone holding the document and no key. They are also the
 /// fields the multi-vendor lineage UI renders, which is what makes counting
@@ -145,11 +145,11 @@ fn count_unattested_parent_attribution(json: &serde_json::Value) -> Option<usize
 
 /// The canonical 8-step chain identity: `(subsystem, method)` at each index.
 ///
-/// Forever-Standard per INVARIANTS #1 / ADR-006 I0 — the order, the count, the
+/// Forever-Standard per INVARIANTS #1 / the Forever-Standard wire discipline — the order, the count, the
 /// subsystem names, and each subsystem's fixed method are all fixed for the
 /// life of the format. Mirrors `CHAIN_DEFS` / `CANONICAL_SUBSYSTEMS` in
-/// `governance/rzl/src/cdp.rs`, duplicated here because the auditor verifier
-/// ships standalone and takes no service-side dependency (EO-07).
+/// the chain specification, duplicated here because the auditor verifier
+/// ships standalone and takes no service-side dependency (the verifier specification).
 ///
 /// The chain walk hashes THESE values, never the ones the document declares.
 /// A document cannot choose what a step is; it can only fail to match.
@@ -165,17 +165,17 @@ pub const CANONICAL_CHAIN: [(&str, &str); NANORIX_CHAIN_STEPS] = [
 ];
 
 /// Output of a verification attempt. Mirrors the wire shape that the
-/// authenticated `POST /v1/verify` endpoint will return once EO-02 ships.
+/// authenticated `POST /v1/verify` endpoint will return once the specification ships.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct VerificationResult {
     /// True if and only if every check stage passed.
     pub valid: bool,
 
     /// Populated when `valid` is false. Closed enum aligned with the API
-    /// surface (per EO-02).
+    /// surface (per the specification).
     pub failure_reason: Option<FailureReason>,
 
-    /// 1..=8 indicating the highest stage reached (advisory; matches ADR-011
+    /// 1..=8 indicating the highest stage reached (advisory; matches the specification
     /// I8 step numbering).
     pub stage_reached: u8,
 
@@ -194,7 +194,7 @@ pub struct VerificationMetadata {
     pub activity_event_count: Option<usize>,
 
     /// `Some(ts)` when the document carried no usable `destroyed_at` and the
-    /// chain timestamp was recovered from `attestation.key_id` (ADR-047
+    /// chain timestamp was recovered from `attestation.key_id` (the chain-timestamp recovery rule
     /// pre-restoration proofs). `None` means the timestamp was read from the
     /// document's own `destroyed_at` field. An auditor reading a verdict can
     /// therefore always tell which route produced it.
@@ -214,7 +214,7 @@ pub struct VerificationMetadata {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unattested_parent_attribution: Option<usize>,
 
-    /// The `customer_declared_activity_root` the proof carries (ADR-056), as
+    /// The `customer_declared_activity_root` the proof carries (the specification), as
     /// written. `None` when the proof declares none. Disclosed whether or not
     /// the record was supplied: a verdict that stays silent about a declared
     /// root invites a reader to assume it was checked.
@@ -232,7 +232,7 @@ pub struct VerificationMetadata {
     pub customer_declared_activity_checked: Option<bool>,
 }
 
-// EO-07 sub-B (commit landing this re-export): closed-enum verification
+// trust-chain anchoring (commit landing this re-export): closed-enum verification
 // failure reasons + signature sub-reasons extracted to the
 // `nanorix-verify-types` workspace crate (governance/verify-types).
 // Re-exporting here preserves the `nanorix_verify::{FailureReason,
@@ -248,7 +248,7 @@ pub use nanorix_verify_types::{AuthorityIdMismatchReason, FailureReason, Signatu
 
 /// Verifier policy. Customer / auditor decides what to refuse.
 ///
-/// Per ADR-006 I0 + ADR-031 G7: this struct is field-additive
+/// Per the Forever-Standard wire discipline + the customer-authority specification G7: this struct is field-additive
 /// Forever-Standard. Pre-amendment callers passing
 /// `VerifierPolicy::default()` continue to behave identically — every
 /// new field defaults to its "accept anything" semantics. New fields
@@ -257,7 +257,7 @@ pub use nanorix_verify_types::{AuthorityIdMismatchReason, FailureReason, Signatu
 #[derive(Debug, Clone, Default)]
 pub struct VerifierPolicy {
     /// If true, refuse AuditProofs whose attestation indicates
-    /// `diagnostic_mode: true` (EO-09). Default: false (accept diagnostic
+    /// `diagnostic_mode: true` (the specification). Default: false (accept diagnostic
     /// proofs).
     pub reject_diagnostic: bool,
 
@@ -269,7 +269,7 @@ pub struct VerifierPolicy {
     /// `signing_authority.authority_id` match. AuditProofs that omit
     /// `signing_authority` entirely (Nanorix-default signing path) OR
     /// carry a different `authority_id` are rejected with
-    /// `FailureReason::AuthorityIdMismatch`. Per ADR-031 G7 + VP Security
+    /// `FailureReason::AuthorityIdMismatch`. Per the customer-authority specification G7 + VP Security
     /// extended-review F4.3 — closes the policy-mode-mismatch attack where
     /// a malicious AuditProof claims `signing_authority: None` while the
     /// customer's policy demands customer-HSM signing.
@@ -279,7 +279,7 @@ pub struct VerifierPolicy {
     /// against this gate.
     pub required_authority_id: Option<String>,
 
-    /// EO-07 sub-B trust root. When `Some`, the verifier resolves the proof's
+    /// trust-chain anchoring trust root. When `Some`, the verifier resolves the proof's
     /// signing key against this (already-verified) manifest and re-verifies the
     /// signature against the manifest key — reaching stage 8 ("verify without
     /// trusting Nanorix"). `main.rs` verifies the manifest's OWN signature
@@ -293,7 +293,7 @@ pub struct VerifierPolicy {
     /// no trust root is in use.
     pub pinned_identity_fingerprint: Option<String>,
 
-    /// ADR-056 — the raw bytes of the customer's activity record, when the
+    /// the specification — the raw bytes of the customer's activity record, when the
     /// reader has it. The proof carries only `customer_declared_activity_root`;
     /// with the record in hand the verifier recomputes the root and compares
     /// (`customer_activity`). Supplying a record to a proof that declares no
@@ -314,12 +314,12 @@ pub struct TrustedAuthority {
 }
 
 /// Top-level verify entrypoint. Loads AuditProof JSON, runs 8-stage
-/// verification per ADR-011 I8, returns structured result.
+/// verification per the AuditProof specification, returns structured result.
 ///
-/// **NOTE:** This is the V1 implementation scaffold. Per EO-07 ship plan, the
-/// full ADR-011 I8 stage 5 (canonical_hash recompute) and stage 6 (signing
+/// **NOTE:** This is the V1 implementation scaffold. Per the verifier specification ship plan, the
+/// full the AuditProof specification stage 5 (canonical_hash recompute) and stage 6 (signing
 /// key resolution from trust chain) need the shared verification crate
-/// extracted from `services/api/src/cdp_document.rs` to avoid divergence.
+/// extracted from the AuditProof document builder to avoid divergence.
 /// V1 provides chain integrity (stages 1-4) which catches the common
 /// tamper cases.
 pub fn verify_auditproof(
@@ -361,7 +361,7 @@ pub fn verify_auditproof(
 
     // Stage 2: cdp_version recognized.
     //
-    // "2.2" (ADR-053 + ADR-056) is verified exactly as "2.1": the canonical
+    // "2.2" (the specification + the specification) is verified exactly as "2.1": the canonical
     // view, the signed-message form and every stage below are unchanged. What
     // 2.2 adds is carried inside fields the 2.1 recompute already covers — new
     // activity-trail events, and `customer_declared_activity_root`, which the
@@ -393,7 +393,7 @@ pub fn verify_auditproof(
         };
     }
 
-    // ADR-056 gate on `customer_declared_activity_root`, same position and
+    // the specification gate on `customer_declared_activity_root`, same position and
     // same reasoning as the reserved-slot gate. The root is signed only where
     // the signed message is the canonical view (2.1 / 2.2); on 1.0 the message
     // is `final_hash` and on 2.0 the `document_hash` field, so a root there is
@@ -448,11 +448,11 @@ pub fn verify_auditproof(
         .and_then(|v| v.as_str())
         .map(String::from);
 
-    // Policy-pin gate (ADR-031 G7 / VP Security F4.3).
+    // Policy-pin gate (the customer-authority specification G7 / VP Security F4.3).
     //
     // When the customer / auditor pins `required_authority_id`, the
     // AuditProof's `signing_authority.authority_id` must match. The
-    // AuditProof field is `Option<SigningAuthority>` per ADR-031 D2:
+    // AuditProof field is `Option<SigningAuthority>` per the customer-authority specification D2:
     //
     // - `signing_authority` field absent OR explicit JSON `null` →
     //   Nanorix-default signing path. Reject with reason
@@ -504,7 +504,7 @@ pub fn verify_auditproof(
         }
     }
 
-    // Residency-pin gate (EO-03 G1 / ADR-018 D3).
+    // Residency-pin gate (the specification G1 / the region policy).
     //
     // Same shape and rationale as the authority pin above: when the auditor
     // pins `required_region`, a proof asserting a different region is rejected
@@ -554,7 +554,7 @@ pub fn verify_auditproof(
         };
     }
 
-    // ADR-047 — proofs issued before `destroyed_at` was restored to the wire
+    // the chain-timestamp recovery rule — proofs issued before `destroyed_at` was restored to the wire
     // document carry the chain timestamp only in `attestation.key_id`. Recover
     // it there so authentic pre-restoration proofs reproduce their chain; the
     // recovered value is disclosed in the verdict metadata, never silently
@@ -563,8 +563,8 @@ pub fn verify_auditproof(
     let timestamp = timestamp.as_str();
     metadata.recovered_chain_timestamp = recovered;
 
-    // ADR-039 + ADR-041 Wave-N (2026-05-12) — extract optional Merkle roots
-    // for Step 8 amendment. None for pre-Wave-N proofs (both branches collapse
+    // the per-record receipt specification + the receipt-batching specification the receipt pipeline (2026-05-12) — extract optional Merkle roots
+    // for Step 8 amendment. None for pre-the receipt pipeline proofs (both branches collapse
     // to the legacy formula → byte-identical chain walk).
     let rrmr_opt = json
         .get("record_receipts_merkle_root")
@@ -598,7 +598,7 @@ pub fn verify_auditproof(
             .unwrap_or("");
 
         let recomputed = if idx == NANORIX_CHAIN_STEPS - 1 {
-            // ADR-039 + ADR-041 Step 8 amendment — presence-conditional
+            // the per-record receipt specification + the receipt-batching specification Step 8 amendment — presence-conditional
             // Merkle-root incorporation. The (None, None) branch returns the
             // legacy formula bit-for-bit (Forever-Standard). The branch was
             // additionally keyed on the DECLARED subsystem being
@@ -647,7 +647,7 @@ pub fn verify_auditproof(
         prev_hash = recomputed;
     }
 
-    // ── ADR-039 receipt set verification (Mode A step 3) ──
+    // ── the per-record receipt specification receipt set verification (Mode A step 3) ──
     // If `record_receipts` is present, recompute the Merkle root from the
     // receipts in order and compare to the claimed `record_receipts_merkle_root`.
     // Each receipt's `record_chain_hash` is also recomputed from its fields.
@@ -666,7 +666,7 @@ pub fn verify_auditproof(
         }
     }
 
-    // ── ADR-041 parent-proof set verification ──
+    // ── the receipt-batching specification parent-proof set verification ──
     // If `parent_proof_hashes` is present, recompute the parent Merkle root
     // from each link's `parent_chain_hash` and compare to the claimed root.
     // Per-link signature verification (independent pubkey resolution) is
@@ -709,7 +709,7 @@ pub fn verify_auditproof(
         }
     }
 
-    // ── ADR-056 customer-declared activity root ──
+    // ── the specification customer-declared activity root ──
     // The stage-2 gate above has already rejected a root on a version that
     // does not sign it and a root of any shape no signer emits, so a root
     // read here is a well-formed string on 2.1 / 2.2 and is canonical-bound:
@@ -761,7 +761,7 @@ pub fn verify_auditproof(
         };
     }
 
-    // Algorithm dispatch precedes byte-shape checks (ADR-051 C.1): a proof
+    // Algorithm dispatch precedes byte-shape checks (the specification C.1): a proof
     // declaring a non-Ed25519 signature algorithm fails typed as
     // AlgorithmUnsupported here — it must never fall through to the 64/32-byte
     // decode gates and report as "malformed". Absent or "Ed25519" proceeds
@@ -842,7 +842,7 @@ fn declared_non_ed25519_algorithm(json: &serde_json::Value) -> Option<String> {
     .map(str::to_string)
 }
 
-/// EO-07 sub-B — anchor an integrity-verified proof (sub-A passed, stage 7) to
+/// trust-chain anchoring — anchor an integrity-verified proof (sub-A passed, stage 7) to
 /// the Nanorix trust root.
 ///
 /// With a verified trust-chain manifest in `policy.trust_chain`, resolve the
@@ -981,9 +981,9 @@ pub fn compute_step_hash(
 
 /// Recover the chain timestamp from an attestation `key_id`.
 ///
-/// AuditProofs issued before ADR-047 restored the document-level `destroyed_at`
+/// AuditProofs issued before the chain-timestamp recovery rule restored the document-level `destroyed_at`
 /// field carry the chain timestamp in exactly one place: the attestation
-/// `key_id`, built by `governance/rzl/src/cdp.rs` as
+/// `key_id`, built by the chain specification as
 /// `nrx-verify-{terminated_at with ':' replaced by '-'}-{capsule_id[..8]}`.
 /// Only the TIME portion ever held colons — the ISO-8601 date carries its own
 /// dashes — so restoration splits at `T` and rewrites dashes on the right-hand
@@ -996,7 +996,7 @@ pub fn compute_step_hash(
 /// # Why recovering from an attacker-mutable field is sound
 ///
 /// `key_id` is covered by NEITHER signed message: v1.0 signs `final_hash`, and
-/// the v2.x canonical view (`services/api/src/cdp_document.rs`
+/// the v2.x canonical view (the AuditProof document builder
 /// `CanonicalCdpView` / `CanonicalAttestationSubset`) excludes the whole
 /// attestation by construction. So `key_id` can be edited without invalidating
 /// a signature — which is precisely why the recovered value is never trusted on
@@ -1066,7 +1066,7 @@ fn resolve_chain_timestamp(json: &serde_json::Value) -> (String, Option<String>)
 }
 
 /// Look up the canonical method string for a given subsystem (per CLAUDE.md
-/// CDP v1.0 chain spec). Forever-stable per ADR-006 I0.
+/// CDP v1.0 chain spec). Forever-stable per the Forever-Standard wire discipline.
 ///
 /// Unknown subsystems map to the empty string, which is why this must NOT be
 /// used to derive a chain-walk hash input from a document-supplied subsystem:
@@ -1090,7 +1090,7 @@ pub fn lookup_method(subsystem: &str) -> &'static str {
 }
 
 /// Strip canonical prefix conventions: `sha512:` from hash fields, `base64:`
-/// from key/signature fields. ADR-011 I0 forever-stable.
+/// from key/signature fields. the specification forever-stable.
 pub fn strip_hash_prefix(s: &str) -> &str {
     s.strip_prefix("sha512:").unwrap_or(s)
 }
@@ -1100,17 +1100,17 @@ pub fn strip_base64_prefix(s: &str) -> &str {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Wave-N (ADR-039 + ADR-041) verifier extension
+// the receipt pipeline (the per-record receipt specification + the receipt-batching specification) verifier extension
 //
-// Mirrors `nanorix_rzl::wave_n` to keep the verifier independent of any
+// Mirrors the reference chain implementation to keep the verifier independent of any
 // service-side dependency (the verifier ships as a standalone auditor
-// artifact per EO-07). The hash primitives are byte-identical to the
+// artifact per the verifier specification). The hash primitives are byte-identical to the
 // service-side implementation — pinned by the cross-impl byte-equivalence
 // test in the property-test suite.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Compute Step 8 amended hash per ADR-039 + ADR-041 combined formula. See
-/// `governance/rzl/src/wave_n.rs::compute_step_8_amended` for the spec; this
+/// Compute Step 8 amended hash per the per-record receipt specification + the receipt-batching specification combined formula. See
+/// the reference chain implementation for the spec; this
 /// is a verifier-side mirror.
 pub fn compute_step_8_amended_verifier(
     prev_hash: &str,
@@ -1200,7 +1200,7 @@ pub fn verifier_merkle_root(leaves: &[String]) -> Option<String> {
 }
 
 /// Compute a per-record chain hash mirroring
-/// `nanorix_rzl::wave_n::compute_record_chain_hash`.
+/// the reference chain implementation.
 fn verifier_compute_record_chain_hash(
     capsule_id: &str,
     record_index: u32,
@@ -1227,7 +1227,7 @@ fn verifier_compute_record_chain_hash(
     data.extend_from_slice(output_h.as_bytes());
     data.push(0x00);
     data.extend_from_slice(activity_h.as_bytes());
-    // ADR-039 conformance: a declared pattern_tag is a signed primitive and
+    // the per-record receipt specification conformance: a declared pattern_tag is a signed primitive and
     // is bound into the chain hash (trailing segment appended only when the
     // receipt carries a tag; activity_root's fixed 128-hex length gives
     // domain separation, so tagged and untagged preimages cannot collide).
@@ -1239,7 +1239,7 @@ fn verifier_compute_record_chain_hash(
     hex::encode(Sha512::digest(&data))
 }
 
-/// Verify the receipt set per ADR-039 Mode A step 3. Returns `Some(failure)`
+/// Verify the receipt set per the per-record receipt specification Mode A step 3. Returns `Some(failure)`
 /// if any receipt's chain hash doesn't roundtrip OR the Merkle root doesn't
 /// match the claimed root. Returns `None` if all receipts verify.
 fn verify_record_receipts(
@@ -1249,7 +1249,7 @@ fn verify_record_receipts(
 ) -> Option<FailureReason> {
     // A receipt set with no root is unverifiable, and the emitter never
     // produces one: `record_receipts_merkle_root` is `Some` iff
-    // `record_receipts` is `Some` (services/api/src/cdp_document.rs). Skipping
+    // `record_receipts` is `Some` (the AuditProof document builder). Skipping
     // the check when the root is absent — which is what this function used to
     // do — let an outsider append a whole fabricated receipt set to a genuine
     // proof: no root means no comparison, and the array is outside the
@@ -1339,7 +1339,7 @@ fn verify_record_receipts(
     None
 }
 
-/// Verify the parent-proof set Merkle root per ADR-041. Returns
+/// Verify the parent-proof set Merkle root per the receipt-batching specification. Returns
 /// `Some(failure)` if the recomputed root doesn't match claimed.
 fn verify_parent_proofs(
     parents: &[serde_json::Value],
@@ -1435,7 +1435,7 @@ mod tests {
         })
     }
 
-    // ── ADR-047 — chain-timestamp recovery from attestation key_id ────────
+    // ── the chain-timestamp recovery rule — chain-timestamp recovery from attestation key_id ────────
     //
     // Production issued AuditProofs before `destroyed_at` was restored to the
     // wire document. Those proofs are authentic and signed, but the timestamp
@@ -1443,7 +1443,7 @@ mod tests {
 
     #[test]
     fn recovers_production_key_id_with_millis_and_z() {
-        // The exact shape `governance/rzl/src/cdp.rs` emits for a production
+        // The exact shape the chain specification emits for a production
         // `Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)` timestamp.
         assert_eq!(
             recover_timestamp_from_key_id("nrx-verify-2026-03-01T00-05-00.000Z-550e8400"),
@@ -1622,7 +1622,7 @@ mod tests {
         assert_eq!(result.metadata.step_count, Some(8));
     }
 
-    // ── EO-07 sub-B: trust-chain anchoring (stage 8) ──────────────────────
+    // ── trust-chain anchoring: trust-chain anchoring (stage 8) ──────────────────────
 
     /// A chain-valid v2.1 `nanorix_only` proof whose `canonical_hash` is signed
     /// by `authority_key`. `embedded_pub_b64` is what lands in the attestation
@@ -1939,7 +1939,7 @@ mod tests {
         assert_eq!(strip_base64_prefix("xyz"), "xyz");
     }
 
-    // ── ADR-031 G7 — Verifier policy `required_authority_id` pin ──────
+    // ── the customer-authority specification G7 — Verifier policy `required_authority_id` pin ──────
     //
     // Five deterministic fixtures matching the runbook G7 test plan:
     //
@@ -2043,7 +2043,7 @@ mod tests {
         assert_eq!(result.stage_reached, 4);
     }
 
-    // ── Residency pin (EO-03 G1 / ADR-018 D3) ────────────────────────────
+    // ── Residency pin (the specification G1 / the region policy) ────────────────────────────
 
     /// A pinned region that the proof does not match is rejected before the
     /// chain walk. Until this gate existed, `--required-region` parsed fine and
@@ -2393,10 +2393,10 @@ mod tests {
         }
     }
 
-    // ── ADR-006 Wave 16-A cdp_kind verifier byte-equivalence pins ──────
+    // ── the specification an earlier release-A cdp_kind verifier byte-equivalence pins ──────
     //
     // The cdp_kind reserved-slot lives at the FullCdp / VerificationCdp
-    // canonical-hash layer (services/api/src/cdp_document.rs), NOT in the
+    // canonical-hash layer (the AuditProof document builder), NOT in the
     // 8-step destruction chain that this verifier reproduces.
     //
     // Therefore: the verifier MUST process AuditProofs identically whether
@@ -2491,7 +2491,7 @@ mod tests {
         }
     }
 
-    // ── ADR-051 C.1-2 — algorithm dispatch + additive-evolution tolerance ─
+    // ── the specification C.1-2 — algorithm dispatch + additive-evolution tolerance ─
 
     #[test]
     fn non_ed25519_attestation_algorithm_fails_typed_at_stage_4() {
@@ -2524,7 +2524,7 @@ mod tests {
 
     #[test]
     fn unknown_fields_do_not_disturb_verification() {
-        // Additive-evolution insurance (ADR-051 C.2): a proof carrying fields
+        // Additive-evolution insurance (the specification C.2): a proof carrying fields
         // this build has never heard of must verify exactly as without them.
         let mut proof = make_minimal_v1_proof();
         proof["future_sibling_artifact"] = serde_json::json!({ "anything": [1, 2, 3] });
@@ -2815,7 +2815,7 @@ mod tests {
 
     #[test]
     fn empty_sets_without_root_still_verify() {
-        // A pre-Wave-N proof carries neither key; an empty array anchors
+        // A pre-the receipt pipeline proof carries neither key; an empty array anchors
         // nothing and claims nothing, so neither may become a rejection.
         let mut proof = make_minimal_v1_proof();
         proof["parent_proof_hashes"] = serde_json::json!([]);

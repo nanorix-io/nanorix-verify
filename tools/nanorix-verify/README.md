@@ -5,7 +5,7 @@
 > auditor receives a Nanorix AuditProof and needs to confirm authenticity
 > without any Nanorix SaaS dependency.
 
-Per Nanorix EO-07 (G3 Adoption-Blocker, dispatched 2026-05-06).
+Per the verifier specification.
 
 ## Install
 
@@ -67,10 +67,10 @@ $ nanorix-verify auditproof.json --json
   "metadata": { ... }
 }
 
-# Reject diagnostic-mode proofs (verifier policy per EO-09)
+# Reject diagnostic-mode proofs (verifier policy per the specification)
 $ nanorix-verify auditproof.json --reject-diagnostic
 
-# Geo-residency check (per EO-03 G1)
+# Geo-residency check (per the specification G1)
 $ nanorix-verify auditproof.json --required-region europe-west1
 
 # Print trust chain
@@ -119,7 +119,7 @@ key for the AuditProof's signing authority. Two paths:
 ## Failure reasons
 
 When verification fails, `--json` returns a typed `failure_reason`. Closed
-enum (forever-stable per ADR-006 I0):
+enum (forever-stable per the Forever-Standard wire discipline):
 
 - `cdp_version_unsupported` — version not recognized
 - `required_field_missing` — structural fields absent
@@ -131,9 +131,12 @@ enum (forever-stable per ADR-006 I0):
 - `signature_mismatch` — Ed25519 verify failed (sub-reason: malformed / does_not_verify / public_key_malformed / message_format_mismatch)
 - `signing_key_version_unknown` — key not in trust chain
 - `authority_revoked` — signing authority revoked
-- `region_mismatch` — AuditProof region disagrees with required (EO-03 G1)
-- `diagnostic_proof_refused` — verifier policy rejected diagnostic mode (EO-09)
+- `region_mismatch` — AuditProof region disagrees with required (the specification G1)
+- `diagnostic_proof_refused` — verifier policy rejected diagnostic mode (the specification)
 - `algorithm_unsupported` — unknown signature algorithm
+- `unsigned_field_populated` — a field outside the signed view carries a value (reserved slots; a `customer_declared_activity_root` on a version whose signed message is not the canonical view)
+- `field_malformed` — a present field has the wrong shape (e.g. a `customer_declared_activity_root` that is not `sha512:` + 128 lowercase hex; `""` is malformed, not absent)
+- `customer_declared_activity_root_mismatch` — the root recomputed from the customer's activity record (`--customer-activity <file>`) disagrees with the signed root; carries `claimed` / `computed`
 
 Each reason carries diagnostic detail (`step_idx`, `subsystem`, `claimed`/`computed`
 hashes, etc.) so an auditor can self-diagnose without filing a support ticket.
