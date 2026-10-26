@@ -88,8 +88,8 @@ implementations something you can detect instead of argue about.
 
 ## Install the CLI
 
-Download a binary from the [Releases page](https://github.com/nanorix-io/nanorix-verify/releases),
-or build from this repository (the crate is not published to crates.io):
+Build it from this repository with Cargo (the crate is not published to crates.io,
+and no tagged release carries prebuilt binaries yet):
 
 ```
 cargo install --git https://github.com/nanorix-io/nanorix-verify nanorix-verify
