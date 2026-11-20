@@ -1,0 +1,593 @@
+{
+  "about": "Stage 8 vectors. Each case: a signed key list, a proof, the pinned identity fingerprint, an optional required authority id, and the verdict or refusal the Rust reference gives. Regenerated and compared by tools/nanorix-verify/tests/trust_chain_vectors.rs.",
+  "cases": [
+    {
+      "expected": {
+        "failure_reason": null,
+        "stage_reached": 8,
+        "status": "verified",
+        "valid": true
+      },
+      "key_list": "key_lists/customer_v1.json",
+      "name": "active_version_resolves",
+      "note": "The pinned identity signed the list; the proof's authority and key version are in it. Stage 8.",
+      "pin": "sha256:3097e2dee2cb4a34b53840cdb705aed71067c36f68db0e0f559c3f3fa043315f",
+      "proof": "proofs/customer_v1.json",
+      "required_authority_id": null
+    },
+    {
+      "expected": {
+        "failure_reason": null,
+        "stage_reached": 8,
+        "status": "verified",
+        "valid": true
+      },
+      "key_list": "key_lists/customer_v1.json",
+      "name": "required_authority_matches",
+      "note": "As above, with a required authority id equal to the proof's.",
+      "pin": "sha256:3097e2dee2cb4a34b53840cdb705aed71067c36f68db0e0f559c3f3fa043315f",
+      "proof": "proofs/customer_v1.json",
+      "required_authority_id": "us-customer-kms-acme-v1"
+    },
+    {
+      "expected": {
+        "failure_reason": null,
+        "stage_reached": 8,
+        "status": "verified",
+        "valid": true
+      },
+      "key_list": "key_lists/customer_rotated.json",
+      "name": "archived_version_resolves",
+      "note": "The proof's key version was archived by a rotation; the list still holds it, so it resolves.",
+      "pin": "sha256:3097e2dee2cb4a34b53840cdb705aed71067c36f68db0e0f559c3f3fa043315f",
+      "proof": "proofs/customer_v1.json",
+      "required_authority_id": null
+    },
+    {
+      "expected": {
+        "failure_reason": null,
+        "stage_reached": 8,
+        "status": "verified",
+        "valid": true
+      },
+      "key_list": "key_lists/customer_rotated.json",
+      "name": "rotated_active_version_resolves",
+      "note": "After the rotation, a proof under the new active version resolves.",
+      "pin": "sha256:3097e2dee2cb4a34b53840cdb705aed71067c36f68db0e0f559c3f3fa043315f",
+      "proof": "proofs/customer_v2.json",
+      "required_authority_id": null
+    },
+    {
+      "expected": {
+        "refusal": "fingerprint_mismatch"
+      },
+      "key_list": "key_lists/customer_v1.json",
+      "name": "wrong_pin_refused",
+      "note": "The pin names another identity than the one that signed the list. Refused before any proof is checked.",
+      "pin": "sha256:7db0b01f39d179aacf7b03dbd7dd9d71f641598bed40fb9839d3c1e1117e666f",
+      "proof": "proofs/customer_v1.json",
+      "required_authority_id": null
+    },
+    {
+      "expected": {
+        "refusal": "fingerprint_mismatch"
+      },
+      "key_list": "key_lists/customer_v1_other_identity.json",
+      "name": "list_signed_by_other_identity_refused",
+      "note": "A well-formed list signed by, and naming, another identity, checked under the customer's pin.",
+      "pin": "sha256:3097e2dee2cb4a34b53840cdb705aed71067c36f68db0e0f559c3f3fa043315f",
+      "proof": "proofs/customer_v1.json",
+      "required_authority_id": null
+    },
+    {
+      "expected": {
+        "refusal": "fingerprint_mismatch"
+      },
+      "key_list": "key_lists/customer_v1_other_identity_fingerprint_relabelled.json",
+      "name": "list_claiming_pinned_fingerprint_with_other_key_refused",
+      "note": "Another identity's list whose fingerprint field is relabelled to the pin; the inline key still hashes to the other identity.",
+      "pin": "sha256:3097e2dee2cb4a34b53840cdb705aed71067c36f68db0e0f559c3f3fa043315f",
+      "proof": "proofs/customer_v1.json",
+      "required_authority_id": null
+    },
+    {
+      "expected": {
+        "refusal": "signature_invalid"
+      },
+      "key_list": "key_lists/customer_v1_other_identity_claiming_pin.json",
+      "name": "list_claiming_pinned_identity_fully_refused",
+      "note": "Another identity's list relabelled with the pinned fingerprint and the pinned public key; only the signature is not the pinned identity's.",
+      "pin": "sha256:3097e2dee2cb4a34b53840cdb705aed71067c36f68db0e0f559c3f3fa043315f",
+      "proof": "proofs/customer_v1.json",
+      "required_authority_id": null
+    },
+    {
+      "expected": {
+        "refusal": "signature_invalid"
+      },
+      "key_list": "key_lists/customer_v1_key_swapped_after_signing.json",
+      "name": "authority_key_edited_after_signing_refused",
+      "note": "An authority's public key was replaced after the list was signed.",
+      "pin": "sha256:3097e2dee2cb4a34b53840cdb705aed71067c36f68db0e0f559c3f3fa043315f",
+      "proof": "proofs/customer_v1_signed_by_stranger_key.json",
+      "required_authority_id": null
+    },
+    {
+      "expected": {
+        "refusal": "signature_invalid"
+      },
+      "key_list": "key_lists/customer_rotated_archive_row_removed.json",
+      "name": "archived_row_removed_after_signing_refused",
+      "note": "The archived row was deleted after signing; a proof under it would otherwise be lost.",
+      "pin": "sha256:3097e2dee2cb4a34b53840cdb705aed71067c36f68db0e0f559c3f3fa043315f",
+      "proof": "proofs/customer_v1.json",
+      "required_authority_id": null
+    },
+    {
+      "expected": {
+        "refusal": "signature_invalid"
+      },
+      "key_list": "key_lists/customer_v1_non_strict_signature_only.json",
+      "name": "non_strict_only_signature_refused",
+      "note": "A small-order identity key and a signature that a non-strict Ed25519 check accepts for any message. The pin is that key's own fingerprint.",
+      "pin": "sha256:01d0fabd251fcbbe2b93b4b927b26ad2a1a99077152e45ded1e678afa45dbec5",
+      "proof": "proofs/customer_v1.json",
+      "required_authority_id": null
+    },
+    {
+      "expected": {
+        "failure_reason": {
+          "type": "signing_key_version_unknown",
+          "version": "2"
+        },
+        "stage_reached": 6,
+        "status": "not_verified",
+        "valid": false
+      },
+      "key_list": "key_lists/customer_v1.json",
+      "name": "key_version_not_in_list",
+      "note": "The proof names version 2; the list holds only version 1. Stage 6.",
+      "pin": "sha256:3097e2dee2cb4a34b53840cdb705aed71067c36f68db0e0f559c3f3fa043315f",
+      "proof": "proofs/customer_v2_signed_by_key_1.json",
+      "required_authority_id": null
+    },
+    {
+      "expected": {
+        "failure_reason": {
+          "type": "signing_key_version_unknown",
+          "version": "1"
+        },
+        "stage_reached": 6,
+        "status": "not_verified",
+        "valid": false
+      },
+      "key_list": "key_lists/customer_v1.json",
+      "name": "authority_not_in_list",
+      "note": "A proof naming Nanorix's default authority, checked against the customer's list. The list does not hold that authority. Stage 6.",
+      "pin": "sha256:3097e2dee2cb4a34b53840cdb705aed71067c36f68db0e0f559c3f3fa043315f",
+      "proof": "proofs/default_authority_v1.json",
+      "required_authority_id": null
+    },
+    {
+      "expected": {
+        "failure_reason": {
+          "claimed_authority_id": "us-customer-kms-acme-v1",
+          "expected_authority_id": "us-kms-nanorix-v1",
+          "reason": "verifier_policy_authority_id_mismatch",
+          "type": "authority_id_mismatch"
+        },
+        "stage_reached": 2,
+        "status": "not_verified",
+        "valid": false
+      },
+      "key_list": "key_lists/customer_v1.json",
+      "name": "required_authority_mismatch",
+      "note": "The customer's proof under a required authority id naming Nanorix's default authority. Refused at stage 2 by the policy pin, before the list is read.",
+      "pin": "sha256:3097e2dee2cb4a34b53840cdb705aed71067c36f68db0e0f559c3f3fa043315f",
+      "proof": "proofs/customer_v1.json",
+      "required_authority_id": "us-kms-nanorix-v1"
+    },
+    {
+      "expected": {
+        "failure_reason": {
+          "claimed_authority_id": null,
+          "expected_authority_id": "us-customer-kms-acme-v1",
+          "reason": "verifier_policy_demands_customer_hsm_audit_proof_has_none",
+          "type": "authority_id_mismatch"
+        },
+        "stage_reached": 2,
+        "status": "not_verified",
+        "valid": false
+      },
+      "key_list": "key_lists/customer_and_default.json",
+      "name": "required_authority_absent_from_proof",
+      "note": "A proof with no authority_id under a required authority id other than the default.",
+      "pin": "sha256:3097e2dee2cb4a34b53840cdb705aed71067c36f68db0e0f559c3f3fa043315f",
+      "proof": "proofs/no_authority_field_v1.json",
+      "required_authority_id": "us-customer-kms-acme-v1"
+    },
+    {
+      "expected": {
+        "failure_reason": {
+          "reason": "does_not_verify",
+          "type": "signature_mismatch"
+        },
+        "stage_reached": 7,
+        "status": "not_verified",
+        "valid": false
+      },
+      "key_list": "key_lists/customer_v1.json",
+      "name": "different_key_under_listed_version",
+      "note": "The proof's embedded key verifies its own signature but is not the key the list holds under that version. Stage 7.",
+      "pin": "sha256:3097e2dee2cb4a34b53840cdb705aed71067c36f68db0e0f559c3f3fa043315f",
+      "proof": "proofs/customer_v1_signed_by_stranger_key.json",
+      "required_authority_id": null
+    },
+    {
+      "expected": {
+        "failure_reason": null,
+        "stage_reached": 8,
+        "status": "verified",
+        "valid": true
+      },
+      "key_list": "key_lists/customer_and_default.json",
+      "name": "absent_authority_field_means_default",
+      "note": "A proof with no authority_id is read as Nanorix's default authority and resolved in a list that holds it.",
+      "pin": "sha256:3097e2dee2cb4a34b53840cdb705aed71067c36f68db0e0f559c3f3fa043315f",
+      "proof": "proofs/no_authority_field_v1.json",
+      "required_authority_id": null
+    },
+    {
+      "expected": {
+        "failure_reason": null,
+        "stage_reached": 8,
+        "status": "verified",
+        "valid": true
+      },
+      "key_list": "key_lists/customer_and_default.json",
+      "name": "default_authority_in_list_resolves",
+      "note": "Both authorities in one signed list; the proof under Nanorix's default authority resolves to its own key.",
+      "pin": "sha256:3097e2dee2cb4a34b53840cdb705aed71067c36f68db0e0f559c3f3fa043315f",
+      "proof": "proofs/default_authority_v1_own_key.json",
+      "required_authority_id": "us-kms-nanorix-v1"
+    },
+    {
+      "expected": {
+        "failure_reason": {
+          "type": "authority_revoked"
+        },
+        "stage_reached": 8,
+        "status": "not_verified",
+        "valid": false
+      },
+      "key_list": "key_lists/customer_revoked.json",
+      "name": "revoked_authority",
+      "note": "The list marks the authority revoked. Stage 8 is reached and the proof is not valid.",
+      "pin": "sha256:3097e2dee2cb4a34b53840cdb705aed71067c36f68db0e0f559c3f3fa043315f",
+      "proof": "proofs/customer_v1.json",
+      "required_authority_id": null
+    },
+    {
+      "expected": {
+        "failure_reason": null,
+        "stage_reached": 8,
+        "status": "verified",
+        "valid": true
+      },
+      "key_list": "key_lists/customer_active_shadows_archived.json",
+      "name": "active_row_wins_over_archived_row",
+      "note": "One version name in both lists with different keys. A proof signed by the active key resolves.",
+      "pin": "sha256:3097e2dee2cb4a34b53840cdb705aed71067c36f68db0e0f559c3f3fa043315f",
+      "proof": "proofs/customer_v1.json",
+      "required_authority_id": null
+    },
+    {
+      "expected": {
+        "failure_reason": {
+          "reason": "does_not_verify",
+          "type": "signature_mismatch"
+        },
+        "stage_reached": 7,
+        "status": "not_verified",
+        "valid": false
+      },
+      "key_list": "key_lists/customer_active_shadows_archived.json",
+      "name": "archived_row_never_used_when_active_has_name",
+      "note": "Same list; a proof signed by the archived row's key is checked against the active key. Stage 7.",
+      "pin": "sha256:3097e2dee2cb4a34b53840cdb705aed71067c36f68db0e0f559c3f3fa043315f",
+      "proof": "proofs/customer_v1_signed_by_key_2.json",
+      "required_authority_id": null
+    },
+    {
+      "expected": {
+        "failure_reason": null,
+        "stage_reached": 8,
+        "status": "verified",
+        "valid": true
+      },
+      "key_list": "key_lists/customer_v1_defaults_omitted.json",
+      "name": "defaults_omitted_in_published_list",
+      "note": "The published list leaves out archived_versions and revoked; the signature was made over the list with both filled in.",
+      "pin": "sha256:3097e2dee2cb4a34b53840cdb705aed71067c36f68db0e0f559c3f3fa043315f",
+      "proof": "proofs/customer_v1.json",
+      "required_authority_id": null
+    },
+    {
+      "expected": {
+        "failure_reason": null,
+        "stage_reached": 8,
+        "status": "verified",
+        "valid": true
+      },
+      "key_list": "key_lists/customer_v1_unknown_fields_added.json",
+      "name": "unknown_fields_are_not_covered",
+      "note": "Fields the reference does not read were added after signing. The reference ignores them and the list verifies.",
+      "pin": "sha256:3097e2dee2cb4a34b53840cdb705aed71067c36f68db0e0f559c3f3fa043315f",
+      "proof": "proofs/customer_v1.json",
+      "required_authority_id": null
+    },
+    {
+      "expected": {
+        "failure_reason": null,
+        "stage_reached": 8,
+        "status": "verified",
+        "valid": true
+      },
+      "key_list": "key_lists/customer_v1_pqc_slot_populated.json",
+      "name": "pqc_slot_is_not_covered",
+      "note": "The reserved post-quantum signature slot is populated with a value. It is outside the signed bytes.",
+      "pin": "sha256:3097e2dee2cb4a34b53840cdb705aed71067c36f68db0e0f559c3f3fa043315f",
+      "proof": "proofs/customer_v1.json",
+      "required_authority_id": null
+    },
+    {
+      "expected": {
+        "failure_reason": null,
+        "stage_reached": 8,
+        "status": "verified",
+        "valid": true
+      },
+      "key_list": "key_lists/customer_v1_signature_without_prefix.json",
+      "name": "signature_without_base64_prefix",
+      "note": "The manifest signature is given without its base64: prefix.",
+      "pin": "sha256:3097e2dee2cb4a34b53840cdb705aed71067c36f68db0e0f559c3f3fa043315f",
+      "proof": "proofs/customer_v1.json",
+      "required_authority_id": null
+    },
+    {
+      "expected": {
+        "refusal": "load_failed"
+      },
+      "key_list": "key_lists/customer_v1_display_name_missing.json",
+      "name": "list_missing_required_field",
+      "note": "An authority record without display_name does not parse as a key list.",
+      "pin": "sha256:3097e2dee2cb4a34b53840cdb705aed71067c36f68db0e0f559c3f3fa043315f",
+      "proof": "proofs/customer_v1.json",
+      "required_authority_id": null
+    },
+    {
+      "expected": {
+        "failure_reason": null,
+        "stage_reached": 8,
+        "status": "verified",
+        "valid": true
+      },
+      "key_list": "key_lists/customer_v1_algorithm.json",
+      "name": "key_record_algorithm_is_signed",
+      "note": "The key record carries algorithm, as every hosted key record does. It is in the signed bytes.",
+      "pin": "sha256:3097e2dee2cb4a34b53840cdb705aed71067c36f68db0e0f559c3f3fa043315f",
+      "proof": "proofs/customer_v1.json",
+      "required_authority_id": null
+    },
+    {
+      "expected": {
+        "refusal": "signature_invalid"
+      },
+      "key_list": "key_lists/customer_v1_algorithm_edited_after_signing.json",
+      "name": "algorithm_edited_after_signing_refused",
+      "note": "The key record's algorithm was changed after signing.",
+      "pin": "sha256:3097e2dee2cb4a34b53840cdb705aed71067c36f68db0e0f559c3f3fa043315f",
+      "proof": "proofs/customer_v1.json",
+      "required_authority_id": null
+    },
+    {
+      "expected": {
+        "refusal": "load_failed"
+      },
+      "key_list": "key_lists/customer_v1_algorithm_not_a_string.json",
+      "name": "algorithm_not_a_string",
+      "note": "A key record's algorithm that is not a string does not parse as a key list.",
+      "pin": "sha256:3097e2dee2cb4a34b53840cdb705aed71067c36f68db0e0f559c3f3fa043315f",
+      "proof": "proofs/customer_v1.json",
+      "required_authority_id": null
+    },
+    {
+      "expected": {
+        "failure_reason": null,
+        "stage_reached": 8,
+        "status": "verified",
+        "valid": true
+      },
+      "key_list": "key_lists/customer_marked.json",
+      "name": "marked_authority_resolves",
+      "note": "The list marks the authority as emitting population heads. The marker is in the signed bytes.",
+      "pin": "sha256:3097e2dee2cb4a34b53840cdb705aed71067c36f68db0e0f559c3f3fa043315f",
+      "proof": "proofs/customer_v1.json",
+      "required_authority_id": null
+    },
+    {
+      "expected": {
+        "refusal": "signature_invalid"
+      },
+      "key_list": "key_lists/customer_marked_marker_removed.json",
+      "name": "marker_removed_after_signing_refused",
+      "note": "The marker was removed after signing, which would hide that the authority emits heads.",
+      "pin": "sha256:3097e2dee2cb4a34b53840cdb705aed71067c36f68db0e0f559c3f3fa043315f",
+      "proof": "proofs/customer_v1.json",
+      "required_authority_id": null
+    },
+    {
+      "expected": {
+        "refusal": "signature_invalid"
+      },
+      "key_list": "key_lists/customer_v1_marker_added_after_signing.json",
+      "name": "marker_added_after_signing_refused",
+      "note": "The marker was added to a list signed without it.",
+      "pin": "sha256:3097e2dee2cb4a34b53840cdb705aed71067c36f68db0e0f559c3f3fa043315f",
+      "proof": "proofs/customer_v1.json",
+      "required_authority_id": null
+    },
+    {
+      "expected": {
+        "failure_reason": null,
+        "stage_reached": 8,
+        "status": "verified",
+        "valid": true
+      },
+      "key_list": "key_lists/customer_v1_marker_false.json",
+      "name": "marker_false_signs_as_absent",
+      "note": "A marker of false is not in the signed bytes, the same as no marker.",
+      "pin": "sha256:3097e2dee2cb4a34b53840cdb705aed71067c36f68db0e0f559c3f3fa043315f",
+      "proof": "proofs/customer_v1.json",
+      "required_authority_id": null
+    },
+    {
+      "expected": {
+        "refusal": "load_failed"
+      },
+      "key_list": "key_lists/customer_v1_marker_not_boolean.json",
+      "name": "marker_not_boolean",
+      "note": "A marker that is not a boolean does not parse as a key list.",
+      "pin": "sha256:3097e2dee2cb4a34b53840cdb705aed71067c36f68db0e0f559c3f3fa043315f",
+      "proof": "proofs/customer_v1.json",
+      "required_authority_id": null
+    },
+    {
+      "expected": {
+        "refusal": "malformed"
+      },
+      "key_list": "key_lists/customer_v1_identity_key_empty.json",
+      "name": "identity_key_empty",
+      "note": "A list that carries no identity public key cannot be checked against a pin.",
+      "pin": "sha256:3097e2dee2cb4a34b53840cdb705aed71067c36f68db0e0f559c3f3fa043315f",
+      "proof": "proofs/customer_v1.json",
+      "required_authority_id": null
+    },
+    {
+      "expected": {
+        "refusal": "load_failed"
+      },
+      "key_list": "key_lists/customer_v1_utf8_bom.json",
+      "name": "utf8_bom_refused",
+      "note": "customer_v1 with a UTF-8 byte order mark in front. serde_json refuses it; a parser that skips the mark would load the list.",
+      "pin": "sha256:3097e2dee2cb4a34b53840cdb705aed71067c36f68db0e0f559c3f3fa043315f",
+      "proof": "proofs/customer_v1.json",
+      "required_authority_id": null
+    },
+    {
+      "expected": {
+        "refusal": "load_failed"
+      },
+      "key_list": "key_lists/customer_v1_utf16le.json",
+      "name": "utf16_refused",
+      "note": "customer_v1 written as UTF-16 with its byte order mark. The reference reads UTF-8 only.",
+      "pin": "sha256:3097e2dee2cb4a34b53840cdb705aed71067c36f68db0e0f559c3f3fa043315f",
+      "proof": "proofs/customer_v1.json",
+      "required_authority_id": null
+    },
+    {
+      "expected": {
+        "refusal": "load_failed"
+      },
+      "key_list": "key_lists/customer_v1_utf32le.json",
+      "name": "utf32_refused",
+      "note": "customer_v1 written as UTF-32 with its byte order mark. The reference reads UTF-8 only.",
+      "pin": "sha256:3097e2dee2cb4a34b53840cdb705aed71067c36f68db0e0f559c3f3fa043315f",
+      "proof": "proofs/customer_v1.json",
+      "required_authority_id": null
+    },
+    {
+      "expected": {
+        "refusal": "load_failed"
+      },
+      "key_list": "key_lists/customer_v1_nan_member.json",
+      "name": "nan_refused",
+      "note": "customer_v1 with one member the reference does not read, whose value is NaN, which is not JSON.",
+      "pin": "sha256:3097e2dee2cb4a34b53840cdb705aed71067c36f68db0e0f559c3f3fa043315f",
+      "proof": "proofs/customer_v1.json",
+      "required_authority_id": null
+    },
+    {
+      "expected": {
+        "failure_reason": null,
+        "stage_reached": 8,
+        "status": "verified",
+        "valid": true
+      },
+      "key_list": "key_lists/customer_only_authority.json",
+      "name": "customer_only_corpus_proof_resolves",
+      "note": "The corpus's signed customer_only proof (13_customer_only/0000), whose signed labels name the customer authority, resolves in the key list published for that authority under that list's own pin. Stage 8, the same as nanorix_only.",
+      "pin": "sha256:86091e73ba6e8f4d570505c632698b5e015e9663948b09f2e61e4f17b8dd13ac",
+      "proof": "proofs/customer_only_corpus_0000.json",
+      "required_authority_id": null
+    },
+    {
+      "expected": {
+        "failure_reason": null,
+        "stage_reached": 7,
+        "status": "not_anchored",
+        "valid": true
+      },
+      "key_list": "key_lists/customer_and_default.json",
+      "name": "v1_0_proof_never_anchors",
+      "note": "A genuine 1.0 proof whose final_hash is signed by the key the list holds for Nanorix's default authority under version 1, checked against that list under its pin. A 1.0 signature covers final_hash alone, which binds destroyed_at and the two optional Merkle roots. It does not bind the capsule_id itself (only through record receipts, which a holder can remove), the region or the key id, so a 1.0 proof is never anchored: stage 7, not stage 8. The proof's capsule_started event names a region, which no verifier may report.",
+      "pin": "sha256:3097e2dee2cb4a34b53840cdb705aed71067c36f68db0e0f559c3f3fa043315f",
+      "proof": "proofs/v1_0_default_authority.json",
+      "required_authority_id": null
+    },
+    {
+      "expected": {
+        "failure_reason": {
+          "type": "authority_revoked"
+        },
+        "stage_reached": 8,
+        "status": "not_verified",
+        "valid": false
+      },
+      "key_list": "key_lists/default_revoked.json",
+      "name": "v1_0_revoked_authority",
+      "note": "The same 1.0 proof under a list that marks Nanorix's default authority revoked. A 1.0 proof runs the revocation check as 2.x does, so it is refused at stage 8 like a 2.x proof.",
+      "pin": "sha256:3097e2dee2cb4a34b53840cdb705aed71067c36f68db0e0f559c3f3fa043315f",
+      "proof": "proofs/v1_0_default_authority.json",
+      "required_authority_id": null
+    },
+    {
+      "expected": {
+        "failure_reason": {
+          "reason": "does_not_verify",
+          "type": "signature_mismatch"
+        },
+        "stage_reached": 7,
+        "status": "not_verified",
+        "valid": false
+      },
+      "key_list": "key_lists/customer_and_default.json",
+      "name": "v1_0_forgery_under_list",
+      "note": "A 1.0 proof self-signed with a key of its own, naming version 1 of Nanorix's default authority. Its signature verifies on the key it carries and not on the listed key, so it is refused at stage 7, as a 2.x forgery is.",
+      "pin": "sha256:3097e2dee2cb4a34b53840cdb705aed71067c36f68db0e0f559c3f3fa043315f",
+      "proof": "proofs/v1_0_default_authority_signed_by_stranger_key.json",
+      "required_authority_id": null
+    },
+    {
+      "expected": {
+        "refusal": "load_failed"
+      },
+      "key_list": "key_lists/customer_v1_infinity_member.json",
+      "name": "infinity_refused",
+      "note": "customer_v1 with one member the reference does not read, whose value is -Infinity, which is not JSON.",
+      "pin": "sha256:3097e2dee2cb4a34b53840cdb705aed71067c36f68db0e0f559c3f3fa043315f",
+      "proof": "proofs/customer_v1.json",
+      "required_authority_id": null
+    }
+  ]
+}

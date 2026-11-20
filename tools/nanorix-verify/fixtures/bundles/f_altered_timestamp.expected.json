@@ -1,0 +1,4 @@
+{
+  "description": "Timestamp differs from the one the chain was built at.",
+  "outcome": "step_8_mismatch"
+}

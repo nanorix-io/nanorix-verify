@@ -1,7 +1,7 @@
 // AuditProof 8-stage verification pipeline. Mirrors the Rust verifier in
 // `tools/nanorix-verify/src/lib.rs::verify_auditproof`.
 //
-// **Forever-Standard discipline (the Forever-Standard wire discipline):** the stage numbering, the
+// **Forever-Standard discipline:** the stage numbering, the
 // failure-reason emission shapes, the policy-pin gate ordering, and the
 // genesis-hash anchor are PERMANENT. Any change to this file that would
 // produce non-byte-equivalent output to the Rust verifier on the reference
@@ -10,21 +10,25 @@
 // **Stage ladder implemented here:**
 //
 //	1  schema — cdp_version present
-//	2  version recognized; the authority-pin and region-pin policy gates
+//	2  version recognized; the reserved-slot gate; the declared-activity-root
+//	   gate; the authority-pin and region-pin policy gates
 //	3  chain reproducibility (incl. the per-record receipt specification/041 Step-8 amendment, the
 //	   receipt set, and the parent-proof set)
 //	4  final_hash binding
 //	5  canonical-hash recompute (folded into the signature stage: the
 //	   recomputed canonical view IS the v2.1 signed message)
-//	6  signing-key resolution — embedded-key path only in this build
+//	6  signing-key resolution — the embedded key, or the key list's key at stage 8
 //	7  Ed25519 signature verification → integrity
+//	8  trust-chain anchoring — only when the policy carries a TrustChain
 //
-// Stage 8 (trust-chain anchoring — resolving the signing key from a verified
-// manifest instead of trusting the key embedded in the proof) is implemented in
-// the Rust verifier via `VerifierPolicy::trust_chain` and is NOT carried here:
-// this build's policy struct has no manifest field. A proof that reaches stage
-// 7 here has proven integrity, not authenticity. `VerifySignatureAgainst` is
-// the hook a future stage-8 wiring would use.
+// Stage 8 resolves the proof's (authority_id, signing_key_version) in a signed
+// key list, checks the signature against the listed key instead of the key the
+// proof carries, and refuses a revoked authority. The key list is loaded with
+// LoadTrustChain, which refuses any list that is not signed by the identity
+// whose fingerprint the caller pinned. Without a TrustChain in the policy the
+// ladder ends at stage 7: a proof that reaches it has proven integrity against
+// the key it carries, not authenticity. The Rust verifier is the reference for
+// stage 8; `trust_chain_vectors_test.go` replays its vectors.
 //
 // The cross-impl corpus sweep in `corpus_sweep_test.go` is the binding
 // backstop: every fixture must match the Rust-authored committed verdict.
@@ -34,24 +38,49 @@ package auditproof
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
+	"unicode/utf8"
 )
 
 // VerifierPolicy is the customer-side policy configuration. Field-additive
-// per the Forever-Standard wire discipline + the customer-authority specification G7 — pre-amendment callers passing a zero-value
+// — pre-amendment callers passing a zero-value
 // policy continue to behave identically.
 type VerifierPolicy struct {
-	// RejectDiagnostic: refuse AuditProofs with `diagnostic_mode: true` (the specification).
+	// RejectDiagnostic: refuse at stage 2, with ReasonDiagnosticProofRefused,
+	// an AuditProof whose signed activity trail records diagnostic mode (a
+	// `diagnostic_mode_enabled` event), and every AuditProof that cannot show
+	// it does not: one whose trail is unsigned, which is cdp_version 1.0, or
+	// 2.1 or 2.2 without a signature, so the event could be removed and the
+	// proof would still verify. Only a stage 8 (verified) result ties the
+	// trail to a Nanorix key; at stage 7 the key is the one the proof carries.
+	// False accepts diagnostic-mode proofs.
 	RejectDiagnostic bool
 
-	// RequiredRegion: if non-empty, require the AuditProof's `region` to match.
+	// RequiredRegion: if non-empty, require the region on the signed
+	// capsule_started activity event to match. An AuditProof whose trail is
+	// unsigned (cdp_version 1.0, or 2.1 or 2.2 without a signature) is refused
+	// with an empty actual. Only a stage 8 (verified) result ties the region
+	// to a Nanorix key.
 	RequiredRegion string
 
-	// RequiredAuthorityID: if non-empty, require the AuditProof's
-	// `signing_authority.authority_id` to match. Per the customer-authority specification G7 + VP Security
-	// extended-review F4.3.
+	// RequiredAuthorityID: if non-empty, require the AuditProof's top-level
+	// `authority_id` (absent means DefaultAuthorityID) to equal it. The
+	// signature covers that field only on cdp_version 2.1 and 2.2; on 1.0 a
+	// string other than DefaultAuthorityID is refused, so a pin accepts only
+	// the default there, and 2.0 is refused at the version gate before the pin
+	// is read. An unsigned `signing_authority` that disagrees is refused and
+	// can never match. Per VP Security extended-review F4.3. A pin
+	// is a full authority check only together with TrustChain, which resolves
+	// the signing key in a key list instead of trusting the key in the proof.
 	RequiredAuthorityID string
 
-	// CustomerActivity: the specification — the raw bytes of the customer's activity
+	// TrustChain: the signed key list the proof's signing key is resolved
+	// against (stage 8). Make it with LoadTrustChain, which checks the list's
+	// signature against the identity fingerprint you pin. Nil → the ladder ends
+	// at stage 7. Mirrors `VerifierPolicy::trust_chain` in the Rust verifier.
+	TrustChain *TrustChain
+
+	// CustomerActivity: the customer-declared activity specification — the raw bytes of the customer's activity
 	// record, when the reader has it. The proof carries only
 	// `customer_declared_activity_root`; with the record in hand the verifier
 	// recomputes the root and compares (customer_activity.go). Supplying a
@@ -63,18 +92,144 @@ type VerifierPolicy struct {
 }
 
 // supportedCdpVersions enumerates the closed-set of recognized AuditProof
-// schema versions. Additive only per the Forever-Standard wire discipline.
+// schema versions. A document declaring any other version is refused at stage
+// 2. "2.0" is retired and absent on purpose: a 2.0 signature covers a hash that no published rule lets a verifier recompute from the document
+// (the wire-format evolution policy requires a verifier to reject a version it does not explicitly
+// support). The Forever-Standard wire discipline
+// governs the AuditProof structure, not this set.
 //
-// "2.2" (the specification + the specification) is verified exactly as "2.1": the canonical view,
+// "2.2" is verified exactly as "2.1": the canonical view,
 // the signed-message form and every stage are unchanged. What 2.2 adds rides
 // inside fields the 2.1 recompute already covers — new activity-trail events,
 // and `customer_declared_activity_root`, which the recompute includes whenever
 // present.
 var supportedCdpVersions = map[string]bool{
 	"1.0": true,
-	"2.0": true,
 	"2.1": true,
 	"2.2": true,
+}
+
+// unsignedReservedSlots are the reserved attestation slots that sit outside
+// the canonical view AND that no Nanorix signer populates. Same seven names in
+// the same order as Rust UNSIGNED_RESERVED_SLOTS: the order decides which slot
+// a document with several populated ones is refused for.
+//
+// The signature never covered these and a genuine document never carries
+// them, so a populated one is either a schema this build does not know or an
+// outsider edit to an authentic proof. The signature cannot tell the two
+// apart, which is why presence alone is the refusal.
+//
+// per_event_attestations is deliberately absent: genuine proofs carry it, and
+// each entry is signed by the customer's own key; this verifier does not check
+// those signatures.
+var unsignedReservedSlots = [...]string{
+	"customer_attestation",
+	"policy_attestation",
+	"third_party_attestation",
+	"retention_policy_attestation",
+	"witness_signatures",
+	"pqc_attestation",
+	"customer_pqc_attestation",
+}
+
+// populatedUnsignedSlot returns the first reserved slot, in
+// unsignedReservedSlots order, that is present with a value other than JSON
+// null, or "" when there is none. Genuine documents emit these keys as an
+// explicit null, so absent and null are both normal; anything else, an empty
+// array included, is a shape no signer produces.
+func populatedUnsignedSlot(proof map[string]interface{}) string {
+	for _, slot := range unsignedReservedSlots {
+		if v, present := proof[slot]; present && v != nil {
+			return slot
+		}
+	}
+	return ""
+}
+
+// serdeJSONMaxDepth is how deep serde_json, the parser in front of the Rust
+// reference verifier, nests containers: it starts remaining_depth at 128 and
+// refuses the `[` or `{` that brings it to zero, so 127 nested containers parse
+// and 128 do not. encoding/json allows 10000.
+const serdeJSONMaxDepth = 127
+
+// referenceParserRefuses reports whether serde_json refuses bytes that
+// encoding/json accepts: invalid UTF-8 and an escape naming half of a
+// surrogate pair (both of which encoding/json replaces with U+FFFD), and
+// nesting deeper than serdeJSONMaxDepth. It is only consulted for bytes
+// encoding/json also parses, so it may assume well-formed JSON.
+func referenceParserRefuses(b []byte) bool {
+	if !utf8.Valid(b) {
+		return true
+	}
+	depth := 0
+	inString := false
+	for i := 0; i < len(b); i++ {
+		c := b[i]
+		if !inString {
+			switch c {
+			case '"':
+				inString = true
+			case '[', '{':
+				depth++
+				if depth > serdeJSONMaxDepth {
+					return true
+				}
+			case ']', '}':
+				depth--
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inString = false
+		case '\\':
+			i++
+			if i >= len(b) || b[i] != 'u' {
+				continue
+			}
+			unit, ok := hexEscapeUnit(b, i+1)
+			if !ok {
+				return true
+			}
+			i += 4
+			switch {
+			case unit >= 0xDC00 && unit <= 0xDFFF:
+				return true
+			case unit >= 0xD800 && unit <= 0xDBFF:
+				if i+2 >= len(b) || b[i+1] != '\\' || b[i+2] != 'u' {
+					return true
+				}
+				low, ok := hexEscapeUnit(b, i+3)
+				if !ok || low < 0xDC00 || low > 0xDFFF {
+					return true
+				}
+				i += 6
+			}
+		}
+	}
+	return false
+}
+
+// hexEscapeUnit reads the four hex digits of a \u escape starting at b[at].
+func hexEscapeUnit(b []byte, at int) (rune, bool) {
+	if at+4 > len(b) {
+		return 0, false
+	}
+	var unit rune
+	for _, c := range b[at : at+4] {
+		unit <<= 4
+		switch {
+		case c >= '0' && c <= '9':
+			unit |= rune(c - '0')
+		case c >= 'a' && c <= 'f':
+			unit |= rune(c-'a') + 10
+		case c >= 'A' && c <= 'F':
+			unit |= rune(c-'A') + 10
+		default:
+			return 0, false
+		}
+	}
+	return unit, true
 }
 
 // Verify runs the AuditProof verification pipeline against `jsonBytes` under
@@ -87,7 +242,7 @@ func Verify(jsonBytes []byte, policy VerifierPolicy) AuditProofVerificationResul
 }
 
 // verifyCore is the single verification ladder. `enforceParentDepthCap` adds
-// the receipt-batching specification depth-limit check used by the receipt pipeline entry point.
+// the depth-limit check used by the receipt pipeline entry point.
 //
 // One ladder, not two: a second copy of this logic is how the signature stage
 // came to be missing from one path while present in the other.
@@ -95,8 +250,8 @@ func verifyCore(jsonBytes []byte, policy VerifierPolicy, enforceParentDepthCap b
 	metadata := VerificationMetadata{}
 
 	// Stage 0: parse JSON.
-	var proof map[string]interface{}
-	if err := json.Unmarshal(jsonBytes, &proof); err != nil {
+	var document interface{}
+	if err := json.Unmarshal(jsonBytes, &document); err != nil || referenceParserRefuses(jsonBytes) {
 		// Pre-stage parse failure → required_field_missing of the document itself.
 		// Rust verifier caller (main.rs) handles this above the lib boundary; we
 		// mirror that by returning required_field_missing of "json_root".
@@ -110,6 +265,10 @@ func verifyCore(jsonBytes []byte, policy VerifierPolicy, enforceParentDepthCap b
 			Metadata:     metadata,
 		}
 	}
+
+	// A top-level value that is not an object parses, so it is not json_root:
+	// like the reference, it has no cdp_version.
+	proof, _ := document.(map[string]interface{})
 
 	// Stage 1: schema validation — cdp_version present.
 	cdpVersion, ok := proof["cdp_version"].(string)
@@ -139,12 +298,28 @@ func verifyCore(jsonBytes []byte, policy VerifierPolicy, enforceParentDepthCap b
 		}
 	}
 
-	// the specification gate on customer_declared_activity_root, stage 2, before the
-	// chain walk (mirrors the Rust ladder's position beside its reserved-slot
+	// Reserved-slot gate, stage 2, after the version gate and before every
+	// other stage-2 gate (mirrors the Rust ladder). A slot outside the
+	// signature carrying a value no signer emits means these bytes are not
+	// the bytes that were signed, even when the signature over the covered
+	// subset still checks out; that holds whatever a customer policy asks for.
+	if slot := populatedUnsignedSlot(proof); slot != "" {
+		return AuditProofVerificationResult{
+			Valid: false,
+			FailureReason: &FailureReason{
+				Type:  ReasonUnsignedFieldPopulated,
+				Field: slot,
+			},
+			StageReached: 2,
+			Metadata:     metadata,
+		}
+	}
+
+	// Gate on customer_declared_activity_root, stage 2, before the
+	// chain walk (mirrors the Rust ladder's position after its reserved-slot
 	// gate). The root is signed only where the signed message is the canonical
-	// view (2.1 / 2.2); on 1.0 the message is final_hash and on 2.0 the
-	// document_hash field, so a root there is a value anyone can write and the
-	// signature cannot tell. On 2.1 / 2.2 a root that is not a sha512: +
+	// view (2.1 / 2.2); on 1.0 the message is final_hash, so a root there is
+	// a value anyone can write and the signature cannot tell. On 2.1 / 2.2 a root that is not a sha512: +
 	// 128-lowercase-hex string is a shape no signer emits, named here before
 	// any recompute consumes it so the verdict blames the field and not the
 	// signature or the record.
@@ -158,19 +333,36 @@ func verifyCore(jsonBytes []byte, policy VerifierPolicy, enforceParentDepthCap b
 	}
 
 	// Populate metadata before the policy-pin / chain checks (mirrors Rust).
-	if v, ok := proof["capsule_id"].(string); ok {
+	//
+	// The capsule id as the document states it: the record-receipt check below
+	// hashes it on every version. The metadata names a capsule and a region only
+	// on a version whose signature covers them. A 1.0 signature covers
+	// final_hash alone, which binds destroyed_at and the two optional Merkle
+	// roots. It does not bind the capsule_id itself (only through record
+	// receipts, which a holder can remove), the region or the key id, so on 1.0
+	// neither is reported.
+	documentCapsuleID, _ := proof["capsule_id"].(string)
+	namesSignedFields := canonicalViewSignedVersions[cdpVersion]
+	// The region is read from the activity trail, so it is reported only when
+	// the signature step below will check a signature over that trail: on a
+	// proof without a signature or key, no return names it. Mirrors Rust.
+	trailChecked := namesSignedFields &&
+		VerifySignature(signatureTree(proof, jsonBytes), cdpVersion).Kind != SignatureAbsent
+	if v, ok := proof["capsule_id"].(string); ok && namesSignedFields {
 		metadata.CapsuleID = strPtr(v)
 	}
-	// Region resolves from the SIGNED capsule_started activity event only.
+	// Region resolves from the capsule_started activity event only, on 2.1 and
+	// 2.2 carrying a signature.
 	//
-	// The activity trail is inside CanonicalCdpView, so a region carried there
-	// cannot be altered without breaking the signature. The two paths this
+	// On 2.1 and 2.2 the activity trail is inside CanonicalCdpView, so a region
+	// carried there cannot be altered without breaking the signature. An
+	// unsigned 2.1 or 2.2 proof reports no region. The two paths this
 	// replaced -- environment.region and top-level region -- are both outside
 	// the canonical hash: environment is a derived projection whose struct has
 	// no region field at all, and top-level region is emitted by nothing.
 	// Reading either let an outsider satisfy the residency pin by appending a
 	// region to a genuine signed proof, with no key. Mirrors the Rust change.
-	if events, ok := proof["activity"].([]interface{}); ok {
+	if events, ok := proof["activity"].([]interface{}); ok && trailChecked {
 		for _, e := range events {
 			ev, ok := e.(map[string]interface{})
 			if !ok {
@@ -192,28 +384,36 @@ func verifyCore(jsonBytes []byte, policy VerifierPolicy, enforceParentDepthCap b
 		}
 	}
 	metadata.Algorithm = lookupStringPath(proof, "attestation", "algorithm")
+	if v, ok := proof["authority_id"].(string); ok {
+		metadata.AuthorityID = strPtr(v)
+	}
+	if v, ok := proof["signing_mode"].(string); ok {
+		metadata.SigningMode = strPtr(v)
+	}
 
-	// Policy-pin gate (the customer-authority specification G7 / VP Security F4.3).
+	// Policy-pin gate (the customer-authority specification / VP Security F4.3).
 	//
 	// Rust ordering: policy-pin gate fires BEFORE chain integrity checks.
 	// stage_reached = 2.
+	//
+	// The pin is compared with the top-level `authority_id`; absent or
+	// non-string means DefaultAuthorityID. Only cdp_version 2.1 and 2.2 sign
+	// that field (the canonical view binds it): 1.0 signs final_hash, so on 1.0
+	// a top-level string other than DefaultAuthorityID (the empty string
+	// included) is refused first, claimed = that value, and the effective
+	// authority can only be the default. 2.0 never reaches this gate: the
+	// version gate above refuses it first. An unsigned
+	// `signing_authority.authority_id` that differs from it is refused
+	// (claimed = that value) and can never make a proof match a pin;
+	// `signing_authority` absent, null or without `authority_id` is ignored.
+	// With the top-level field absent, a non-matching pin reports claimed nil
+	// and the has-none reason. A pin is a full authority check only when the
+	// policy also carries a TrustChain.
 	if policy.RequiredAuthorityID != "" {
-		claimed := lookupStringPath(proof, "signing_authority", "authority_id")
-		switch {
-		case claimed == nil:
-			return AuditProofVerificationResult{
-				Valid: false,
-				FailureReason: &FailureReason{
-					Type:                ReasonAuthorityIDMismatch,
-					ClaimedAuthorityID:  nil,
-					ExpectedAuthorityID: policy.RequiredAuthorityID,
-					AuthIDReason:        AuthIDPolicyDemandsCustomerHSMHasNone,
-				},
-				StageReached: 2,
-				Metadata:     metadata,
-			}
-		case *claimed != policy.RequiredAuthorityID:
-			c := *claimed
+		topLevel := lookupStringPath(proof, "authority_id")
+		effective := effectiveAuthorityID(proof)
+		if !canonicalViewSignedVersions[cdpVersion] && topLevel != nil && *topLevel != DefaultAuthorityID {
+			c := *topLevel
 			return AuditProofVerificationResult{
 				Valid: false,
 				FailureReason: &FailureReason{
@@ -226,19 +426,68 @@ func verifyCore(jsonBytes []byte, policy VerifierPolicy, enforceParentDepthCap b
 				Metadata:     metadata,
 			}
 		}
+		unsigned := lookupStringPath(proof, "signing_authority", "authority_id")
+		if unsigned != nil && *unsigned != effective {
+			c := *unsigned
+			return AuditProofVerificationResult{
+				Valid: false,
+				FailureReason: &FailureReason{
+					Type:                ReasonAuthorityIDMismatch,
+					ClaimedAuthorityID:  &c,
+					ExpectedAuthorityID: policy.RequiredAuthorityID,
+					AuthIDReason:        AuthIDPolicyAuthorityIDMismatch,
+				},
+				StageReached: 2,
+				Metadata:     metadata,
+			}
+		}
+		if effective != policy.RequiredAuthorityID {
+			reason := AuthIDPolicyAuthorityIDMismatch
+			var claimed *string
+			if topLevel == nil {
+				reason = AuthIDPolicyDemandsCustomerHSMHasNone
+			} else {
+				c := *topLevel
+				claimed = &c
+			}
+			return AuditProofVerificationResult{
+				Valid: false,
+				FailureReason: &FailureReason{
+					Type:                ReasonAuthorityIDMismatch,
+					ClaimedAuthorityID:  claimed,
+					ExpectedAuthorityID: policy.RequiredAuthorityID,
+					AuthIDReason:        reason,
+				},
+				StageReached: 2,
+				Metadata:     metadata,
+			}
+		}
 		// Authority matches policy pin; fall through.
 	}
 
-	// Residency-pin gate (the specification G1 / the region policy).
+	// The residency pin and the diagnostic gate read the activity trail, so
+	// each trusts it only when the signature step below will check a signature
+	// over it: the version's signed message is the canonical view (2.1 / 2.2)
+	// and that step does not end as SignatureAbsent. A 1.0 trail, and the
+	// trail of a 2.1 or 2.2 proof without a signature or key, is unsigned:
+	// anyone could add a region equal to the pin, or delete a
+	// diagnostic_mode_enabled event, and the proof would still verify.
+	// Computed only under a policy that reads the trail. Mirrors Rust.
+	trailSigned := (policy.RequiredRegion != "" || policy.RejectDiagnostic) && trailChecked
+
+	// Residency-pin gate.
 	//
 	// Same shape and rationale as the authority pin above: when the auditor
 	// pins a region, a proof asserting a different region is rejected before
 	// the chain walk. A proof that carries no region at all cannot satisfy a
 	// residency pin — it is rejected with an empty `actual` rather than
 	// accepted, so the pin fails closed.
+	//
+	// Only a signed region counts: on an unsigned trail the pin reads no
+	// region and refuses with an empty actual.
 	if policy.RequiredRegion != "" {
 		actual := ""
-		if metadata.Region != nil {
+		if metadata.Region != nil && trailSigned {
 			actual = *metadata.Region
 		}
 		if actual != policy.RequiredRegion {
@@ -252,6 +501,20 @@ func verifyCore(jsonBytes []byte, policy VerifierPolicy, enforceParentDepthCap b
 				StageReached: 2,
 				Metadata:     metadata,
 			}
+		}
+	}
+
+	// Diagnostic-mode gate, after the residency pin and before
+	// the chain walk, like the other policy pins. A proof whose trail is
+	// unsigned (1.0, or 2.1 or 2.2 without a signature) cannot show it was not
+	// run in diagnostic mode, since the event could be deleted and the proof
+	// would still verify: the setting refuses every one. Mirrors Rust.
+	if policy.RejectDiagnostic && (!trailSigned || recordsDiagnosticMode(proof)) {
+		return AuditProofVerificationResult{
+			Valid:         false,
+			FailureReason: &FailureReason{Type: ReasonDiagnosticProofRefused},
+			StageReached:  2,
+			Metadata:      metadata,
 		}
 	}
 
@@ -284,14 +547,14 @@ func verifyCore(jsonBytes []byte, policy VerifierPolicy, enforceParentDepthCap b
 		}
 	}
 
-	// the chain-timestamp recovery rule — proofs issued before `destroyed_at` was restored to the wire
+	// Proofs issued before `destroyed_at` was restored to the wire
 	// document carry the chain timestamp only in `attestation.key_id`. Recover
 	// it there; the recovered value is disclosed in the verdict metadata, never
 	// silently substituted.
 	timestamp, recovered := resolveChainTimestamp(proof)
 	metadata.RecoveredChainTimestamp = recovered
 
-	// the per-record receipt specification + the receipt-batching specification the receipt pipeline — optional Merkle roots for the Step 8
+	// The receipt pipeline — optional Merkle roots for the Step 8
 	// amendment. Absent for pre-the receipt pipeline proofs, where both branches collapse to
 	// the legacy formula → byte-identical chain walk.
 	var rrmrPtr, ppmrPtr *string
@@ -326,7 +589,7 @@ func verifyCore(jsonBytes []byte, policy VerifierPolicy, enforceParentDepthCap b
 
 		var recomputed string
 		if idx == NanorixChainSteps-1 {
-			// the per-record receipt specification + the receipt-batching specification Step 8 amendment — presence-conditional Merkle-
+			// The per-record receipt specification + the cross-organisation chain specification Step 8 amendment — presence-conditional Merkle-
 			// root incorporation. The (nil, nil) branch returns the legacy
 			// formula bit-for-bit (Forever-Standard).
 			recomputed = ComputeStep8Amended(prevHash, timestamp, rrmrPtr, ppmrPtr)
@@ -366,13 +629,9 @@ func verifyCore(jsonBytes []byte, policy VerifierPolicy, enforceParentDepthCap b
 		prevHash = recomputed
 	}
 
-	// ── the per-record receipt specification receipt-set verification (Mode A step 3) ──
+	// ── receipt-set verification (Mode A step 3) ──
 	if receipts, ok := proof["record_receipts"].([]interface{}); ok {
-		capsuleID := ""
-		if metadata.CapsuleID != nil {
-			capsuleID = *metadata.CapsuleID
-		}
-		if failure := verifyRecordReceiptsArray(receipts, capsuleID, rrmrPtr); failure != nil {
+		if failure := verifyRecordReceiptsArray(receipts, documentCapsuleID, rrmrPtr); failure != nil {
 			return AuditProofVerificationResult{
 				Valid:         false,
 				FailureReason: failure,
@@ -382,7 +641,7 @@ func verifyCore(jsonBytes []byte, policy VerifierPolicy, enforceParentDepthCap b
 		}
 	}
 
-	// ── the receipt-batching specification parent-proof set verification ──
+	// ── parent-proof set verification ──
 	if parents, ok := proof["parent_proof_hashes"].([]interface{}); ok {
 		if failure := verifyParentProofsArray(parents, ppmrPtr); failure != nil {
 			return AuditProofVerificationResult{
@@ -406,7 +665,7 @@ func verifyCore(jsonBytes []byte, policy VerifierPolicy, enforceParentDepthCap b
 		}
 	}
 
-	// ── the specification customer-declared activity root ──
+	// ── customer-declared activity root ──
 	// The stage-2 gate above has already rejected a root on a version that
 	// does not sign it and a root of any shape no signer emits, so a root
 	// read here is a well-formed string on 2.1 / 2.2 and is canonical-bound:
@@ -454,7 +713,7 @@ func verifyCore(jsonBytes []byte, policy VerifierPolicy, enforceParentDepthCap b
 		}
 	}
 
-	// Algorithm dispatch precedes byte-shape checks (the specification C.1): a proof
+	// Algorithm dispatch precedes byte-shape checks: a proof
 	// declaring a non-Ed25519 signature algorithm fails typed as
 	// algorithm_unsupported here — it must never fall through to the
 	// 64/32-byte decode gates and report as "malformed". Absent or "Ed25519"
@@ -471,6 +730,20 @@ func verifyCore(jsonBytes []byte, policy VerifierPolicy, enforceParentDepthCap b
 		}
 	}
 
+	// The consistency rule of the amendment, section 4: after the
+	// algorithm check and before the signature-presence check, so an unsigned
+	// customer_only document under a Nanorix-classified authority is refused
+	// too. Mirrors signing_mode_authority_mismatch in
+	// tools/nanorix-verify/src/lib.rs.
+	if reason := signingModeAuthorityMismatch(proof, cdpVersion); reason != nil {
+		return AuditProofVerificationResult{
+			Valid:         false,
+			FailureReason: reason,
+			StageReached:  4,
+			Metadata:      metadata,
+		}
+	}
+
 	// Stages 5-7: recompute the signed message and check the Ed25519 signature
 	// over it against the key embedded in the proof.
 	//
@@ -480,17 +753,18 @@ func verifyCore(jsonBytes []byte, policy VerifierPolicy, enforceParentDepthCap b
 	//
 	// The canonical recompute reads a number-preserving parse of the original
 	// bytes, because there the serialization IS the cryptographic message.
-	sigTree := proof
-	if numeric, ok := canonicalProofTree(jsonBytes); ok {
-		sigTree = numeric
-	}
+	sigTree := signatureTree(proof, jsonBytes)
 
 	switch check := VerifySignature(sigTree, cdpVersion); check.Kind {
 	case SignatureVerified:
-		// Integrity proven against the embedded key. Stage 8 (anchoring that
-		// key to a trust-chain manifest) is not implemented in this build, so
-		// this is the terminal success stage — matching the Rust verifier run
-		// without a manifest.
+		// Integrity proven against the embedded key. With a key list in the
+		// policy, stage 8 anchors that key; without one this is the terminal
+		// success stage, matching the Rust verifier run without a manifest.
+		signed := canonicalViewSignedVersions[cdpVersion]
+		metadata.AuthoritySigned = &signed
+		if policy.TrustChain != nil {
+			return anchorToTrustChain(proof, sigTree, cdpVersion, policy.TrustChain, metadata)
+		}
 		return AuditProofVerificationResult{
 			Valid:         true,
 			FailureReason: nil,
@@ -520,7 +794,13 @@ func verifyCore(jsonBytes []byte, policy VerifierPolicy, enforceParentDepthCap b
 		// Chain reproduced but no signature this build can check (unsigned
 		// partial). Honest: this is NOT a full cryptographic verification — it
 		// stays at stage 4 and the CLI prints "chain verified, signature NOT
-		// checked".
+		// checked". Under a hybrid pin it is refused there instead.
+		if underHybridPin(policy.TrustChain) {
+			return hybridRecordRefusal(4, metadata)
+		}
+		// No signature covers the activity trail here, so the region read from
+		// it is not reported.
+		metadata.Region = nil
 		return AuditProofVerificationResult{
 			Valid:         true,
 			FailureReason: nil,
@@ -577,6 +857,59 @@ func intPtr(i int) *int {
 	return &i
 }
 
+// canonicalViewSignedVersions are the cdp_versions whose signature covers the
+// canonical view, and with it the top-level `authority_id`. Mirrors Rust
+// CANONICAL_VIEW_SIGNED_VERSIONS.
+var canonicalViewSignedVersions = map[string]bool{"2.1": true, "2.2": true}
+
+// DefaultAuthorityID is the authority a proof anchors under when it carries no
+// top-level `authority_id` (the Nanorix-hosted signing path).
+const DefaultAuthorityID = "us-kms-nanorix-v1"
+
+// DiagnosticModeEvent is the activity event an issuer writes when a capsule
+// ran in diagnostic mode.
+const DiagnosticModeEvent = "diagnostic_mode_enabled"
+
+// signatureTree is the tree the signature step reads: a number-preserving
+// parse of the original bytes, or the parsed proof when that parse fails.
+func signatureTree(proof map[string]interface{}, jsonBytes []byte) map[string]interface{} {
+	if numeric, ok := canonicalProofTree(jsonBytes); ok {
+		return numeric
+	}
+	return proof
+}
+
+// recordsDiagnosticMode reports whether the activity trail holds an entry
+// whose `event` is DiagnosticModeEvent. The trail is signed only on 2.1 and
+// 2.2 with a signature, so false proves nothing on 1.0 or on an unsigned 2.1
+// or 2.2 proof; the diagnostic gate refuses those outright for that reason.
+// Mirrors Rust `records_diagnostic_mode`.
+func recordsDiagnosticMode(proof map[string]interface{}) bool {
+	events, ok := proof["activity"].([]interface{})
+	if !ok {
+		return false
+	}
+	for _, e := range events {
+		ev, ok := e.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if tag, _ := ev["event"].(string); tag == DiagnosticModeEvent {
+			return true
+		}
+	}
+	return false
+}
+
+// effectiveAuthorityID returns the top-level `authority_id`, or
+// DefaultAuthorityID when it is absent or not a string.
+func effectiveAuthorityID(proof interface{}) string {
+	if v := lookupStringPath(proof, "authority_id"); v != nil {
+		return *v
+	}
+	return DefaultAuthorityID
+}
+
 // lookupStringPath traverses a parsed JSON tree by string path and returns the
 // terminal value as *string. Returns nil if any path segment is missing or
 // non-traversable. Mirrors the Rust serde_json::Value::pointer convention.
@@ -630,4 +963,54 @@ func declaredNonEd25519Algorithm(proof map[string]interface{}) string {
 		return s
 	}
 	return ""
+}
+
+// SigningModeCustomerOnly is the signing_mode a proof carries when the
+// install's customer authority signed it (Part A).
+// Compared byte for byte.
+const SigningModeCustomerOnly = "customer_only"
+
+// customerAuthoritySegments are the byte strings that make an authority id
+// customer-classified: the issuer's test, AuthorityKind::from_authority_id in
+// the reference server implementation, a substring match anywhere
+// in the id, byte-exact and case-sensitive, with no normalization.
+var customerAuthoritySegments = [...]string{
+	"customer-hsm-",
+	"customer-kms-",
+	"customer-tee-",
+	"customer-byo-",
+}
+
+// IsCustomerAuthority reports whether authorityID is customer-classified.
+// Every other id is Nanorix-classified.
+func IsCustomerAuthority(authorityID string) bool {
+	for _, segment := range customerAuthoritySegments {
+		if strings.Contains(authorityID, segment) {
+			return true
+		}
+	}
+	return false
+}
+
+// signingModeAuthorityMismatch is the consistency rule:
+// on 2.1 and 2.2, a signing_mode of exactly customer_only under a
+// Nanorix-classified authority_id (an absent, null or non-string one
+// included) is refused. Returns nil when the pair is consistent or the
+// version signs neither label.
+func signingModeAuthorityMismatch(proof map[string]interface{}, cdpVersion string) *FailureReason {
+	if cdpVersion != "2.1" && cdpVersion != "2.2" {
+		return nil
+	}
+	if mode, _ := proof["signing_mode"].(string); mode != SigningModeCustomerOnly {
+		return nil
+	}
+	claimed, isString := proof["authority_id"].(string)
+	if isString && IsCustomerAuthority(claimed) {
+		return nil
+	}
+	reason := &FailureReason{Type: ReasonSigningModeAuthorityMismatch}
+	if isString {
+		reason.ClaimedAuthorityID = &claimed
+	}
+	return reason
 }

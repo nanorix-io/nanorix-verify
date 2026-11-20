@@ -22,15 +22,15 @@
       "path": "04_failure_signature_invalid"
     },
     {
-      "fixture_count": 10,
+      "fixture_count": 12,
       "path": "05_failure_region_mismatch"
     },
     {
-      "fixture_count": 10,
+      "fixture_count": 15,
       "path": "06_failure_authority_unknown"
     },
     {
-      "fixture_count": 10,
+      "fixture_count": 15,
       "path": "07_failure_version_unsupported"
     },
     {
@@ -54,20 +54,33 @@
       "path": "09_tamper_patterns/d_signature_substitution"
     },
     {
-      "fixture_count": 10,
+      "fixture_count": 13,
       "path": "10_v2_2"
+    },
+    {
+      "fixture_count": 28,
+      "path": "11_json_parse_boundary"
+    },
+    {
+      "fixture_count": 4,
+      "path": "12_failure_diagnostic_refused"
+    },
+    {
+      "fixture_count": 6,
+      "path": "13_customer_only"
     }
   ],
   "expected_verdict_schema": {
     "failure_reason": "null on success; otherwise the FailureReason wire object, tag key `type`",
     "note": "optional — prose for verdicts that are not the obvious guess from the category name",
     "policy": "optional — VerifierPolicy pins REQUIRED to reach this verdict; absent means defaults",
-    "stage_reached": "1..=8; 7 is the success stage without a trust-chain manifest",
-    "valid": "bool — the verifier's accept/reject decision"
+    "stage_reached": "1..=8; 7 is not_anchored, 8 is verified",
+    "status": "the verdict: verified (valid at stage 8, which needs a trust-chain manifest the corpus does not pin), not_anchored (valid at stage 7) or not_verified",
+    "valid": "bool — the chain and signature hold under the key used; not a verdict on its own (true at stage 7, where the key is the one the proof carries)"
   },
   "generator": "tools/nanorix-verify/fixtures/generator.rs",
   "purpose": "Cross-implementation byte-equivalence corpus for the nanorix-verify reference verifier.",
   "schema_version": "2",
-  "signed_message": "v1.0 signs final_hash; v2.0 signs document_hash; v2.1 and v2.2 nanorix_only sign the specification Part-3 canonical-view hash (hex(sha512(jcs(view)))) — 2.2 is verified exactly as 2.1",
-  "total_fixtures": 110
+  "signed_message": "v1.0 signs final_hash; v2.1 and v2.2 nanorix_only and customer_only sign the canonical-view hash (hex(sha512(jcs(view)))) — 2.2 is verified exactly as 2.1; cdp_version 2.0 is retired and refused at the version gate by the offline verifiers",
+  "total_fixtures": 163
 }

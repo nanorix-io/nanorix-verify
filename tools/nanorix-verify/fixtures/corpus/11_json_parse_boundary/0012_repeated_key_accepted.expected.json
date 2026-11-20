@@ -1,0 +1,7 @@
+{
+  "failure_reason": null,
+  "note": "future_field twice, 1 then 2. serde_json keeps the last copy and does not refuse a repeated key: the control for 0013-0016.",
+  "stage_reached": 7,
+  "status": "not_anchored",
+  "valid": true
+}

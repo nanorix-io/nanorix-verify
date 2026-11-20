@@ -1,6 +1,6 @@
 //! `cdp_version: "2.2"` is verified exactly as `"2.1"`.
 //!
-//! CDP 2.2 (the specification policy-denial summary + the specification customer-declared activity
+//! CDP 2.2 (policy-denial summary + customer-declared activity
 //! root) changes what a document may carry, not how it is canonicalised,
 //! hashed or signed. The verifier therefore routes 2.2 through the 2.1 arm at
 //! every version switch. These tests pin that from the outside, against a
@@ -12,6 +12,9 @@
 //! longer verifies. Re-labelling and re-signing over the recomputed canonical
 //! hash (the same operation the fixture generator's `sign_in_place` performs)
 //! is what produces one.
+
+// These tests pin the wire field `valid`, which is deprecated for callers.
+#![allow(deprecated)]
 
 use base64::Engine;
 use ed25519_dalek::{Signer, SigningKey};
@@ -131,5 +134,5 @@ fn corpus_category_07_does_not_list_2_2_as_unsupported() {
         assert_ne!(version, "2.2", "{name} pins 2.2 as unsupported");
         seen.push(version);
     }
-    assert_eq!(seen.len(), 10, "category 07 should hold 10 fixtures");
+    assert_eq!(seen.len(), 15, "category 07 should hold 15 fixtures");
 }

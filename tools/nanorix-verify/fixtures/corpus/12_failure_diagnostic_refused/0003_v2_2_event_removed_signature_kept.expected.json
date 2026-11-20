@@ -1,0 +1,13 @@
+{
+  "failure_reason": {
+    "reason": "does_not_verify",
+    "type": "signature_mismatch"
+  },
+  "note": "Signed with the diagnostic_mode_enabled event, which was then removed. The proof still carries its signature, so reject_diagnostic reads the trail, finds no event and lets the proof on; the signature, made over the trail with the event, then fails at stage 7. Without the setting the verdict is the same.",
+  "policy": {
+    "reject_diagnostic": true
+  },
+  "stage_reached": 7,
+  "status": "not_verified",
+  "valid": false
+}

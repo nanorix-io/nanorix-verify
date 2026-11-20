@@ -1,0 +1,7 @@
+{
+  "failure_reason": null,
+  "note": "A string holding an escaped quote, then 200 [, then {. An escaped quote does not end the string, and brackets inside a string are text, not nesting.",
+  "stage_reached": 7,
+  "status": "not_anchored",
+  "valid": true
+}

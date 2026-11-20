@@ -1,0 +1,6 @@
+{
+  "description": "Genuine legacy bundle, N=1 (empty inclusion proof).",
+  "outcome": "valid",
+  "signature_authentic": true,
+  "receipt_bound": true
+}

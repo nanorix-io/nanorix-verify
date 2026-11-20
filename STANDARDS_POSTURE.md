@@ -33,7 +33,7 @@ The specification and the code are Apache-2.0. Under those terms you can:
 - quote it, including normative text, with attribution
 - incorporate the format or parts of it into a broader specification
 - implement it, ship that implementation commercially, and state that it
-  conforms if it produces the expected verdict on all 100 conformance cases
+  conforms if it produces the expected verdict on every conformance case
 - fork it
 
 None of that needs permission from Nanorix Inc., and none of it needs

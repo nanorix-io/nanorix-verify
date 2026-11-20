@@ -59,12 +59,27 @@ them apart.
 
 ## Exit codes
 
+These are the codes of `nanorix-verify <file>`, `verify <file>` and `batch <directory>`, which check
+AuditProofs. The CLI's README gives every case, including how `batch` combines its files:
+[`tools/nanorix-verify/README.md`, "Exit codes"](tools/nanorix-verify/README.md#exit-codes).
+
 | Code | Meaning |
 |---|---|
-| `0` | Signature checked, and it verified. |
-| `1` | Verification failed. A chain link, a canonical hash, or a signature didn't agree. |
-| `2` | Usage or I/O error. Nothing was verified. |
-| `3` | The chain verified, but this build couldn't check any signature on the document. Integrity is **not** established. Don't accept this in an automated gate. |
+| `0` | Verified. The signing key resolved in the key list given with `--trust-chain`, checked against the identity pinned with `--identity-fingerprint`, and the signature verified against that key. Integrity and authenticity are both established. In `batch`, every file is verified. |
+| `1` | Verification failed. For example, a chain link, a canonical hash, or a signature didn't agree, the authority is revoked, or a policy flag such as `--reject-diagnostic` refused the proof. Also when the proof, the key list or the activity record couldn't be read or parsed, or `--trust-chain` was given without `--identity-fingerprint`. In `batch`, at least one file is not verified. |
+| `2` | Nothing was verified: a usage error (`--identity-fingerprint` without `--trust-chain` among them), a key list the pinned identity did not sign or that its pin refuses, or a `batch` directory with no matching file. |
+| `3` | The chain verified, but this build couldn't check any signature on the document. Integrity is **not** established. Don't accept this in an automated gate. A `batch` counts such a file as not verified. |
+| `4` | Not anchored. The signature is valid against the key the document itself carries, and no key list anchored that key: none was given, or the proof is `cdp_version` 1.0. A 1.0 proof never reaches `0`, because its signature does not bind the capsule id itself, the region or the key id; where a later proof would be verified, it exits `4`. Integrity is established and authenticity is **not**: a document signed with a fresh key gets the same result. Don't accept this in an automated gate. |
+
+Other subcommands use these codes differently, among them these. `boundary verify` and `bundle
+verify` check a boundary attestation or a record bundle, not an AuditProof, and can exit `0` on the
+key the document itself carries: `boundary verify` when its signature holds, `bundle verify` when
+its signature holds and the receipt is bound to it (a bundle whose receipt is not bound exits `1`).
+Their `0` establishes integrity, not who signed: a document signed with a fresh key gets the same
+exit. `pubkey-bundle verify` exits `0` when a key bundle's signature holds against the key given
+with `--publisher-pubkey`, a key the caller chose; it refuses `--trust-chain`. `population` never
+exits `0`. Its `3` means no check failed and the population is not externally witnessed, and it
+exits `2` for a key list it cannot load and on every other setup error.
 
 Code 3 replaced something worse. An earlier version returned a partial verdict
 when it met a signing mode it didn't understand, which meant an unknown mode
@@ -92,19 +107,24 @@ Build it from this repository with Cargo (the crate is not published to crates.i
 and no tagged release carries prebuilt binaries yet):
 
 ```
-cargo install --git https://github.com/nanorix-io/nanorix-verify nanorix-verify
+cargo install --locked --git https://github.com/nanorix-io/nanorix-verify nanorix-verify
 ```
+
+`--locked` builds with this repository's `Cargo.lock`, the dependency versions the release was
+tested with.
 
 ## Conformance
 
-`tools/nanorix-verify/fixtures/corpus` holds 110 cases in ten categories:
+`tools/nanorix-verify/fixtures/corpus` holds 163 cases in thirteen categories on 2026-11-15 (`index.json` beside them gives the current count, and the Rust sweep checks it against the files):
 single-capsule and multi-step successes, chain mismatches, invalid signatures,
 region and authority mismatches, unsupported versions, canonical-hash drift, a
-set of targeted tamper patterns, and the version 2.2 shapes (signed policy-denial
-summaries and the customer-declared activity root). Every case ships with the
+set of targeted tamper patterns, the version 2.2 shapes (signed policy-denial
+summaries and the customer-declared activity root), documents at the edge of
+what the reference verifier's JSON parser accepts, documents refused under the
+diagnostic-mode setting, and `customer_only` signing-mode proofs. Every case ships with the
 verdict it should produce.
 
-An implementation conforms if it produces the expected verdict on all 110. The
+An implementation conforms if it produces the expected verdict on every case. For nineteen of them, the documents the reference verifier's JSON parser refuses, `nanorix-verify` reaches no verdict (it exits 1 with nothing on stdout) and the committed verdict is the form the other three report; the corpus README says how each runner treats them. The
 corpus is generated rather than written by hand, and the generator is in the
 repository, so you can regenerate the expected verdicts and diff them instead of
 taking our word for it.
@@ -114,16 +134,22 @@ produce the expected verdict on every case:
 
 ```
 cargo test -p nanorix-verify --test corpus_sweep          # Rust
-go test ./... ./tools/auditproof-verifier-go              # Go
-python -m nanorix.verifier.corpus_sweep <corpus-dir>      # Python
-node --experimental-strip-types --import ./ts-resolve-register.mjs \
-     corpus-sweep.ts <corpus-dir>                         # TypeScript
+(cd tools/auditproof-verifier-go && go test ./...)         # Go
+(cd sdk/python/src && python3 -m nanorix.verifier.corpus_sweep ../../../tools/nanorix-verify/fixtures/corpus)   # Python (needs the cryptography package)
+(cd sdk/typescript/src/verifier && node --experimental-strip-types --import ./ts-resolve-register.mjs \
+     corpus-sweep.ts ../../../../tools/nanorix-verify/fixtures/corpus)   # TypeScript
 ```
+
+Four more sets of shared vectors sit beside the corpus. The Rust and Go tests in this
+repository replay them: strict Ed25519 (`tests/vectors/`, 20 signatures to refuse and 64 to accept), canonical
+JSON bytes (`tests/fixtures/jcs_vectors.json`, 37 cases), signed key lists
+(`tools/nanorix-verify/fixtures/trust_chain/`) and receipt bundles
+(`tools/nanorix-verify/fixtures/bundles/`, 26).
 
 Worth being precise about what that proves. Rust and Go were written against
 the specification independently, which is the evidence that matters: two
-implementations reaching identical verdicts on 110 cases, including every
-failure and tamper case, is what shows the document is unambiguous enough to
+implementations reaching identical verdicts on every case in the corpus, nineteen of which both
+refuse before verification, including every failure and tamper case, is what shows the document is unambiguous enough to
 build from twice. Python and TypeScript are ports of the Rust implementation,
 so their agreement confirms the ports are faithful rather than independently
 confirming the specification.
@@ -139,8 +165,11 @@ doesn't address as explicitly as the ones it does.
 ## Holes we found in our own verifier
 
 Five shapes an outsider could hand-edit into a genuine signed proof verified under 1.0.x
-and fail under 1.1.0. Each is listed in [`SECURITY.md`](SECURITY.md) with the attack, the
-fix and the test that reproduces it. Read the breaks before you read the spec; a verifier
+and fail under 1.1.0. Three more classes verified under 1.2.0 and fail under 1.3.0: a
+retired document version that was still accepted, an authority pin that a label the
+signature does not cover could satisfy, and a receipt bundle whose root the signed Step 8
+value does not commit to. Each is listed in [`SECURITY.md`](SECURITY.md) with the attack,
+the fix and the test that reproduces it. Read the breaks before you read the spec; a verifier
 nobody has attacked is not evidence of anything.
 
 ## What isn't here

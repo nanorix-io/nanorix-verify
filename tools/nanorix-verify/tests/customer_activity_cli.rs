@@ -1,4 +1,4 @@
-//! `nanorix-verify --customer-activity <record>` end to end (the specification).
+//! `nanorix-verify --customer-activity <record>` end to end.
 //!
 //! The proof carries `customer_declared_activity_root`; the customer holds the
 //! record. Four situations, each pinned against the real binary so the exit
@@ -90,7 +90,7 @@ fn run(args: &[&str]) -> (i32, String, String) {
 }
 
 #[test]
-fn record_and_matching_root_verify_with_exit_zero() {
+fn record_and_matching_root_verify_and_exit_four_without_a_trust_chain() {
     let (record, root) = vector("three");
     let f = write(&signed_v2_2_with_root(&root), &record);
 
@@ -99,7 +99,8 @@ fn record_and_matching_root_verify_with_exit_zero() {
         "--customer-activity",
         f.record.to_str().unwrap(),
     ]);
-    assert_eq!(code, 0, "stdout:\n{stdout}");
+    // No trust chain: the key is not anchored, which exits 4.
+    assert_eq!(code, 4, "stdout:\n{stdout}");
     assert!(stdout.contains("Signature valid"), "{stdout}");
     assert!(
         stdout.contains(&format!("Customer-declared activity root: {root}")),
@@ -114,10 +115,11 @@ fn record_and_matching_root_verify_with_exit_zero() {
         f.record.to_str().unwrap(),
         "--json",
     ]);
-    assert_eq!(code, 0);
+    assert_eq!(code, 4);
     let v: Value = serde_json::from_str(&stdout).expect("json verdict");
     assert_eq!(v["valid"], true);
     assert_eq!(v["stage_reached"], 7);
+    assert_eq!(v["status"], "not_anchored");
     assert_eq!(v["metadata"]["customer_declared_activity_root"], root);
     assert_eq!(v["metadata"]["customer_declared_activity_checked"], true);
 }
@@ -192,15 +194,16 @@ fn root_without_a_record_is_disclosed_not_failed() {
     let f = write(&signed_v2_2_with_root(&root), &record);
 
     let (code, stdout, _) = run(&[f.proof.to_str().unwrap()]);
-    assert_eq!(code, 0, "stdout:\n{stdout}");
+    assert_eq!(code, 4, "stdout:\n{stdout}");
     assert!(stdout.contains("Signature valid"), "{stdout}");
     assert!(stdout.contains("declared, NOT checked"), "{stdout}");
     assert!(stdout.contains("--customer-activity"), "{stdout}");
 
     let (code, stdout, _) = run(&[f.proof.to_str().unwrap(), "--json"]);
-    assert_eq!(code, 0);
+    assert_eq!(code, 4);
     let v: Value = serde_json::from_str(&stdout).expect("json verdict");
     assert_eq!(v["valid"], true);
+    assert_eq!(v["status"], "not_anchored");
     assert_eq!(v["failure_reason"], Value::Null);
     assert_eq!(v["metadata"]["customer_declared_activity_root"], root);
     assert_eq!(v["metadata"]["customer_declared_activity_checked"], false);
@@ -213,7 +216,7 @@ fn a_proof_without_a_root_reports_nothing_about_one() {
     let (record, _) = vector("three");
     let f = write(&genuine_v2_1_fixture(), &record);
     let (code, stdout, _) = run(&[f.proof.to_str().unwrap(), "--json"]);
-    assert_eq!(code, 0);
+    assert_eq!(code, 4);
     let v: Value = serde_json::from_str(&stdout).expect("json verdict");
     assert!(v["metadata"]
         .get("customer_declared_activity_root")

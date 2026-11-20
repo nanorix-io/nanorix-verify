@@ -35,7 +35,7 @@ that reproduces it.
 
 **Another implementation.** A fifth language is the best evidence that the
 specification is complete enough to work from. The bar is the conformance
-corpus: all 100 cases, matching verdicts.
+corpus: every case in it, matching verdicts.
 
 **Conformance cases.** A document that two implementations disagree about is
 worth more than a feature. Include the document, both verdicts, and which one

@@ -1,0 +1,26 @@
+{
+  "bundle_version": "1.0",
+  "bundle_type": "receipt",
+  "generated_at": "2026-10-01T00:00:01Z",
+  "receipt": {
+    "record_index": 1,
+    "record_id": "rec_1",
+    "record_input_hash": "sha512:97825be2e7a323eb00761e10f5bfe51b1ea1efa23a6c3eccce1b236d079493a9f731932113756940c83238a213abfae7fa4b02cf33ecf387c177d21c999dd758",
+    "record_output_hash": "sha512:78c9390cdf7841015a500d46ee44adcffe348af68fb78a099403f415390ebafff892a8c360c4f8866fc44721c2550a3093386e905faa0e1e25e839a756284323",
+    "record_chain_hash": "sha512:a2a453ec106148783052f5ae7500b22d640a4fcbb1113d49ef1ae6952b3a3884db93141903c0374027234957693b8773a1a86fc88f3d95206c04bd7636a1b81a",
+    "merkle_inclusion_proof": [
+      "37295428e0e6da401b0bd1e6dbb1e3316e551cd00b29ca9124d788fe4314c262885087effcdf14c50bddc39d4e2c54aeced57cc529bd1c97de627fedc7f48c13",
+      "b37b04aae7d369cd5c7184d49117a51b09eb9c5fd9009cedc7d80971f78e5fa617888c12ae19132df8cde104a7e37a41161fbdf57af6d9cf93b52fd1fcbd06d9"
+    ]
+  },
+  "audit_proof_anchors": {
+    "capsule_id": "cap_fixture_bundle_n3",
+    "key_id": "nrx-verify-fixture-test-only",
+    "verification_key": "UaMb7s4rCJwxgWqYmNN5WTbBwQZ9wd4mJwHhrazFZus=",
+    "step_8_chain_hash": "9e542efee79da7b4c4eba95c54e8fd96b65516b5615d7d1845188884d8437bd8298b64479316b27500686dc5c61034078dbef0b24ce3cae4b49c4ea6b5102ac6",
+    "signature": "rgUsA6eDy+Mep8bNzkX3XA7hA4Flo7n70mptmfW3IJlIPoezeKMvjf31zBiiKlMU5LYzkYbFEdRcQ5dSJS91DQ==",
+    "record_receipts_merkle_root": "sha512:00ffa97328d06648176c3b023a91c865b5eec2ae5211590656b29a09c5189d6dfebb5538998ada0c62b4fbbadf27806932e1784852b82aee82efb988a290b20b",
+    "timestamp": "2026-10-01T00:00:00Z"
+  },
+  "disclaimer": "This Portable Receipt Bundle carries cryptographic evidence of one record's structural execution. Verifying party uses the audit_proof_anchors to verify the receipt's merkle inclusion + outer Ed25519 signature. Control framework references are NOT included in this bundle; consult the mapping artifact at https://nanorix.io/v1/control-map?framework_version={framework_version} to apply current control mappings at consumption time."
+}

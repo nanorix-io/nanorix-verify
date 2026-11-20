@@ -1,4 +1,4 @@
-// Wave B Items 7+8 — Portable Receipt Bundle + Portable Pubkey Bundle tests.
+// Portable Receipt Bundle + Portable Pubkey Bundle tests.
 //
 // Cross-impl byte-equivalence with Rust/Python/TypeScript on the canonical
 // reference vectors locked in the test constants below.
@@ -12,6 +12,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -254,12 +256,14 @@ func TestBundleDisclaimerFactualLanguage(t *testing.T) {
 	}
 }
 
-func TestBundleDisclaimerCitesADR040(t *testing.T) {
-	if !strings.Contains(PortableReceiptBundleDisclaimer, "the specification") {
-		t.Error("disclaimer must cite the specification")
+func TestBundleDisclaimerPointsAtTheServedControlMap(t *testing.T) {
+	if !strings.Contains(PortableReceiptBundleDisclaimer, "nanorix.io/v1/control-map") {
+		t.Error("disclaimer must point at the served control map")
 	}
-	if !strings.Contains(PortableReceiptBundleDisclaimer, "control-map") {
-		t.Error("disclaimer must mention control-map mapping artifact")
+	for _, internal := range []string{"ADR-", "nanorix.com"} {
+		if strings.Contains(PortableReceiptBundleDisclaimer, internal) {
+			t.Errorf("disclaimer must not contain %s", internal)
+		}
 	}
 }
 
@@ -373,7 +377,7 @@ func TestExtractN1BundleHasEmptyInclusionProof(t *testing.T) {
 func TestExtractBundleWithPatternTag(t *testing.T) {
 	timestamp := "2026-05-12T00:00:00Z"
 	capsuleID := "cap_pa_go"
-	// the per-record receipt specification: the declared tag is bound into the chain hash, not merely
+	// The declared tag is bound into the chain hash, not merely
 	// carried in the JSON.
 	receiptChain := computeRecordChainHashLocal(capsuleID, 0, "rec_pa", "sha512:in", "sha512:out", NanorixGenesisHash, strPtrLocal("pa"))
 	merkleRoot := receiptChain
@@ -429,7 +433,7 @@ func TestExtractBundleWithPatternTag(t *testing.T) {
 
 // Tagged N=1 bundle roundtrip with a real signer: VerifyReceiptBundle must
 // bind the declared pattern_tag into the record_chain_hash recompute
-// (the per-record receipt specification signed primitive), and a swapped or stripped tag must be rejected.
+// (signed primitive), and a swapped or stripped tag must be rejected.
 func TestVerifyReceiptBundleTaggedRoundtripAndTamperRejected(t *testing.T) {
 	timestamp := "2026-05-12T00:00:00Z"
 	capsuleID := "cap_pa_verify_go"
@@ -442,13 +446,13 @@ func TestVerifyReceiptBundleTaggedRoundtripAndTamperRejected(t *testing.T) {
 	for i, s := range subsystems {
 		var chainHash string
 		if i == 7 {
-			base := ComputeStepHash(prevHash, s, "destroy", "capsule_lifecycle_verification", timestamp)
+			base := ComputeStepHash(prevHash, s, "destroy", LookupMethod(s), timestamp)
 			buf := append([]byte(base), 0x00)
 			buf = append(buf, merkleRoot...)
 			sum := sha512.Sum512(buf)
 			chainHash = hex.EncodeToString(sum[:])
 		} else {
-			chainHash = ComputeStepHash(prevHash, s, "destroy", "method", timestamp)
+			chainHash = ComputeStepHash(prevHash, s, "destroy", LookupMethod(s), timestamp)
 		}
 		chain = append(chain, map[string]interface{}{"subsystem": s, "chain_hash": chainHash})
 		prevHash = chainHash
@@ -667,8 +671,23 @@ func TestVerifyV21BundleRoundtripSucceeds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("extract: %v", err)
 	}
-	if err := VerifyReceiptBundle(bundle); err != nil {
+	result, err := VerifyReceiptBundleDetailed(bundle)
+	if err != nil {
 		t.Fatalf("v2.1 bundle must verify: %v", err)
+	}
+	if !result.SignatureAuthentic {
+		t.Error("v2.1 signature must be authentic")
+	}
+	if result.ReceiptBound || result.Valid() {
+		t.Error("v2.1 bundle alone must NOT report the receipt as bound")
+	}
+	if result.SignatureTarget != SignatureTargetDocumentCanonicalHash {
+		t.Errorf("signature_target = %q", result.SignatureTarget)
+	}
+	// The strict entry point refuses to call an unbound receipt verified.
+	var be *BundleError
+	if err := VerifyReceiptBundle(bundle); err == nil || !errorsAs(err, &be) || be.Kind != BundleErrReceiptNotBound {
+		t.Fatalf("strict verify must return %s, got %v", BundleErrReceiptNotBound, err)
 	}
 }
 
@@ -739,8 +758,12 @@ func TestV21BundleSerializesRoundTrips(t *testing.T) {
 	if err := json.Unmarshal(out, &roundtripped); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if err := VerifyReceiptBundle(&roundtripped); err != nil {
+	result, err := VerifyReceiptBundleDetailed(&roundtripped)
+	if err != nil {
 		t.Fatalf("roundtripped v2.1 bundle must verify: %v", err)
+	}
+	if !result.SignatureAuthentic || result.ReceiptBound {
+		t.Errorf("roundtripped v2.1 bundle: authentic=%v bound=%v", result.SignatureAuthentic, result.ReceiptBound)
 	}
 }
 
@@ -1059,3 +1082,197 @@ func TestPubkeyBundleJCSCanonicalizationDeterministic(t *testing.T) {
 
 // Ensure fmt import is used (Go compiler quirk if not used elsewhere in tests).
 var _ = fmt.Sprintf
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Step 8 binding — the bundled Merkle root must be the one the signed Step 8
+// hash commits to.
+// ─────────────────────────────────────────────────────────────────────────────
+
+func TestVerifyReceiptBundleLegacyIsBoundOnSuccess(t *testing.T) {
+	proof, _ := makeBundleTestFixtureN2(t)
+	bundle, _ := ExtractReceiptBundle(proof, 0)
+	result, err := VerifyReceiptBundleDetailed(bundle)
+	if err != nil {
+		t.Fatalf("legacy bundle must verify: %v", err)
+	}
+	if !result.SignatureAuthentic || !result.ReceiptBound || !result.Valid() {
+		t.Errorf("legacy bundle: authentic=%v bound=%v", result.SignatureAuthentic, result.ReceiptBound)
+	}
+}
+
+func TestVerifyReceiptBundleRootNotCommittedByStep8Rejected(t *testing.T) {
+	proof, _ := makeBundleTestFixtureN2(t)
+	bundle, _ := ExtractReceiptBundle(proof, 0)
+	// A self-consistent single-leaf tree the signed Step 8 hash does not commit to.
+	bundle.AuditProofAnchors.RecordReceiptsMerkleRoot = bundle.Receipt["record_chain_hash"].(string)
+	bundle.Receipt["merkle_inclusion_proof"] = []interface{}{}
+	for _, verify := range []func() error{
+		func() error { return VerifyReceiptBundle(bundle) },
+		func() error { _, err := VerifyReceiptBundleDetailed(bundle); return err },
+	} {
+		err := verify()
+		var be *BundleError
+		if err == nil || !errorsAs(err, &be) || be.Kind != BundleErrStep8Mismatch {
+			t.Fatalf("expected %s, got %v", BundleErrStep8Mismatch, err)
+		}
+	}
+}
+
+func TestVerifyReceiptBundleAlteredTimestampRejected(t *testing.T) {
+	proof, _ := makeBundleTestFixtureN2(t)
+	bundle, _ := ExtractReceiptBundle(proof, 0)
+	bundle.AuditProofAnchors.Timestamp = "2026-05-13T00:00:00Z"
+	_, err := VerifyReceiptBundleDetailed(bundle)
+	var be *BundleError
+	if err == nil || !errorsAs(err, &be) || be.Kind != BundleErrStep8Mismatch {
+		t.Fatalf("expected %s, got %v", BundleErrStep8Mismatch, err)
+	}
+}
+
+func TestVerifyReceiptBundleSignatureTargetDoesNotSkipStep8(t *testing.T) {
+	proof, _ := makeV21BundleFixture(t)
+	bundle, _ := ExtractReceiptBundle(proof, 0)
+	bundle.AuditProofAnchors.Timestamp = "2026-06-02T00:00:00Z"
+	_, err := VerifyReceiptBundleDetailed(bundle)
+	var be *BundleError
+	if err == nil || !errorsAs(err, &be) || be.Kind != BundleErrStep8Mismatch {
+		t.Fatalf("expected %s for a v2.1 bundle, got %v", BundleErrStep8Mismatch, err)
+	}
+}
+
+func TestExtractBundleCarriesParentProofsRootAndOmitsWhenAbsent(t *testing.T) {
+	proof, _ := makeBundleTestFixtureN2(t)
+	plain, _ := ExtractReceiptBundle(proof, 0)
+	if plain.AuditProofAnchors.ParentProofsMerkleRoot != nil {
+		t.Error("legacy bundle must not carry parent_proofs_merkle_root")
+	}
+	out, _ := json.Marshal(plain)
+	if strings.Contains(string(out), "parent_proofs_merkle_root") {
+		t.Error("legacy bundle JSON must not gain the new key (byte-compat guard)")
+	}
+
+	var doc map[string]interface{}
+	json.Unmarshal(proof, &doc)
+	doc["parent_proofs_merkle_root"] = "sha512:" + strings.Repeat("ab", 64)
+	withParent, _ := json.Marshal(doc)
+	bundle, err := ExtractReceiptBundle(withParent, 0)
+	if err != nil {
+		t.Fatalf("extract: %v", err)
+	}
+	got := bundle.AuditProofAnchors.ParentProofsMerkleRoot
+	if got == nil || *got != "sha512:"+strings.Repeat("ab", 64) {
+		t.Fatalf("parent_proofs_merkle_root = %v", got)
+	}
+	// The signed Step 8 value here was built without a parent root, so a
+	// bundle that declares one must fail closed.
+	_, err = VerifyReceiptBundleDetailed(bundle)
+	var be *BundleError
+	if err == nil || !errorsAs(err, &be) || be.Kind != BundleErrStep8Mismatch {
+		t.Fatalf("expected %s, got %v", BundleErrStep8Mismatch, err)
+	}
+}
+
+func TestVerifyReceiptBundleNonIntegerRecordIndexRejected(t *testing.T) {
+	proof, _ := makeBundleTestFixtureN2(t)
+	for name, v := range map[string]interface{}{
+		"fractional": 1.5,
+		"negative":   -1.0,
+		"too_large":  float64(1 << 33),
+		"string":     "1",
+		"bool":       true,
+	} {
+		bundle, _ := ExtractReceiptBundle(proof, 0)
+		bundle.Receipt["record_index"] = v
+		_, err := VerifyReceiptBundleDetailed(bundle)
+		var be *BundleError
+		if err == nil || !errorsAs(err, &be) || be.Kind != BundleErrShape {
+			t.Errorf("%s record_index: expected %s, got %v", name, BundleErrShape, err)
+		}
+	}
+}
+
+func TestBundleVerdictTextLegacyStatesStep8Recompute(t *testing.T) {
+	proof, _ := makeBundleTestFixtureN2(t)
+	bundle, _ := ExtractReceiptBundle(proof, 0)
+	v := BundleVerdictText(bundle)
+	if !strings.Contains(v, "step_8_chain_hash") || !strings.Contains(v, "recomputed") {
+		t.Errorf("legacy verdict must state the Step 8 recompute; got: %s", v)
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Shared fixture corpus — tools/nanorix-verify/fixtures/bundles. The same files
+// are read by the Rust, Python and TypeScript suites; every fixture has an
+// expected.json naming the outcome kind.
+// ─────────────────────────────────────────────────────────────────────────────
+
+type bundleFixtureExpectation struct {
+	Outcome            string `json:"outcome"`
+	SignatureAuthentic *bool  `json:"signature_authentic"`
+	ReceiptBound       *bool  `json:"receipt_bound"`
+}
+
+func TestBundleFixtureCorpusMatchesExpectedOutcomes(t *testing.T) {
+	dir := filepath.Join("..", "nanorix-verify", "fixtures", "bundles")
+	paths, err := filepath.Glob(filepath.Join(dir, "*.prb.json"))
+	if err != nil || len(paths) == 0 {
+		t.Fatalf("no bundle fixtures found in %s (err=%v)", dir, err)
+	}
+	for _, path := range paths {
+		name := strings.TrimSuffix(filepath.Base(path), ".prb.json")
+		t.Run(name, func(t *testing.T) {
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read bundle: %v", err)
+			}
+			expRaw, err := os.ReadFile(filepath.Join(dir, name+".expected.json"))
+			if err != nil {
+				t.Fatalf("read expected: %v", err)
+			}
+			var exp bundleFixtureExpectation
+			if err := json.Unmarshal(expRaw, &exp); err != nil {
+				t.Fatalf("parse expected: %v", err)
+			}
+			var bundle PortableReceiptBundle
+			dec := json.NewDecoder(strings.NewReader(string(raw)))
+			dec.UseNumber()
+			if err := dec.Decode(&bundle); err != nil {
+				t.Fatalf("parse bundle: %v", err)
+			}
+
+			result, derr := VerifyReceiptBundleDetailed(&bundle)
+			strictErr := VerifyReceiptBundle(&bundle)
+
+			switch exp.Outcome {
+			case "valid", "receipt_not_bound":
+				if derr != nil {
+					t.Fatalf("detailed verify: %v", derr)
+				}
+				if exp.SignatureAuthentic == nil || exp.ReceiptBound == nil {
+					t.Fatal("expected.json must state signature_authentic and receipt_bound")
+				}
+				if result.SignatureAuthentic != *exp.SignatureAuthentic || result.ReceiptBound != *exp.ReceiptBound {
+					t.Errorf("authentic=%v bound=%v, want authentic=%v bound=%v",
+						result.SignatureAuthentic, result.ReceiptBound, *exp.SignatureAuthentic, *exp.ReceiptBound)
+				}
+				if exp.Outcome == "valid" {
+					if strictErr != nil {
+						t.Errorf("strict verify: %v", strictErr)
+					}
+				} else {
+					var be *BundleError
+					if strictErr == nil || !errorsAs(strictErr, &be) || be.Kind != BundleErrReceiptNotBound {
+						t.Errorf("strict verify: expected %s, got %v", BundleErrReceiptNotBound, strictErr)
+					}
+				}
+			default:
+				for label, err := range map[string]error{"detailed": derr, "strict": strictErr} {
+					var be *BundleError
+					if err == nil || !errorsAs(err, &be) || be.Kind != exp.Outcome {
+						t.Errorf("%s verify: expected kind %s, got %v", label, exp.Outcome, err)
+					}
+				}
+			}
+		})
+	}
+}

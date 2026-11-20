@@ -1,19 +1,19 @@
 //! Transparency-checkpoint core — the attestation-scope policy/049 anchoring primitive.
 //!
 //! An append-only SHA-512 Merkle tree over AuditProof leaves, published as
-//! periodic signed checkpoints and mirrored externally. Purpose (the specification.4):
+//! periodic signed checkpoints and mirrored externally. Purpose:
 //! a proof anchored before a cryptographically relevant quantum computer
 //! exists stays forgery-evident forever, because detection rests only on hash
 //! security and public history — not on any signature key.
 //!
-//! Spec decisions carried from adversarial review (the specification.4, the specification §D.1):
+//! Spec decisions carried from adversarial review:
 //!
 //! - **Leaf** = SHA-512 over `final_hash_raw` + the attestation-envelope
 //!   digest — never over full proof JSON (which can embed customer-supplied
 //!   metadata; EDPB ledger guidance would make such leaves presumptively
-//!   personal data). The envelope digest covers algorithm identifiers, key id,
-//!   signature bytes and the `pqc_signature` field, so stripping or swapping
-//!   any of them breaks anchor inclusion.
+//!   personal data). The envelope digest covers the algorithm identifier, key
+//!   id, public key and signature bytes, so swapping any of them breaks anchor
+//!   inclusion. A proof carrying PQC has no leaf until verifiers check PQC.
 //! - **Domain separation** is RFC 6962-shaped: `H(0x00 ‖ leaf-input)` for
 //!   leaves, `H(0x01 ‖ left ‖ right)` for interior nodes, with SHA-512 as the
 //!   hash. Odd sizes split at the largest power of two below `n` (no
@@ -28,45 +28,36 @@
 //! instantiated with SHA-512.
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sha2::{Digest, Sha512};
 
 /// A SHA-512 digest.
 pub type Digest64 = [u8; 64];
 
-/// The attestation-envelope fields a leaf binds (the specification §D.1). All values are
-/// the wire strings exactly as they appear in the proof document; `None` for
-/// `pqc_signature` is the pre-PQC era and digests as the empty string, so
-/// filling the field at Phase 1 changes the leaf — stripping it is
-/// anchor-detectable.
+/// The attestation-envelope fields a leaf binds. All values are
+/// the wire strings exactly as they appear in the proof document.
 #[derive(Debug, Clone, Default)]
 pub struct AttestationEnvelope {
     pub algorithm: String,
     pub key_id: String,
     pub public_key: String,
     pub signature: String,
-    pub pqc_signature: Option<String>,
 }
 
 impl AttestationEnvelope {
-    /// SHA-512 over the `\x00`-separated envelope fields, lowercase hex.
-    /// Field values are base64/hex/identifier ASCII and never contain NUL —
-    /// the same separator contract as the CDP chain itself.
+    /// SHA-512 over the four `\x00`-joined fields and an empty fifth, lowercase
+    /// hex. The join is unambiguous only because `leaf_inputs_from_proof`
+    /// refuses NUL in a field.
     pub fn digest_hex(&self) -> String {
         let mut h = Sha512::new();
-        for (i, part) in [
+        for part in [
             self.algorithm.as_str(),
             self.key_id.as_str(),
             self.public_key.as_str(),
             self.signature.as_str(),
-            self.pqc_signature.as_deref().unwrap_or(""),
-        ]
-        .iter()
-        .enumerate()
-        {
-            if i > 0 {
-                h.update([0u8]);
-            }
+        ] {
             h.update(part.as_bytes());
+            h.update([0u8]);
         }
         hex(&h.finalize().into())
     }
@@ -83,6 +74,96 @@ pub fn leaf_hash(final_hash_raw: &str, envelope: &AttestationEnvelope) -> Digest
     h.update([0u8]);
     h.update(envelope.digest_hex().as_bytes());
     h.finalize().into()
+}
+
+/// The slots a PQC signature could sit in. All three are outside what the
+/// Ed25519 signature covers, so no verifier can yet tell their contents from
+/// an outsider's edit.
+const PQC_SLOTS: [&str; 3] = [
+    "pqc_signature",
+    "pqc_attestation",
+    "customer_pqc_attestation",
+];
+
+/// Why an AuditProof document yields no leaf inputs.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum LeafInputError {
+    #[error("the proof has no final_hash string")]
+    MissingFinalHash,
+    #[error("final_hash is not a 128-character lowercase hex SHA-512 digest")]
+    MalformedFinalHash,
+    #[error("the proof has no attestation object")]
+    MissingAttestation,
+    #[error("attestation field `{0}` is missing or not a string")]
+    MissingAttestationField(&'static str),
+    #[error("attestation field `{0}` contains NUL")]
+    NulInAttestationField(&'static str),
+    #[error("`{0}` is populated; a proof carrying PQC has no leaf until verifiers check PQC")]
+    PopulatedPqcSlot(&'static str),
+}
+
+/// The two leaf inputs read from an AuditProof document: the raw final hash
+/// and the attestation envelope, each exactly as the document carries it.
+#[derive(Debug, Clone)]
+pub struct LeafInputs {
+    /// `final_hash` without its `sha512:` prefix.
+    pub final_hash_raw: String,
+    pub envelope: AttestationEnvelope,
+}
+
+impl LeafInputs {
+    /// The log leaf for these inputs.
+    pub fn leaf_hash(&self) -> Digest64 {
+        leaf_hash(&self.final_hash_raw, &self.envelope)
+    }
+}
+
+/// Read the leaf inputs from an AuditProof JSON document. The transparency-log
+/// publisher and every verifier derive a leaf through this one function, so a
+/// head can name only a leaf a log can hold. It reads no `cdp_version`, so a
+/// document cannot steer which slot is read.
+pub fn leaf_inputs_from_proof(doc: &Value) -> Result<LeafInputs, LeafInputError> {
+    let final_hash = doc
+        .get("final_hash")
+        .and_then(Value::as_str)
+        .ok_or(LeafInputError::MissingFinalHash)?;
+    let final_hash_raw = final_hash.strip_prefix("sha512:").unwrap_or(final_hash);
+    if final_hash_raw.len() != 128
+        || !final_hash_raw
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return Err(LeafInputError::MalformedFinalHash);
+    }
+    if let Some(slot) = PQC_SLOTS
+        .iter()
+        .find(|slot| doc.get(**slot).is_some_and(|v| !v.is_null()))
+    {
+        return Err(LeafInputError::PopulatedPqcSlot(slot));
+    }
+    let attestation = doc
+        .get("attestation")
+        .filter(|v| v.is_object())
+        .ok_or(LeafInputError::MissingAttestation)?;
+    let field = |name: &'static str| {
+        let value = attestation
+            .get(name)
+            .and_then(Value::as_str)
+            .ok_or(LeafInputError::MissingAttestationField(name))?;
+        if value.contains('\0') {
+            return Err(LeafInputError::NulInAttestationField(name));
+        }
+        Ok(value.to_string())
+    };
+    Ok(LeafInputs {
+        final_hash_raw: final_hash_raw.to_string(),
+        envelope: AttestationEnvelope {
+            algorithm: field("algorithm")?,
+            key_id: field("key_id")?,
+            public_key: field("public_key")?,
+            signature: field("signature")?,
+        },
+    })
 }
 
 fn node_hash(left: &Digest64, right: &Digest64) -> Digest64 {
@@ -264,7 +345,7 @@ pub struct Checkpoint {
     /// Schema version. V1 = `"1"`; additive evolution only.
     pub checkpoint_version: String,
     /// Hash algorithm identifier — always `"sha512"` in V1; explicit so the
-    /// format carries algorithm agility from day one (the specification discipline).
+    /// format carries algorithm agility from day one (discipline).
     pub hash_algorithm: String,
     /// Number of leaves in the tree at this checkpoint.
     pub tree_size: u64,
@@ -280,7 +361,7 @@ pub struct Checkpoint {
     /// prefixed. Empty until signed.
     #[serde(default)]
     pub signature: String,
-    /// Reserved for the specification Phase 1 post-quantum dual signature over the
+    /// Reserved for the Phase 1 post-quantum dual signature over the
     /// same payload. Absent until then (byte-compat discipline, mirroring the
     /// trust-chain manifest).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -360,7 +441,6 @@ mod tests {
                     key_id: format!("nrx-verify-2026-08-08T00-00-00Z-{i:08}"),
                     public_key: format!("base64:PK{i}"),
                     signature: format!("base64:SIG{i}"),
-                    pqc_signature: None,
                 };
                 leaf_hash(&format!("{:0128}", i), &env)
             })
@@ -396,21 +476,60 @@ mod tests {
     }
 
     #[test]
-    fn pqc_field_changes_the_leaf() {
-        // Stripping-detection (the specification): a leaf with pqc_signature set
-        // differs from the same leaf without it.
-        let mut env = AttestationEnvelope {
+    fn envelope_digest_is_four_fields_and_an_empty_fifth() {
+        let env = AttestationEnvelope {
             algorithm: "Ed25519".to_string(),
             key_id: "k".to_string(),
             public_key: "p".to_string(),
             signature: "s".to_string(),
-            pqc_signature: None,
         };
-        let final_hash = "a".repeat(128);
-        let without = leaf_hash(&final_hash, &env);
-        env.pqc_signature = Some("base64:mldsa".to_string());
-        let with = leaf_hash(&final_hash, &env);
-        assert_ne!(without, with);
+        let expected: Digest64 = Sha512::digest(b"Ed25519\0k\0p\0s\0").into();
+        assert_eq!(env.digest_hex(), hex(&expected));
+    }
+
+    fn leaf_doc() -> Value {
+        serde_json::json!({
+            "final_hash": format!("sha512:{}", "ab".repeat(64)),
+            "attestation": {
+                "algorithm": "Ed25519",
+                "key_id": "k",
+                "public_key": "base64:AAAA",
+                "signature": "base64:BBBB"
+            }
+        })
+    }
+
+    #[test]
+    fn leaf_inputs_keep_the_document_strings_and_drop_only_the_hash_prefix() {
+        let inputs = leaf_inputs_from_proof(&leaf_doc()).unwrap();
+        assert_eq!(inputs.final_hash_raw, "ab".repeat(64));
+        assert_eq!(inputs.envelope.key_id, "k");
+        assert_eq!(inputs.envelope.public_key, "base64:AAAA");
+        assert_eq!(inputs.envelope.signature, "base64:BBBB");
+    }
+
+    #[test]
+    fn leaf_inputs_name_the_pqc_slot_they_refuse() {
+        for slot in PQC_SLOTS {
+            let mut doc = leaf_doc();
+            doc[slot] = Value::Null;
+            assert!(leaf_inputs_from_proof(&doc).is_ok(), "{slot}");
+            doc[slot] = serde_json::json!("");
+            assert_eq!(
+                leaf_inputs_from_proof(&doc).unwrap_err(),
+                LeafInputError::PopulatedPqcSlot(slot)
+            );
+        }
+    }
+
+    #[test]
+    fn leaf_inputs_name_the_field_holding_nul() {
+        let mut doc = leaf_doc();
+        doc["attestation"]["signature"] = serde_json::json!("x\0y");
+        assert_eq!(
+            leaf_inputs_from_proof(&doc).unwrap_err(),
+            LeafInputError::NulInAttestationField("signature")
+        );
     }
 
     #[test]

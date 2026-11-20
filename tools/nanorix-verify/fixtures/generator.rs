@@ -10,11 +10,27 @@
 //! - Multi-step pipeline with parent-linkage chain (10 fixtures)
 //! - Failure modes — chain mismatch, signature invalid, region mismatch,
 //!   authority unknown, version unsupported, canonical-hash drift
-//!   (10 each = 60 fixtures)
+//!   (10 each, 11 for region mismatch, 15 for authority unknown and 15 for
+//!   version unsupported = 71 fixtures)
 //! - Tamper patterns — byte-flip, re-order, version downgrade, signature
 //!   substitution (5 each = 20 fixtures)
-//! - CDP 2.2 — the specification `policy_denial_summary` in the trail and the specification
+//! - CDP 2.2 — `policy_denial_summary` in the trail and the customer-declared activity specification
 //!   `customer_declared_activity_root`, positive and tampered (7 fixtures)
+//! - JSON parse boundary — documents at the edge of what serde_json, the
+//!   parser in front of the reference verifier, accepts: nesting depth,
+//!   invalid UTF-8, half a surrogate pair, a BOM, `NaN`, a number past the
+//!   64-bit float range, a repeated key whose earlier copy holds half a
+//!   surrogate pair, deep nesting, a number past the float range or `NaN`,
+//!   a repeated key whose last copy is the one that counts, the two sides of the float boundary, brackets inside a string,
+//!   and a top-level array or `null` (28 fixtures). These are
+//!   written as raw bytes, since most of them are not JSON serde_json can
+//!   produce.
+//! - The reject-diagnostic setting — a signed 2.2 proof whose activity trail
+//!   records diagnostic mode, and a signed 1.0 proof, whose activity is
+//!   unsigned; both are refused under the setting (2 fixtures)
+//! - `signing_mode: "customer_only"` (section 4) — the
+//!   amendment's five shared vectors plus a legacy `nanorix_only` proof under
+//!   a customer-classified authority (6 fixtures)
 //!
 //! Each fixture is written as `corpus/<category>/<NNNN>_<descriptor>.json`
 //! plus a sibling `<NNNN>_<descriptor>.expected.json` describing the expected
@@ -25,26 +41,28 @@
 //! ```json
 //! {
 //!   "valid":         true | false,
+//!   "status":        "verified" | "not_anchored" | "not_verified",
 //!   "failure_reason": null | { "type": "<snake_case_variant>", ... },
 //!   "stage_reached":  1..=8,
 //!   "policy":         { "required_region": "...",
-//!                       "required_authority_id": "..." },   // optional
+//!                       "required_authority_id": "...",
+//!                       "reject_diagnostic": true },        // optional
 //!   "note":           "..."                                  // optional
 //! }
 //! ```
 //!
-//! `policy` is what makes a fixture self-describing: the `05_*` and `06_*`
-//! verdicts are only reachable when the verifier is configured with that pin,
-//! so the pin travels with the fixture instead of living in a harness the
-//! other implementations cannot see. Absent `policy` means
+//! `policy` is what makes a fixture self-describing: the `05_*`, `06_*` and
+//! `12_*` verdicts are only reachable when the verifier is configured with that
+//! pin or setting, so it travels with the fixture instead of living in a
+//! harness the other implementations cannot see. Absent `policy` means
 //! `VerifierPolicy::default()`.
 //!
 //! ## The signed message (why every v2.1 fixture must carry canonical fields)
 //!
 //! A v2.1 `nanorix_only` AuditProof is NOT signed over `final_hash` — that is
-//! the v1.0 message. It is signed over the specification Part-3 canonical-view hash:
+//! the v1.0 message. It is signed over the canonical-view hash:
 //! `hex(sha512(serde_jcs(canonical_view)))`, built by
-//! the AuditProof document builder::FullCdp::canonical_view()` and mirrored
+//! `canonical_view` in `the AuditProof document builder()` and mirrored
 //! for the offline verifier in `canonical_recompute::recompute_canonical_hash`.
 //! The generator signs with that same mirrored function rather than a third
 //! private copy, so the corpus cannot drift away from the verifier; the
@@ -251,7 +269,7 @@ impl FixtureBuilder {
         })
     }
 
-    /// Sign a built document over its the specification Part-3 canonical hash and attach
+    /// Sign a built document over its canonical hash and attach
     /// the attestation block. Must run AFTER every canonical-bound field is
     /// set; tamper fixtures mutate only after this returns.
     fn sign_in_place(&self, proof: &mut Value) {
@@ -259,7 +277,7 @@ impl FixtureBuilder {
 
         let canonical_hash = recompute_canonical_hash(proof);
         // Ed25519 over the canonical hash's ASCII hex characters (128 bytes),
-        // not its 64 raw digest bytes — Forever-Standard per the specification.
+        // not its 64 raw digest bytes — Forever-Standard.
         let signature_b64 = B64.encode(self.signing_key.sign(canonical_hash.as_bytes()).to_bytes());
 
         let capsule_id = proof["capsule_id"].as_str().unwrap_or_default().to_string();
@@ -285,7 +303,7 @@ impl FixtureBuilder {
 
     /// Sign a 1.0 document over its prefix-stripped `final_hash` — the 1.0
     /// signed message — and attach the attestation block. Everything outside
-    /// the chain is unsigned on this version, which is what the specification
+    /// the chain is unsigned on this version, which is what the
     /// version-gate fixture demonstrates.
     fn sign_v1_in_place(&self, proof: &mut Value) {
         use base64::{engine::general_purpose::STANDARD as B64, Engine};
@@ -312,6 +330,133 @@ impl FixtureBuilder {
         });
     }
 
+    /// A deterministic `sha512:`-prefixed value standing in for a declared
+    /// `document_hash` on a 2.0-labelled document. It is derived from a label,
+    /// not from the document's content.
+    fn declared_document_hash(&self, label: &str) -> String {
+        format!("sha512:{}", hex::encode(Sha512::digest(label.as_bytes())))
+    }
+
+    /// Sign a 2.0-labelled document over its own declared `document_hash`
+    /// (prefix stripped) with the corpus key and attach the attestation
+    /// block. The signature is genuine over that string; the version gate
+    /// refuses the document regardless.
+    fn sign_declared_hash_in_place(&self, proof: &mut Value) {
+        let declared = proof["document_hash"].as_str().unwrap_or_default();
+        let message = declared
+            .strip_prefix("sha512:")
+            .unwrap_or(declared)
+            .to_string();
+        self.attach_attestation_over(proof, &message);
+    }
+
+    /// Sign a 2.0-labelled document over its declared `document_hash` string
+    /// exactly as written, prefix included: the message the hosted 2.0 check
+    /// reads.
+    fn sign_declared_hash_as_written_in_place(&self, proof: &mut Value) {
+        let message = proof["document_hash"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        self.attach_attestation_over(proof, &message);
+    }
+
+    fn attach_attestation_over(&self, proof: &mut Value, message: &str) {
+        use base64::{engine::general_purpose::STANDARD as B64, Engine};
+
+        let signature_b64 = B64.encode(self.signing_key.sign(message.as_bytes()).to_bytes());
+
+        let capsule_id = proof["capsule_id"].as_str().unwrap_or_default().to_string();
+        let destroyed_at = proof["destroyed_at"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+
+        proof["attestation"] = json!({
+            "algorithm": "Ed25519",
+            "public_key": format!("base64:{}", self.public_key_b64),
+            "signature": format!("base64:{}", signature_b64),
+            "key_id": format!(
+                "nrx-verify-{}-{}",
+                destroyed_at.replace(':', "-"),
+                &capsule_id[..8.min(capsule_id.len())]
+            ),
+        });
+    }
+
+    /// A 2.0-labelled document with a full 8-step chain, a declared
+    /// `document_hash`, and a valid corpus-key signature over that declared
+    /// value.
+    fn build_v2_0_declared_hash_signed(&self, capsule_idx: usize) -> Value {
+        let mut proof = self.build_v2_1_unsigned(capsule_idx, "us-central1");
+        proof["cdp_version"] = Value::String("2.0".into());
+        proof["document_hash"] =
+            Value::String(self.declared_document_hash(&format!("v2.0-full-{capsule_idx}")));
+        self.sign_declared_hash_in_place(&mut proof);
+        proof
+    }
+
+    /// A 2.0 stripped projection: no `chain`, no `activity`, a declared
+    /// `document_hash`, and a corpus-key signature over that declared string
+    /// as written. It carries every summary field the hosted 2.0 check
+    /// requires, a complete `destruction.chain` string and a well-formed
+    /// `destruction.chain_hash`, so the hosted route returns valid under its
+    /// declared_hash_only scope while every offline verifier refuses it at
+    /// the version gate.
+    fn build_v2_0_stripped_projection(&self, capsule_idx: usize) -> Value {
+        let mut proof = json!({
+            "cdp_version": "2.0",
+            "capsule_id": self.capsule_id(capsule_idx),
+            "signing_key_version": "1",
+            "destroyed_at": FIXTURE_TIMESTAMP,
+            "environment": { "sealed": true, "encryption": "aes-256-gcm", "network": "isolated" },
+            "data_ingested": {
+                "file_count": 1,
+                "total_bytes": 1024,
+                "content_hash": self.declared_document_hash(&format!("v2.0-ingested-{capsule_idx}")),
+            },
+            "data_extracted": {
+                "file_count": 1,
+                "total_bytes": 512,
+                "content_hash": self.declared_document_hash(&format!("v2.0-extracted-{capsule_idx}")),
+            },
+            "residency": {
+                "started": FIXTURE_TIMESTAMP,
+                "destroyed": FIXTURE_TIMESTAMP,
+                "total_seconds": 0,
+            },
+            "destruction": {
+                "trigger": "user_explicit",
+                "chain": "8/8 steps",
+                "chain_hash": self.declared_document_hash(&format!("v2.0-terminus-{capsule_idx}")),
+            },
+            "document_hash": self.declared_document_hash(&format!("v2.0-projection-{capsule_idx}")),
+        });
+        self.sign_declared_hash_as_written_in_place(&mut proof);
+        proof
+    }
+
+    /// A 2.0-labelled document with a full chain and a declared
+    /// `document_hash` but no `attestation` block.
+    fn build_v2_0_without_attestation(&self, capsule_idx: usize) -> Value {
+        let mut proof = self.build_v2_1_unsigned(capsule_idx, "us-central1");
+        proof["cdp_version"] = Value::String("2.0".into());
+        proof["document_hash"] =
+            Value::String(self.declared_document_hash(&format!("v2.0-unattested-{capsule_idx}")));
+        proof
+    }
+
+    /// A genuinely signed 2.1 document re-labelled 2.0, whose declared
+    /// `document_hash` carries the canonical-view hash the 2.1 signature
+    /// covers. The attestation is the 2.1 attestation, unchanged.
+    fn build_v2_1_relabelled_v2_0(&self, capsule_idx: usize) -> Value {
+        let mut proof = self.build_v2_1_signed(capsule_idx, "us-central1");
+        let covered = recompute_canonical_hash(&proof);
+        proof["cdp_version"] = Value::String("2.0".into());
+        proof["document_hash"] = Value::String(format!("sha512:{covered}"));
+        proof
+    }
+
     /// Build a signed v2.1 AuditProof.
     fn build_v2_1_signed(&self, capsule_idx: usize, region: &str) -> Value {
         let mut proof = self.build_v2_1_unsigned(capsule_idx, region);
@@ -328,7 +473,7 @@ impl FixtureBuilder {
         proof
     }
 
-    /// Build an UNSIGNED v2.2 AuditProof. CDP 2.2 (the specification + the specification) is the
+    /// Build an UNSIGNED v2.2 AuditProof. CDP 2.2 is the
     /// 2.1 shape with a different version string; what it adds rides in the
     /// activity trail (`policy_denial_summary`) and in the optional
     /// `customer_declared_activity_root`, both of which the caller sets
@@ -339,7 +484,7 @@ impl FixtureBuilder {
         proof
     }
 
-    /// Build a signed v2.2 AuditProof whose trail ends with an specification
+    /// Build a signed v2.2 AuditProof whose trail ends with an deny-side evidence specification
     /// `policy_denial_summary` event carrying `by_reason`. An empty
     /// `by_reason` is "no enumerated check ran"; a `count: 0` row is the
     /// honest zero — the check ran and refused nothing.
@@ -374,6 +519,143 @@ impl FixtureBuilder {
         self.sign_in_place(&mut proof);
         proof
     }
+
+    /// Build a signed v2.2 AuditProof for a whole Capsulefile run under an
+    /// egress allowlist, with the activity trail a production run emits
+    /// (the AuditProof document builder `ActivityEvent`). It is the only
+    /// fixture whose `capsule_started` carries `capsulefile_content_hash`, so it
+    /// is the one that shows the declared environment bound into the signature.
+    /// Every content hash is the SHA-512 of the example bytes named beside it,
+    /// not a placeholder. The authority is an example customer authority: the
+    /// fixture key is the corpus test key, which signs for no real authority.
+    fn build_v2_2_reference_run(&self, capsule_idx: usize) -> Value {
+        let sha512 = |bytes: &[u8]| format!("sha512:{}", hex::encode(Sha512::digest(bytes)));
+        let capsulefile = b"name: claims-deidentify\nruntime: python3.12\n\
+entrypoint: python deidentify.py\negress:\n  allow:\n    - api.example-health.org\n";
+        let input = b"patient_id,dob,diagnosis\nsynthetic-0001,1970-01-01,J45\n";
+        let output = b"record_id,age_band,diagnosis\nr-0001,50-59,J45\n";
+
+        let mut proof = self.build_v2_2_unsigned(capsule_idx, "us-east-1");
+        proof["authority_id"] = json!("customer-kms-example-health-v1");
+        proof["org_id"] = json!("00000000-0000-0000-0000-0000000000a1");
+        proof["activity"] = json!([
+            {
+                "event": "capsule_started",
+                "runtime": "python3.12",
+                "entrypoint": "python deidentify.py",
+                "encryption": "aes-256-gcm",
+                "network": "egress_filtered",
+                "capsulefile_id": "cf_ExampleHlth1",
+                "capsulefile_version": 3,
+                "capsulefile_content_hash": sha512(capsulefile),
+                "egress_profile_id": "ep_ExHlth01",
+                "egress_profile_name": "example-health-api-only",
+                "egress_declaration": ["api.example-health.org"],
+                "region": "us-east-1",
+                "metadata_hash": null,
+                "at": "2026-05-07T23:58:10Z",
+            },
+            {
+                "event": "file_uploaded",
+                "filename": "claims.csv",
+                "size_bytes": input.len(),
+                "content_hash": sha512(input),
+                "at": "2026-05-07T23:58:12Z",
+            },
+            {
+                "event": "execution_started",
+                "command": null,
+                "command_hash": sha512(b"python deidentify.py"),
+                "at": "2026-05-07T23:58:13Z",
+            },
+            {
+                "event": "execution_completed",
+                "exit_code": 0,
+                "duration_seconds": 41,
+                "at": "2026-05-07T23:58:54Z",
+            },
+            {
+                "event": "egress_summary",
+                "policy": "allowlist",
+                "dns_queries": 5,
+                "domains_resolved": ["api.example-health.org"],
+                "blocked_queries": 2,
+                "network_interface": true,
+                "egress_profile_id": "ep_ExHlth01",
+                "egress_profile_name": "example-health-api-only",
+                "at": "2026-05-07T23:58:54Z",
+            },
+            {
+                "event": "policy_denial_summary",
+                "by_reason": [{ "reason": "egress_profile_denied", "count": 2 }],
+                "at": "2026-05-07T23:58:54Z",
+            },
+            {
+                "event": "file_downloaded",
+                "filename": "claims-deidentified.csv",
+                "size_bytes": output.len(),
+                "content_hash": sha512(output),
+                "at": "2026-05-07T23:59:02Z",
+            },
+            {
+                "event": "destruction_initiated",
+                "trigger": "user_explicit",
+                "at": "2026-05-07T23:59:59Z",
+            },
+        ]);
+        self.sign_in_place(&mut proof);
+        proof
+    }
+
+    /// Build a signed v2.2 AuditProof whose trail holds a streamed response
+    /// the relay stopped on a size budget: `streaming_egress_started`, the two
+    /// chunks read before the break, one `streaming_policy_violation` naming
+    /// the third chunk, and no `streaming_egress_completed`. The events are in
+    /// the shape the signed activity serializes them in
+    /// (the reference server implementation `push_streaming_egress_events`,
+    /// whose test `the_corpus_fixture_is_what_the_producer_emits` reads this
+    /// fixture). Every hash is the SHA-512 of the example bytes beside it.
+    fn build_v2_2_streaming_policy_violation(&self, capsule_idx: usize) -> Value {
+        let sha512 = |bytes: &[u8]| format!("sha512:{}", hex::encode(Sha512::digest(bytes)));
+        let at = "2026-05-07T23:59:30Z";
+        let mut proof = self.build_v2_2_unsigned(capsule_idx, "us-central1");
+        proof["activity"][0]["network"] = json!("egress_filtered");
+        proof["activity"]
+            .as_array_mut()
+            .expect("activity array")
+            .extend([
+                json!({
+                    "event": "streaming_egress_started",
+                    "destination": "api.example.com",
+                    "protocol": "sse",
+                    "request_hash": sha512(b"POST /v1/stream HTTP/1.1\r\nHost: api.example.com\r\n\r\n"),
+                    "at": at,
+                }),
+                json!({
+                    "event": "streaming_egress_chunk",
+                    "seq": 0,
+                    "chunk_hash": sha512(b"data: {\"delta\":\"Hel\"}\n\n"),
+                    "at": at,
+                    "chunk_size_bytes": null,
+                }),
+                json!({
+                    "event": "streaming_egress_chunk",
+                    "seq": 1,
+                    "chunk_hash": sha512(b"data: {\"delta\":\"lo\"}\n\n"),
+                    "at": at,
+                    "chunk_size_bytes": null,
+                }),
+                json!({
+                    "event": "streaming_policy_violation",
+                    "seq": 2,
+                    "violation_kind": "unauthorized_size",
+                    "at": at,
+                    "violation_detail": null,
+                }),
+            ]);
+        self.sign_in_place(&mut proof);
+        proof
+    }
 }
 
 // ── Expected verdict shape ───────────────────────────────────────────
@@ -385,13 +667,15 @@ impl FixtureBuilder {
 /// captured from a verifier run — a corpus whose expectations are recorded
 /// from the implementation under test proves nothing.
 ///
-/// Stage 7 is the success stage without a trust-chain manifest: sub-A proves
-/// integrity against the embedded key. Stage 8 needs `--trust-chain`, which
+/// Stage 7 is the highest stage reached without a trust-chain manifest, and it
+/// is not_anchored: sub-A proves integrity against the embedded key, not who
+/// signed. Stage 8, verified, needs `--trust-chain`, which
 /// the corpus deliberately does not pin (the manifest is an operator artifact,
 /// not a fixture).
 fn expected_success() -> Value {
     json!({
         "valid": true,
+        "status": "not_anchored",
         "failure_reason": null,
         "stage_reached": 7,
     })
@@ -408,13 +692,26 @@ fn expected_failure(reason_type: &str, extras: Value, stage_reached: u8) -> Valu
     }
     json!({
         "valid": false,
+        "status": "not_verified",
         "failure_reason": failure,
         "stage_reached": stage_reached,
     })
 }
 
+/// The status every verifier derives from `valid` and `stage_reached`:
+/// verified only at stage 8, not_anchored at stage 7, not_verified otherwise.
+fn status_for(valid: bool, stage_reached: u64) -> &'static str {
+    if valid && stage_reached >= 8 {
+        "verified"
+    } else if valid && stage_reached == 7 {
+        "not_anchored"
+    } else {
+        "not_verified"
+    }
+}
+
 /// Attach the verifier policy a fixture's verdict depends on. Without this the
-/// `05_*` / `06_*` verdicts are unreachable and the fixture silently "passes"
+/// `05_*`, `06_*` and `12_*` verdicts are unreachable and the fixture silently "passes"
 /// as valid.
 fn with_policy(mut expected: Value, policy: Value) -> Value {
     expected["policy"] = policy;
@@ -428,9 +725,39 @@ fn with_note(mut expected: Value, note: &str) -> Value {
     expected
 }
 
+/// The verdict pinned for a document serde_json refuses to parse. The reference
+/// CLI refuses it before verification (exit 1, no verdict document); the Go,
+/// Python and TypeScript verifiers report it as this stage 1 verdict, the form
+/// they already gave any document they could not parse.
+fn expected_unparseable(why: &str) -> Value {
+    with_note(
+        expected_failure("required_field_missing", json!({ "field": "json_root" }), 1),
+        &format!(
+            "{why} serde_json, the parser in front of nanorix-verify, refuses the \
+             document, so the CLI exits 1 with no verdict; the other verifiers report \
+             this verdict."
+        ),
+    )
+}
+
 // ── Category writers ─────────────────────────────────────────────────
 
+/// Refuse a verdict whose `status` does not follow from its `valid` and
+/// `stage_reached`, so no fixture is written with a status nobody derived.
+fn assert_status_follows(name: &str, expected: &Value) {
+    let valid = expected["valid"].as_bool().expect("expected.valid");
+    let stage = expected["stage_reached"]
+        .as_u64()
+        .expect("expected.stage_reached");
+    assert_eq!(
+        expected["status"].as_str(),
+        Some(status_for(valid, stage)),
+        "{name}: expected.status must follow from valid and stage_reached"
+    );
+}
+
 fn write_fixture(out_dir: &Path, name: &str, proof: &Value, expected: &Value) {
+    assert_status_follows(name, expected);
     fs::create_dir_all(out_dir).expect("create category dir");
     let proof_path = out_dir.join(format!("{}.json", name));
     let expected_path = out_dir.join(format!("{}.expected.json", name));
@@ -440,6 +767,41 @@ fn write_fixture(out_dir: &Path, name: &str, proof: &Value, expected: &Value) {
 
     fs::write(&proof_path, &proof_bytes).expect("write proof file");
     fs::write(&expected_path, &expected_bytes).expect("write expected file");
+}
+
+/// Like `write_fixture`, for a document given as bytes because serde_json
+/// would refuse it or could not write it.
+fn write_raw_fixture(out_dir: &Path, name: &str, proof_bytes: &[u8], expected: &Value) {
+    assert_status_follows(name, expected);
+    fs::create_dir_all(out_dir).expect("create category dir");
+    let expected_bytes = serde_json::to_vec_pretty(expected).expect("serialize expected");
+    fs::write(out_dir.join(format!("{}.json", name)), proof_bytes).expect("write proof file");
+    fs::write(
+        out_dir.join(format!("{}.expected.json", name)),
+        &expected_bytes,
+    )
+    .expect("write expected file");
+}
+
+/// A signed proof's bytes with `"<key>": <value>` added as its first member.
+/// No verifier reads `future_field` and the signature does not cover it, so
+/// the proof still verifies and any other verdict comes from the added text.
+fn with_first_member(proof: &Value, key: &[u8], value: &[u8]) -> Vec<u8> {
+    let pretty = serde_json::to_vec_pretty(proof).expect("serialize proof");
+    prepend_member(&pretty, key, value)
+}
+
+/// `document`, a JSON object's bytes, with `"<key>": <value>` put before its
+/// first member. Applied twice with one key it repeats the key.
+fn prepend_member(document: &[u8], key: &[u8], value: &[u8]) -> Vec<u8> {
+    assert_eq!(document.first(), Some(&b'{'), "a proof is a JSON object");
+    let mut out = b"{\n  \"".to_vec();
+    out.extend_from_slice(key);
+    out.extend_from_slice(b"\": ");
+    out.extend_from_slice(value);
+    out.push(b',');
+    out.extend_from_slice(&document[1..]);
+    out
 }
 
 /// Category 1 — single-capsule successful destroy (10 fixtures).
@@ -622,8 +984,13 @@ fn generate_signature_invalid_failures(builder: &FixtureBuilder, root: &Path) ->
     count
 }
 
-/// Category 3c — region mismatch failures (10 fixtures). Each fixture
-/// declares a region and expects rejection against a different policy region.
+/// Category 3c — region mismatch failures (12 fixtures). Ten signed 2.1
+/// proofs each declare a region and expect rejection against a different
+/// policy region. The eleventh is a signed 1.0 proof with a `capsule_started`
+/// region equal to the pin added after signing: 1.0 signs only `final_hash`,
+/// so that region is unsigned, and the pin reads no region on 1.0 and refuses.
+/// The twelfth is a 2.2 proof without a signature whose region equals the pin:
+/// no signature covers that region either, so the pin refuses it the same way.
 fn generate_region_mismatch_failures(builder: &FixtureBuilder, root: &Path) -> usize {
     let dir = root.join("05_failure_region_mismatch");
     let mut count = 0;
@@ -660,11 +1027,56 @@ fn generate_region_mismatch_failures(builder: &FixtureBuilder, root: &Path) -> u
         count += 1;
     }
 
+    let mut v1 = builder.build_v1_minimal(410);
+    builder.sign_v1_in_place(&mut v1);
+    v1["activity"] = json!([{
+        "event": "capsule_started",
+        "encryption": "aes-256-gcm",
+        "network": "sealed",
+        "region": "europe-west1",
+    }]);
+    let expected = with_policy(
+        with_note(
+            expected_failure(
+                "region_mismatch",
+                json!({ "required": "europe-west1", "actual": "" }),
+                2,
+            ),
+            "cdp_version 1.0 signs only final_hash, so a region in its activity is \
+             unsigned: the residency pin reads no region on 1.0 and refuses the proof, \
+             even with a capsule_started region equal to the pin added after signing. \
+             Without the pin it verifies.",
+        ),
+        json!({ "required_region": "europe-west1" }),
+    );
+    write_fixture(&dir, "0010_v1_0_unsigned_region", &v1, &expected);
+    count += 1;
+
+    let unsigned = builder.build_v2_2_unsigned(411, "europe-west1");
+    let expected = with_policy(
+        with_note(
+            expected_failure(
+                "region_mismatch",
+                json!({ "required": "europe-west1", "actual": "" }),
+                2,
+            ),
+            "A cdp_version 2.2 proof without a signature: no signature covers its \
+             activity, so the residency pin reads no region and refuses the proof, \
+             even though its capsule_started region equals the pin. Without the pin \
+             it is valid at stage 4 and not verified.",
+        ),
+        json!({ "required_region": "europe-west1" }),
+    );
+    write_fixture(&dir, "0011_v2_2_unsigned_region", &unsigned, &expected);
+    count += 1;
+
     count
 }
 
-/// Category 3d — authority unknown failures (10 fixtures). Proofs reference
-/// authority IDs not in the trust chain.
+/// Category 3d — authority pin fixtures (15 fixtures). Ten proofs carry an
+/// unsigned `signing_authority` naming an unregistered authority; three more
+/// pin the signed top-level `authority_id`; two sign a 1.0 proof,
+/// whose top-level `authority_id` no signature covers.
 fn generate_authority_unknown_failures(builder: &FixtureBuilder, root: &Path) -> usize {
     let dir = root.join("06_failure_authority_unknown");
     let mut count = 0;
@@ -701,11 +1113,127 @@ fn generate_authority_unknown_failures(builder: &FixtureBuilder, root: &Path) ->
         count += 1;
     }
 
+    // The pin binds the signed top-level `authority_id`, never the
+    // unsigned `signing_authority` object.
+    let customer_pin = "customer-hsm-example-org-v1";
+
+    // The attack: a genuine proof under the Nanorix authority plus an
+    // unsigned `signing_authority` naming the pin. Refused, never accepted.
+    let mut attack = builder.build_v2_1_signed(510, "us-central1");
+    attack["signing_authority"] = json!({ "authority_id": customer_pin });
+    let expected = with_policy(
+        with_note(
+            expected_failure(
+                "authority_id_mismatch",
+                json!({
+                    "claimed_authority_id": customer_pin,
+                    "expected_authority_id": customer_pin,
+                    "reason": "verifier_policy_authority_id_mismatch",
+                }),
+                2,
+            ),
+            "An unsigned signing_authority that disagrees with the signed \
+             top-level authority_id is refused even when it equals the pin.",
+        ),
+        json!({ "required_authority_id": customer_pin }),
+    );
+    write_fixture(
+        &dir,
+        "0010_unsigned_signing_authority_attack",
+        &attack,
+        &expected,
+    );
+    count += 1;
+
+    // A genuine proof under the Nanorix authority against a different pin:
+    // mismatch on the signed top-level value.
+    let genuine = builder.build_v2_1_signed(511, "us-central1");
+    let expected = with_policy(
+        expected_failure(
+            "authority_id_mismatch",
+            json!({
+                "claimed_authority_id": "us-kms-nanorix-v1",
+                "expected_authority_id": customer_pin,
+                "reason": "verifier_policy_authority_id_mismatch",
+            }),
+            2,
+        ),
+        json!({ "required_authority_id": customer_pin }),
+    );
+    write_fixture(&dir, "0011_genuine_proof_other_pin", &genuine, &expected);
+    count += 1;
+
+    // The same genuine proof against a pin equal to its signed authority: the
+    // gate passes and the proof verifies.
+    let genuine = builder.build_v2_1_signed(512, "us-central1");
+    let expected = with_policy(
+        expected_success(),
+        json!({ "required_authority_id": "us-kms-nanorix-v1" }),
+    );
+    write_fixture(&dir, "0012_genuine_proof_matching_pin", &genuine, &expected);
+    count += 1;
+
+    // cdp_version 1.0 signs `final_hash`: nothing signed covers a top-level
+    // `authority_id` there, and no issuer writes one. Adding it to a genuine
+    // proof must not satisfy a pin; leaving it off must still meet a pin on
+    // the Nanorix default. No 2.0-labelled copy is pinned here: the version
+    // gate refuses 2.0 with or without a pin, and a fixture carrying a
+    // `policy` must verify without it (the hosted parity sweep in
+    // the reference server implementation relies on that). Each implementation's pin tests check the
+    // 2.0 refusal instead.
+    let unsigned_note = "cdp_version 1.0 signs no authority_id, so a top-level \
+                         authority_id added after signing is refused at stage 2 and a \
+                         pin accepts only us-kms-nanorix-v1.";
+    let build = |idx: usize| {
+        let mut p = builder.build_v1_minimal(idx);
+        builder.sign_v1_in_place(&mut p);
+        p
+    };
+
+    let mut relabelled = build(513);
+    relabelled["authority_id"] = json!(customer_pin);
+    let expected = with_policy(
+        with_note(
+            expected_failure(
+                "authority_id_mismatch",
+                json!({
+                    "claimed_authority_id": customer_pin,
+                    "expected_authority_id": customer_pin,
+                    "reason": "verifier_policy_authority_id_mismatch",
+                }),
+                2,
+            ),
+            unsigned_note,
+        ),
+        json!({ "required_authority_id": customer_pin }),
+    );
+    write_fixture(
+        &dir,
+        "0013_v1_0_signed_relabelled_authority",
+        &relabelled,
+        &expected,
+    );
+    count += 1;
+
+    let genuine = build(514);
+    let expected = with_policy(
+        expected_success(),
+        json!({ "required_authority_id": "us-kms-nanorix-v1" }),
+    );
+    write_fixture(
+        &dir,
+        "0014_v1_0_signed_default_authority_pin",
+        &genuine,
+        &expected,
+    );
+    count += 1;
+
     count
 }
 
-/// Category 3e — cdp_version unsupported failures (10 fixtures). Each fixture
-/// declares a future or invalid version.
+/// Category 3e — cdp_version unsupported failures (15 fixtures). Ten declare a
+/// future or invalid version; five are 2.0-labelled documents of different
+/// shapes, which the version gate refuses because 2.0 is retired.
 fn generate_version_unsupported_failures(builder: &FixtureBuilder, root: &Path) -> usize {
     let dir = root.join("07_failure_version_unsupported");
     let mut count = 0;
@@ -723,6 +1251,53 @@ fn generate_version_unsupported_failures(builder: &FixtureBuilder, root: &Path) 
             2,
         );
         write_fixture(&dir, &format!("{:04}_version_{}", i, i), &proof, &expected);
+        count += 1;
+    }
+
+    // cdp_version 2.0 is retired: refused at the version gate, before any
+    // other stage, whatever else the document carries. Each vector below is
+    // a different shape of 2.0-labelled document; all five expect the same
+    // verdict.
+    let activity_root = activity_root_three_vector();
+    let refused_v2_0: Vec<(&str, Value)> = vec![
+        // Full chain, declared document_hash, valid signature over that
+        // declared value under the corpus key.
+        (
+            "declared_hash_signed",
+            builder.build_v2_0_declared_hash_signed(610),
+        ),
+        // No chain and no activity: only a declared document_hash and a
+        // signature over it.
+        (
+            "stripped_projection",
+            builder.build_v2_0_stripped_projection(611),
+        ),
+        // Full chain and declared document_hash, no attestation block.
+        (
+            "no_attestation",
+            builder.build_v2_0_without_attestation(612),
+        ),
+        // A genuine 2.1 document re-labelled 2.0, its declared document_hash
+        // set to the canonical-view hash the 2.1 signature covers.
+        (
+            "relabelled_from_2_1",
+            builder.build_v2_1_relabelled_v2_0(613),
+        ),
+        // The class-1 document carrying a customer_declared_activity_root.
+        ("with_activity_root", {
+            let mut proof = builder.build_v2_0_declared_hash_signed(614);
+            proof["customer_declared_activity_root"] = Value::String(activity_root);
+            proof
+        }),
+    ];
+    for (j, (descriptor, proof)) in refused_v2_0.iter().enumerate() {
+        let expected = expected_failure("cdp_version_unsupported", json!({ "found": "2.0" }), 2);
+        write_fixture(
+            &dir,
+            &format!("{:04}_v2_0_{}", bad_versions.len() + j, descriptor),
+            proof,
+            &expected,
+        );
         count += 1;
     }
 
@@ -783,6 +1358,7 @@ fn generate_canonical_hash_drift_failures(builder: &FixtureBuilder, root: &Path)
             with_note(
                 json!({
                     "valid": false,
+                    "status": "not_verified",
                     "failure_reason": {
                         "type": "algorithm_unsupported",
                         "found": "signing_mode=dual_signature"
@@ -835,7 +1411,7 @@ fn generate_canonical_hash_drift_failures(builder: &FixtureBuilder, root: &Path)
         (
             "flip_signature_algorithm",
             |p| p["signature_algorithm"] = json!("RSA-PSS"),
-            // the specification C.1: algorithm dispatch precedes byte-shape checks — a
+            // Algorithm dispatch precedes byte-shape checks — a
             // document declaring a non-Ed25519 algorithm fails typed at stage
             // 4 (this build cannot evaluate what the document declares), not
             // as a presumed-Ed25519 mismatch at stage 7. Same path is the
@@ -843,7 +1419,7 @@ fn generate_canonical_hash_drift_failures(builder: &FixtureBuilder, root: &Path)
             // future-algorithm proof.
             with_note(
                 expected_failure("algorithm_unsupported", json!({ "found": "RSA-PSS" }), 4),
-                "the specification C.1: algorithm dispatch precedes byte-shape checks. A \
+                "Algorithm dispatch precedes byte-shape checks. A \
                  document declaring a non-Ed25519 signature algorithm fails \
                  typed as algorithm_unsupported at stage 4 — this build cannot \
                  evaluate what the document declares, so presuming Ed25519 \
@@ -948,29 +1524,28 @@ fn generate_tamper_patterns(builder: &FixtureBuilder, root: &Path) -> usize {
     // 4c — version downgrade: every fixture starts life as a genuine signed
     // v2.1 document and is then re-stamped with a lower `cdp_version`.
     //
-    // The first two targets are the interesting attack: 2.0 and 1.0 are
-    // *supported* versions, so the version gate lets them through and the
-    // rejection has to come from the signature stage. It does, because the
-    // signed message is version-dependent — v1.0 signs `final_hash`, v2.0 signs
-    // `document_hash`, v2.1 signs the canonical hash — so a downgraded document
-    // is checked against a message its signature was never made over. The
-    // remaining three targets are unsupported versions, rejected two stages
-    // earlier at the version gate.
+    // 1.0 is a supported version, so the version gate lets it through and the
+    // rejection has to come from the signature stage: the 1.0 signed message
+    // is the document's own recomputed final chain hash, which the 2.1
+    // signature was never made over. The other four targets (2.0 included,
+    // which is retired) are not in the supported set and are rejected at the
+    // version gate, five stages earlier.
     let dir = dir_root.join("c_version_downgrade");
     let downgrades = ["2.0", "1.0", "0.9", "1", "two.one"];
     for (i, to) in downgrades.iter().enumerate() {
         let mut proof = builder.build_v2_1_signed(820 + i, "us-central1");
         proof["cdp_version"] = Value::String(to.to_string());
-        let expected = if matches!(*to, "2.0" | "1.0") {
+        let expected = if *to == "1.0" {
             with_note(
                 expected_failure(
                     "signature_mismatch",
                     json!({ "reason": "does_not_verify" }),
                     7,
                 ),
-                "Supported version, so the version gate passes; the downgrade is \
-                 caught at the signature stage because the signed message differs \
-                 per version.",
+                "Supported version, so the version gate lets it through; the \
+                 downgrade is caught at the signature stage because the 1.0 signed \
+                 message is the document's own recomputed final chain hash, which \
+                 the 2.1 signature was not made over.",
             )
         } else {
             expected_failure("cdp_version_unsupported", json!({ "found": to }), 2)
@@ -1039,11 +1614,14 @@ fn activity_root_three_vector() -> String {
     computed
 }
 
-/// Category 10 — CDP 2.2 (7 fixtures). the specification's `policy_denial_summary`
-/// trail event and the specification's `customer_declared_activity_root`, each positive
-/// and each tampered after signing. 2.2 is verified exactly as 2.1, so every
-/// tamper here is caught where a 2.1 tamper of the same field would be: the
-/// trail and the root are canonical-bound, and the rejection is the signature.
+/// Category 10 — CDP 2.2 (13 fixtures). The deny-side evidence specification's `policy_denial_summary`
+/// trail event and the customer-declared activity specification's `customer_declared_activity_root`, each positive
+/// and each tampered after signing; a root on 1.0 or malformed, refused at
+/// stage 2; a reference run and its Capsulefile hash tampered after signing;
+/// and a stream stopped on a policy break. 2.2 is verified exactly as 2.1, so
+/// every tamper after signing here is caught where a 2.1 tamper of the same
+/// field would be: the trail and the root are canonical-bound, and the
+/// rejection is the signature.
 fn generate_v2_2(builder: &FixtureBuilder, root: &Path) -> usize {
     let dir = root.join("10_v2_2");
     let mut count = 0;
@@ -1120,7 +1698,7 @@ fn generate_v2_2(builder: &FixtureBuilder, root: &Path) -> usize {
     );
     count += 1;
 
-    // A declared customer activity root (the specification). The corpus carries no
+    // A declared customer activity root. The corpus carries no
     // record, so the verdict discloses the root as declared, not checked.
     let three_root = activity_root_three_vector();
     let with_root = builder.build_v2_2_with_activity_root(905, &three_root);
@@ -1239,7 +1817,557 @@ fn generate_v2_2(builder: &FixtureBuilder, root: &Path) -> usize {
     );
     count += 1;
 
+    // A whole Capsulefile run under an egress allowlist, with the activity
+    // trail a production run emits. The landing page renders this one.
+    let reference_run = builder.build_v2_2_reference_run(910);
+    write_fixture(
+        &dir,
+        "0010_v2_2_reference_run_declared_environment",
+        &reference_run,
+        &with_note(
+            expected_success(),
+            "A run of a declared Capsulefile under an egress allowlist: upload, \
+             execution, two denied lookups, download and destruction. The \
+             Capsulefile content hash in capsule_started is inside the canonical \
+             view, so the declared environment is bound into the signature. The \
+             authority is an example customer authority; the key is the corpus \
+             test key, so no trust-chain manifest vouches for it.",
+        ),
+    );
+    count += 1;
+
+    // The same run with one hex character of the declared Capsulefile hash
+    // changed after signing.
+    let mut swapped_capsulefile = reference_run.clone();
+    let declared = swapped_capsulefile["activity"][0]["capsulefile_content_hash"]
+        .as_str()
+        .expect("capsulefile_content_hash")
+        .to_string();
+    let mut chars: Vec<char> = declared.chars().collect();
+    // "sha512:" prefix has length 7; flip the first hex character.
+    chars[7] = if chars[7] == '3' { '4' } else { '3' };
+    swapped_capsulefile["activity"][0]["capsulefile_content_hash"] =
+        Value::String(chars.into_iter().collect());
+    write_fixture(
+        &dir,
+        "0011_v2_2_capsulefile_content_hash_flipped_after_signing",
+        &swapped_capsulefile,
+        &with_note(
+            expected_failure(
+                "signature_mismatch",
+                json!({ "reason": "does_not_verify" }),
+                7,
+            ),
+            "0010 with one hex character of the declared Capsulefile hash changed \
+             after signing. The activity trail is inside the canonical view, so a \
+             record that claims a different environment from the one signed fails \
+             at the signature.",
+        ),
+    );
+    count += 1;
+
+    // A stream the relay stopped on its size budget.
+    let stopped_stream = builder.build_v2_2_streaming_policy_violation(911);
+    write_fixture(
+        &dir,
+        "0012_v2_2_streaming_policy_violation",
+        &stopped_stream,
+        &with_note(
+            expected_success(),
+            "A streamed response stopped on the relay's size budget: started, the two \
+             chunks read before the break, a streaming_policy_violation naming the \
+             third chunk, and no streaming_egress_completed. A streaming Merkle root \
+             is recomputed only at a completed event, so the stopped stream's leaves \
+             are carried past rather than failed, and the trail is signed like any \
+             other.",
+        ),
+    );
+    count += 1;
+
     count
+}
+
+/// Category 11 — the JSON parse boundary (28 fixtures). Each document is a
+/// genuine signed v2.1 proof with one member added, in a field no verifier
+/// reads, or a document that is not an object. serde_json starts its depth
+/// budget at 128 and refuses the container that spends the last of it, so
+/// 127 nested containers parse and 128 do not, counting the top-level object.
+fn generate_parse_boundary(builder: &FixtureBuilder, root: &Path) -> usize {
+    let dir = root.join("11_json_parse_boundary");
+    let genuine = builder.build_v2_1_signed(0, "us-central1");
+    let other = |value: &[u8]| with_first_member(&genuine, b"future_field", value);
+    let arrays = |n: usize| [vec![b'['; n], vec![b']'; n]].concat();
+    // `future_field` twice: `earlier` first, then 2, the copy serde_json keeps.
+    let repeated = |earlier: &[u8]| {
+        let pretty = serde_json::to_vec_pretty(&genuine).expect("serialize proof");
+        prepend_member(
+            &prepend_member(&pretty, b"future_field", b"2"),
+            b"future_field",
+            earlier,
+        )
+    };
+    let big_integer = [b"1".to_vec(), vec![b'0'; 400]].concat();
+    let bracket_string = [b"\"\\\"".to_vec(), vec![b'['; 200], b"{\"".to_vec()].concat();
+
+    let mut bom = b"\xEF\xBB\xBF".to_vec();
+    bom.extend_from_slice(&serde_json::to_vec_pretty(&genuine).expect("serialize proof"));
+
+    let fixtures: Vec<(&str, Vec<u8>, Value)> = vec![
+        (
+            "0000_nesting_127_accepted",
+            other(&arrays(126)),
+            with_note(
+                expected_success(),
+                "126 nested arrays inside the top-level object: 127 containers deep, \
+                 the deepest serde_json parses.",
+            ),
+        ),
+        (
+            "0001_nesting_128_refused",
+            other(&arrays(127)),
+            expected_unparseable(
+                "127 nested arrays inside the top-level object: 128 containers deep.",
+            ),
+        ),
+        (
+            "0002_invalid_utf8_in_unread_field",
+            other(b"\"\xFF\""),
+            expected_unparseable("A string holding the byte 0xFF, which is not UTF-8."),
+        ),
+        (
+            "0003_cesu8_surrogate_bytes_in_unread_field",
+            other(b"\"\xED\xA0\x80\""),
+            expected_unparseable(
+                "A string holding the bytes ED A0 80, a surrogate encoded as if it were a \
+                 character (CESU-8), which is not UTF-8.",
+            ),
+        ),
+        (
+            "0004_utf8_bom_before_document",
+            bom,
+            expected_unparseable("The proof preceded by a UTF-8 byte order mark."),
+        ),
+        (
+            "0005_lone_high_surrogate_escape_in_unread_field",
+            other(b"\"\\ud800\""),
+            expected_unparseable(
+                "The escape \\ud800, half a surrogate pair, with nothing after it.",
+            ),
+        ),
+        (
+            "0006_high_surrogate_escape_then_non_low_escape",
+            other(b"\"\\ud800\\u0041\""),
+            expected_unparseable(
+                "The escape \\ud800 followed by \\u0041, which is not the low half of a pair.",
+            ),
+        ),
+        (
+            "0007_lone_low_surrogate_escape_in_key",
+            with_first_member(&genuine, b"future_\\udc00", b"1"),
+            expected_unparseable(
+                "A member name holding the escape \\udc00, a low surrogate alone.",
+            ),
+        ),
+        (
+            "0008_surrogate_pair_escape_accepted",
+            other(b"\"\\ud83d\\ude00\""),
+            with_note(
+                expected_success(),
+                "A complete surrogate pair escape, one character: the control for 0005-0007.",
+            ),
+        ),
+        (
+            "0009_nan_literal_in_unread_field",
+            other(b"NaN"),
+            expected_unparseable("The bare word NaN, which JSON does not define."),
+        ),
+        (
+            "0010_number_beyond_f64_in_unread_field",
+            other(b"1e400"),
+            expected_unparseable("The number 1e400, past the largest 64-bit float."),
+        ),
+        (
+            "0011_top_level_array",
+            b"[]".to_vec(),
+            with_note(
+                expected_failure(
+                    "required_field_missing",
+                    json!({ "field": "cdp_version" }),
+                    1,
+                ),
+                "An empty array parses, so this is not a parse failure: like any document \
+                 that is not an object, it has no cdp_version.",
+            ),
+        ),
+        (
+            "0012_repeated_key_accepted",
+            repeated(b"1"),
+            with_note(
+                expected_success(),
+                "future_field twice, 1 then 2. serde_json keeps the last copy and \
+                 does not refuse a repeated key: the control for 0013-0016.",
+            ),
+        ),
+        (
+            "0013_repeated_key_earlier_copy_lone_surrogate",
+            repeated(b"\"\\ud800\""),
+            expected_unparseable(
+                "future_field twice; the earlier copy holds the escape \\ud800, half a \
+                 surrogate pair. A parser that keeps only the last copy never sees it.",
+            ),
+        ),
+        (
+            "0014_repeated_key_earlier_copy_nesting_128",
+            repeated(&arrays(127)),
+            expected_unparseable(
+                "future_field twice; the earlier copy is 127 nested arrays, 128 containers \
+                 deep counting the top-level object.",
+            ),
+        ),
+        (
+            "0015_repeated_key_earlier_copy_number_beyond_f64",
+            repeated(b"1e400"),
+            expected_unparseable(
+                "future_field twice; the earlier copy is the number 1e400, past the \
+                 largest 64-bit float.",
+            ),
+        ),
+        (
+            "0016_repeated_key_earlier_copy_nan",
+            repeated(b"NaN"),
+            expected_unparseable(
+                "future_field twice; the earlier copy is the bare word NaN, which JSON \
+                 does not define.",
+            ),
+        ),
+        (
+            "0017_integer_of_401_digits",
+            other(&big_integer),
+            expected_unparseable("An integer of 401 digits, past the largest 64-bit float."),
+        ),
+        (
+            "0018_nesting_20000",
+            other(&arrays(20000)),
+            expected_unparseable(
+                "20000 nested arrays, far past the depth a recursive parser can follow.",
+            ),
+        ),
+        (
+            "0019_top_level_null",
+            b"null".to_vec(),
+            with_note(
+                expected_failure(
+                    "required_field_missing",
+                    json!({ "field": "cdp_version" }),
+                    1,
+                ),
+                "null parses, so this is not a parse failure: like any document that is \
+                 not an object, it has no cdp_version.",
+            ),
+        ),
+        (
+            "0020_brackets_and_escaped_quote_inside_a_string",
+            other(&bracket_string),
+            with_note(
+                expected_success(),
+                "A string holding an escaped quote, then 200 [, then {. An escaped quote \
+                 does not end the string, and brackets inside a string are text, not \
+                 nesting.",
+            ),
+        ),
+        (
+            "0021_largest_f64_accepted",
+            other(b"1.7976931348623158e308"),
+            with_note(
+                expected_success(),
+                "1.7976931348623158e308, the largest 64-bit float: the in-range side of \
+                 the boundary 0022 crosses.",
+            ),
+        ),
+        (
+            "0022_just_past_largest_f64_refused",
+            other(b"1.7976931348623159e308"),
+            expected_unparseable(
+                "1.7976931348623159e308, which rounds past the largest 64-bit float.",
+            ),
+        ),
+        (
+            "0023_repeated_key_earlier_copy_lone_low_surrogate",
+            repeated(b"\"\\udc00\""),
+            expected_unparseable(
+                "future_field twice; the earlier copy holds the escape \\udc00, a low \
+                 surrogate with no high one before it.",
+            ),
+        ),
+        (
+            "0024_repeated_key_earlier_copy_high_surrogate_then_text",
+            repeated(b"\"\\ud800A\""),
+            expected_unparseable(
+                "future_field twice; the earlier copy holds the escape \\ud800 followed \
+                 by the letter A, not by a low surrogate escape.",
+            ),
+        ),
+        (
+            "0025_repeated_key_earlier_copy_high_surrogate_then_other_escape",
+            repeated(b"\"\\ud800\\u0041\""),
+            expected_unparseable(
+                "future_field twice; the earlier copy holds the escape \\ud800 followed \
+                 by the escape \\u0041, which is not a low surrogate.",
+            ),
+        ),
+        (
+            "0026_repeated_key_earlier_copy_escaped_backslash_then_ud800",
+            repeated(b"\"\\\\ud800\""),
+            with_note(
+                expected_success(),
+                "future_field twice; the earlier copy is an escaped backslash followed by \
+                 the text ud800, which is no surrogate escape: the control for 0023 to 0025.",
+            ),
+        ),
+        (
+            "0027_repeated_cdp_version_last_copy_counts",
+            with_first_member(&genuine, b"cdp_version", b"\"9.9\""),
+            with_note(
+                expected_success(),
+                "cdp_version twice, the unsupported \"9.9\" first and the real version \
+                 last. serde_json keeps the last copy, so every verifier reads the real one.",
+            ),
+        ),
+    ];
+
+    for (name, bytes, expected) in &fixtures {
+        write_raw_fixture(&dir, name, bytes, expected);
+    }
+    fixtures.len()
+}
+
+/// Category 12 — the reject-diagnostic setting (4 fixtures). Under
+/// `reject_diagnostic` a proof whose signed activity trail records diagnostic
+/// mode is refused at stage 2, and so is every proof whose activity no
+/// signature covers: cdp_version 1.0, which signs only `final_hash`, and a 2.1
+/// or 2.2 proof without a signature. Neither can show that the event is
+/// absent. A signed proof whose event was removed after signing keeps its
+/// signature, passes stage 2 and fails at the signature step, stage 7.
+fn generate_diagnostic_refused(builder: &FixtureBuilder, root: &Path) -> usize {
+    let dir = root.join("12_failure_diagnostic_refused");
+    let policy = json!({ "reject_diagnostic": true });
+    let mut count = 0;
+
+    // The event in the wire form the issuing service writes at capsule start
+    // for a capsule created with `diagnostic_mode: true`. It is
+    // added before signing, so the 2.2 signature covers it.
+    let mut diagnostic = builder.build_v2_2_unsigned(1200, "us-central1");
+    diagnostic["activity"]
+        .as_array_mut()
+        .expect("activity array")
+        .push(json!({ "event": "diagnostic_mode_enabled", "at": FIXTURE_TIMESTAMP }));
+    builder.sign_in_place(&mut diagnostic);
+    let expected = with_policy(
+        with_note(
+            expected_failure("diagnostic_proof_refused", json!({}), 2),
+            "The signed activity trail records diagnostic mode, so reject_diagnostic \
+             refuses the proof at stage 2. Without the setting it verifies.",
+        ),
+        policy.clone(),
+    );
+    write_fixture(
+        &dir,
+        "0000_v2_2_signed_diagnostic_mode",
+        &diagnostic,
+        &expected,
+    );
+    count += 1;
+
+    let mut v1 = builder.build_v1_minimal(1201);
+    builder.sign_v1_in_place(&mut v1);
+    let expected = with_policy(
+        with_note(
+            expected_failure("diagnostic_proof_refused", json!({}), 2),
+            "cdp_version 1.0 signs only final_hash, so its activity is unsigned and \
+             cannot show that the proof was not run in diagnostic mode: \
+             reject_diagnostic refuses every 1.0 proof at stage 2. Without the setting \
+             it verifies.",
+        ),
+        policy.clone(),
+    );
+    write_fixture(&dir, "0001_v1_0_signed", &v1, &expected);
+    count += 1;
+
+    let unsigned = builder.build_v2_2_unsigned(1202, "us-central1");
+    let expected = with_policy(
+        with_note(
+            expected_failure("diagnostic_proof_refused", json!({}), 2),
+            "A cdp_version 2.2 proof without a signature and without the \
+             diagnostic_mode_enabled event: no signature covers its activity, so it \
+             cannot show that the event is absent, and reject_diagnostic refuses it at \
+             stage 2. Without the setting it is valid at stage 4 and not verified.",
+        ),
+        policy.clone(),
+    );
+    write_fixture(
+        &dir,
+        "0002_v2_2_unsigned_without_event",
+        &unsigned,
+        &expected,
+    );
+    count += 1;
+
+    let mut stripped = builder.build_v2_2_unsigned(1203, "us-central1");
+    stripped["activity"]
+        .as_array_mut()
+        .expect("activity array")
+        .push(json!({ "event": "diagnostic_mode_enabled", "at": FIXTURE_TIMESTAMP }));
+    builder.sign_in_place(&mut stripped);
+    stripped["activity"]
+        .as_array_mut()
+        .expect("activity array")
+        .retain(|entry| entry["event"] != "diagnostic_mode_enabled");
+    let expected = with_policy(
+        with_note(
+            expected_failure(
+                "signature_mismatch",
+                json!({ "reason": "does_not_verify" }),
+                7,
+            ),
+            "Signed with the diagnostic_mode_enabled event, which was then removed. \
+             The proof still carries its signature, so reject_diagnostic reads the \
+             trail, finds no event and lets the proof on; the signature, made over \
+             the trail with the event, then fails at stage 7. Without the setting the \
+             verdict is the same.",
+        ),
+        policy,
+    );
+    write_fixture(
+        &dir,
+        "0003_v2_2_event_removed_signature_kept",
+        &stripped,
+        &expected,
+    );
+    count += 1;
+
+    count
+}
+
+/// The customer authority the `13_customer_only` vectors name. Its
+/// `customer-kms-` segment is not at the start of the id, which the issuer's
+/// test (a substring match) classifies as customer-classified all the same.
+const CUSTOMER_AUTHORITY: &str = "us-customer-kms-acme-v1";
+
+/// Category 13 — `signing_mode: "customer_only"` (6 fixtures): the five shared
+/// vectors of the amendment, section 4, in its order, and a legacy
+/// proof.
+///
+/// The fixture key stands in for a customer authority's signing key: the signed message is the
+/// same canonical view `nanorix_only` signs, and only the mode string inside
+/// it differs. Every verifier recomputes it, refuses the same proof with its
+/// mode edited after signing, and refuses `customer_only` under a
+/// Nanorix-classified authority even when the signature is valid.
+fn generate_customer_only(builder: &FixtureBuilder, root: &Path) -> usize {
+    let dir = root.join("13_customer_only");
+    let signed_as = |idx: usize, mode: &str, authority: &str| {
+        let mut proof = builder.build_v2_1_unsigned(idx, "us-central1");
+        proof["signing_mode"] = json!(mode);
+        proof["authority_id"] = json!(authority);
+        builder.sign_in_place(&mut proof);
+        // The install-authority key id; unsigned, and it does not start with
+        // `nrx-verify-`, so no verifier reads a timestamp from it.
+        proof["attestation"]["key_id"] = json!(format!("{authority}-v1"));
+        proof
+    };
+
+    let valid = signed_as(1300, "customer_only", CUSTOMER_AUTHORITY);
+    write_fixture(
+        &dir,
+        "0000_v2_1_customer_only_signed",
+        &valid,
+        &with_note(
+            expected_success(),
+            "customer_only under us-customer-kms-acme-v1, whose customer-kms- segment is \
+             not at the start of the id: customer-classified, so it passes the consistency \
+             rule. The signature covers the canonical view, mode included, exactly as for \
+             nanorix_only; without a key list it is not_anchored at stage 7.",
+        ),
+    );
+
+    let nanorix = signed_as(1301, "customer_only", "us-kms-nanorix-v1");
+    write_fixture(
+        &dir,
+        "0001_v2_1_customer_only_nanorix_authority",
+        &nanorix,
+        &with_note(
+            expected_failure(
+                "signing_mode_authority_mismatch",
+                json!({ "claimed_authority_id": "us-kms-nanorix-v1" }),
+                4,
+            ),
+            "customer_only under a Nanorix-classified authority, validly signed. Both \
+             labels are signed, so the pair is refused at stage 4, before the signature \
+             check, and no signer is named.",
+        ),
+    );
+
+    let wrong_case = signed_as(1302, "customer_only", "us-Customer-kms-acme-v1");
+    write_fixture(
+        &dir,
+        "0002_v2_1_customer_only_authority_wrong_case",
+        &wrong_case,
+        &with_note(
+            expected_failure(
+                "signing_mode_authority_mismatch",
+                json!({ "claimed_authority_id": "us-Customer-kms-acme-v1" }),
+                4,
+            ),
+            "The classification is case-sensitive: Customer-kms- is not customer-kms-, so \
+             this id is Nanorix-classified and the pair is refused. Registration refuses \
+             this id; the proof is hand-built.",
+        ),
+    );
+
+    let mut relabelled = valid.clone();
+    relabelled["signing_mode"] = json!("nanorix_only");
+    write_fixture(
+        &dir,
+        "0003_v2_1_customer_only_mode_edited_to_nanorix_only",
+        &relabelled,
+        &with_note(
+            expected_failure(
+                "signature_mismatch",
+                json!({ "reason": "does_not_verify" }),
+                7,
+            ),
+            "0000 with signing_mode edited to nanorix_only after signing. The mode is \
+             inside the canonical view, so the edit breaks the signature.",
+        ),
+    );
+
+    let mut other_algorithm = signed_as(1304, "customer_only", "us-kms-nanorix-v1");
+    other_algorithm["attestation"]["algorithm"] = json!("Ed448");
+    write_fixture(
+        &dir,
+        "0004_v2_1_customer_only_nanorix_authority_other_algorithm",
+        &other_algorithm,
+        &with_note(
+            expected_failure("algorithm_unsupported", json!({ "found": "Ed448" }), 4),
+            "customer_only under a Nanorix-classified authority that declares an algorithm \
+             other than Ed25519. The algorithm check runs before the consistency rule, so \
+             the reason is algorithm_unsupported.",
+        ),
+    );
+
+    let legacy = signed_as(1305, "nanorix_only", CUSTOMER_AUTHORITY);
+    write_fixture(
+        &dir,
+        "0005_v2_1_legacy_nanorix_only_customer_authority",
+        &legacy,
+        &with_note(
+            expected_success(),
+            "A legacy proof: nanorix_only under a customer-classified authority, the shape \
+             issued before customer_only. It keeps verifying (legacy proofs stay valid); a \
+             verifier that prints notes it, and nothing refuses it.",
+        ),
+    );
+
+    6
 }
 
 // ── Index manifest ───────────────────────────────────────────────────
@@ -1253,15 +2381,18 @@ fn write_index(root: &Path, total: usize) {
         ("02_multi_step_pipeline", 10),
         ("03_failure_chain_mismatch", 10),
         ("04_failure_signature_invalid", 10),
-        ("05_failure_region_mismatch", 10),
-        ("06_failure_authority_unknown", 10),
-        ("07_failure_version_unsupported", 10),
+        ("05_failure_region_mismatch", 12),
+        ("06_failure_authority_unknown", 15),
+        ("07_failure_version_unsupported", 15),
         ("08_failure_canonical_hash_drift", 10),
         ("09_tamper_patterns/a_byte_flip", 5),
         ("09_tamper_patterns/b_re_order", 5),
         ("09_tamper_patterns/c_version_downgrade", 5),
         ("09_tamper_patterns/d_signature_substitution", 5),
-        ("10_v2_2", 10),
+        ("10_v2_2", 13),
+        ("11_json_parse_boundary", 28),
+        ("12_failure_diagnostic_refused", 4),
+        ("13_customer_only", 6),
     ];
 
     let categories_json: Vec<Value> = categories
@@ -1279,13 +2410,14 @@ fn write_index(root: &Path, total: usize) {
         "total_fixtures": total,
         "generator": "tools/nanorix-verify/fixtures/generator.rs",
         "expected_verdict_schema": {
-            "valid": "bool — the verifier's accept/reject decision",
+            "valid": "bool — the chain and signature hold under the key used; not a verdict on its own (true at stage 7, where the key is the one the proof carries)",
+            "status": "the verdict: verified (valid at stage 8, which needs a trust-chain manifest the corpus does not pin), not_anchored (valid at stage 7) or not_verified",
             "failure_reason": "null on success; otherwise the FailureReason wire object, tag key `type`",
-            "stage_reached": "1..=8; 7 is the success stage without a trust-chain manifest",
+            "stage_reached": "1..=8; 7 is not_anchored, 8 is verified",
             "policy": "optional — VerifierPolicy pins REQUIRED to reach this verdict; absent means defaults",
             "note": "optional — prose for verdicts that are not the obvious guess from the category name",
         },
-        "signed_message": "v1.0 signs final_hash; v2.0 signs document_hash; v2.1 and v2.2 nanorix_only sign the specification Part-3 canonical-view hash (hex(sha512(jcs(view)))) — 2.2 is verified exactly as 2.1",
+        "signed_message": "v1.0 signs final_hash; v2.1 and v2.2 nanorix_only and customer_only sign the canonical-view hash (hex(sha512(jcs(view)))) — 2.2 is verified exactly as 2.1; cdp_version 2.0 is retired and refused at the version gate by the offline verifiers",
         "anchor_timestamp": FIXTURE_TIMESTAMP,
         "anchor_signing_seed_sha256": {
             "_note": "Public anchor for cross-impl reproducibility. The seed itself is constant in source.",
@@ -1333,6 +2465,9 @@ fn main() {
     total += generate_canonical_hash_drift_failures(&builder, &root);
     total += generate_tamper_patterns(&builder, &root);
     total += generate_v2_2(&builder, &root);
+    total += generate_parse_boundary(&builder, &root);
+    total += generate_diagnostic_refused(&builder, &root);
+    total += generate_customer_only(&builder, &root);
 
     write_index(&root, total);
 

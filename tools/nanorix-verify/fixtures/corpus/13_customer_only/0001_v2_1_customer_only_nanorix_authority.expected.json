@@ -1,0 +1,10 @@
+{
+  "failure_reason": {
+    "claimed_authority_id": "us-kms-nanorix-v1",
+    "type": "signing_mode_authority_mismatch"
+  },
+  "note": "customer_only under a Nanorix-classified authority, validly signed. Both labels are signed, so the pair is refused at stage 4, before the signature check, and no signer is named.",
+  "stage_reached": 4,
+  "status": "not_verified",
+  "valid": false
+}

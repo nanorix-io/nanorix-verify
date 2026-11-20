@@ -5,8 +5,9 @@ verifier's agreement with the reference implementation was asserted rather than
 checked, and the README had to say so.
 
 Each fixture ships a committed verdict in a `.expected.json` sibling. This
-compares three things against it, under the policy the fixture itself declares:
-`valid`, `stage_reached`, and the full wire-form failure object. The prose
+compares four things against it, under the policy the fixture itself declares:
+`valid`, `stage_reached`, the `status` the result reports, and the full
+wire-form failure object. The prose
 rendering of a failure is not compared, only the structured form, because the
 prose is allowed to differ between implementations and the wire form is not.
 
@@ -38,7 +39,7 @@ def collect_fixtures(root: Path) -> List[Path]:
 
 
 def policy_from_expected(expected: Dict[str, Any]) -> VerifierPolicy:
-    """A region or authority mismatch is only reachable under the matching pin.
+    """A region or authority mismatch, or a diagnostic refusal, is reachable only under its pin.
 
     The pin travels with the fixture rather than living in this harness, so
     every implementation reads the same policy from the same place.
@@ -47,6 +48,7 @@ def policy_from_expected(expected: Dict[str, Any]) -> VerifierPolicy:
     # The policy fields are `str` with "" meaning "accept anything", not
     # Optional — mirror that rather than passing None through.
     return VerifierPolicy(
+        reject_diagnostic=pins.get("reject_diagnostic") is True,
         required_region=pins.get("required_region") or "",
         required_authority_id=pins.get("required_authority_id") or "",
     )
@@ -55,8 +57,10 @@ def policy_from_expected(expected: Dict[str, Any]) -> VerifierPolicy:
 def compare(fixture: Path, expected: Dict[str, Any]) -> List[str]:
     result = verify(fixture, policy_from_expected(expected))
     out: List[str] = []
-    if result.valid != expected["valid"]:
-        out.append(f"valid: expected {expected['valid']}, got {result.valid}")
+    if result._valid != expected["valid"]:
+        out.append(f"valid: expected {expected['valid']}, got {result._valid}")
+    if result.status != expected["status"]:
+        out.append(f"status: expected {expected['status']}, got {result.status}")
     if result.stage_reached != expected["stage_reached"]:
         out.append(
             f"stage_reached: expected {expected['stage_reached']}, got {result.stage_reached}"

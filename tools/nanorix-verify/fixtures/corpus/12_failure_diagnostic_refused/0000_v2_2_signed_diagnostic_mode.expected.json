@@ -1,0 +1,12 @@
+{
+  "failure_reason": {
+    "type": "diagnostic_proof_refused"
+  },
+  "note": "The signed activity trail records diagnostic mode, so reject_diagnostic refuses the proof at stage 2. Without the setting it verifies.",
+  "policy": {
+    "reject_diagnostic": true
+  },
+  "stage_reached": 2,
+  "status": "not_verified",
+  "valid": false
+}

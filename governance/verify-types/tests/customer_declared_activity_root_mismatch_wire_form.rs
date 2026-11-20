@@ -1,8 +1,8 @@
 //! Wire-format-locked round-trip tests for
-//! `FailureReason::CustomerDeclaredActivityRootMismatch` (the specification — the
+//! `FailureReason::CustomerDeclaredActivityRootMismatch` (the
 //! customer-declared activity root recomputed from the customer's own record).
 //!
-//! **Forever-Standard discipline (the Forever-Standard wire discipline).** These tests pin the exact wire
+//! **Forever-Standard discipline.** These tests pin the exact wire
 //! form (variant tag + field names + serialization shape) so that:
 //!
 //! - any future rename of the variant or its fields fails CI immediately,
@@ -88,7 +88,7 @@ fn customer_declared_activity_root_mismatch_missing_required_fields_fails() {
     );
 }
 
-/// Test 4 — a pre-the specification deserializer fails cleanly on the new variant tag.
+/// Test 4 — a earlier deserializer fails cleanly on the new variant tag.
 ///
 /// **Forever-Standard discipline:** an older consumer that does not have
 /// `CustomerDeclaredActivityRootMismatch` in its compiled enum MUST fail with
@@ -115,6 +115,6 @@ fn pre_adr_056_deserializer_rejects_new_variant_cleanly() {
     let result: Result<PreAdr056FailureReason, _> = serde_json::from_str(&wire);
     assert!(
         result.is_err(),
-        "a pre-the specification deserializer must reject the new tag, got {result:?}"
+        "a deserializer that predates the customer-declared activity root must reject the new tag, got {result:?}"
     );
 }

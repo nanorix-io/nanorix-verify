@@ -11,10 +11,12 @@
 // ## Which message is signed (mirrors the hosted verification endpoint)
 //
 //   - 1.0                    → final_hash (ASCII hex, prefix-stripped)
-//   - 2.0                    → document_hash
-//   - 2.1 + nanorix_only     → the recomputed the specification Part-3 canonical hash
-//   - 2.1 + dual_signature   → not verifiable by this build → Absent
-//   - 2.1 + tee_attested     → not verifiable by this build → Absent
+//   - 2.1 or 2.2 + nanorix_only or customer_only → the recomputed the authority-agnostic signing rules
+//     Part-3 canonical hash; the two modes differ only in the mode string the
+//     view carries
+//   - 2.1 or 2.2 + any other mode (dual_signature, tee_attested, a value
+//     with different case or extra characters) → not verifiable by this
+//     build → SignatureUnsupported, reported as algorithm_unsupported
 //
 // Recomputing the canonical hash from the document (rather than trusting the
 // embedded `canonical_hash` field) is what catches canonical-view drift: a
@@ -24,13 +26,14 @@
 // ## Trust scope
 //
 // The signature is checked against the public key EMBEDDED in the proof. That
-// proves INTEGRITY — the document has not been altered since it was signed — and
-// is stage 7. It does NOT prove the key belongs to Nanorix; binding the key to a
-// Nanorix-rooted trust anchor is the trust-chain manifest path (stage 8), which
-// the Rust verifier implements via `VerifierPolicy::trust_chain` and this Go
-// build does not yet carry.
+// proves INTEGRITY of the signed view — no signed byte has changed since signing; fields
+// outside the signed view, such as metadata, are not checked — and
+// is stage 7. It does NOT prove the key belongs to the authority it names;
+// binding the key to a pinned trust anchor is the key-list path (stage 8), which
+// the policy's TrustChain turns on (see trust_chain.go) and which resolves the
+// key by VerifySignatureAgainst instead.
 //
-// Forever-Standard discipline (the Forever-Standard wire discipline): the canonical view's field set,
+// Forever-Standard discipline: the canonical view's field set,
 // wire-name mapping, and the two server-side transforms (signing_key_version
 // String → i64; the attestation subset) are part of the attestation contract.
 // Any change here must keep the reference corpus at full agreement.
@@ -88,7 +91,7 @@ type SignatureCheck struct {
 	Mode string
 }
 
-// RecomputeCanonicalHash rebuilds the specification Part-3 canonical view from a
+// RecomputeCanonicalHash rebuilds the canonical view from a
 // proof's JSON and returns its RFC-8785 JCS SHA-512 hex digest — byte-identical
 // to the server's `FullCdp::canonical_hash()` and to the Rust verifier's
 // `recompute_canonical_hash`. Lowercase 128-char hex, or empty string on the
@@ -149,9 +152,9 @@ func RecomputeCanonicalHash(proof map[string]interface{}) string {
 
 	insertIfPresent(view, "parent_proofs_merkle_root", proof)
 	insertIfPresent(view, "record_receipts_merkle_root", proof)
-	// the specification — the one signed root over the customer's own activity record.
+	// The one signed root over the customer's own activity record.
 	// Same insert-if-present mechanic as the two Merkle roots above, so a
-	// document without it hashes byte-identically to a pre-the specification document.
+	// document without it hashes byte-identically to a earlier document.
 	insertIfPresent(view, "customer_declared_activity_root", proof)
 
 	// No skip attribute → null when absent.
@@ -216,13 +219,10 @@ func signedMessage(proof map[string]interface{}, cdpVersion string) (string, boo
 	case "1.0":
 		s, _ := proof["final_hash"].(string)
 		return StripHashPrefix(s), true
-	case "2.0":
-		s, _ := proof["document_hash"].(string)
-		return StripHashPrefix(s), true
 	case "2.1", "2.2":
-		// 2.2 shares the 2.1 arm deliberately: the specification / the specification changed what
+		// 2.2 shares the 2.1 arm deliberately: changed what
 		// the canonical view may carry, not how it is hashed or signed.
-		if signingMode == "nanorix_only" {
+		if signingMode == "nanorix_only" || signingMode == SigningModeCustomerOnly {
 			return RecomputeCanonicalHash(proof), true
 		}
 		// Any other declared mode is one this build cannot verify. NOT the same
@@ -257,7 +257,7 @@ func verifyMessageWithKey(message, sigB64, pubB64 string) SignatureCheck {
 	if err != nil || len(pub) != ed25519.PublicKeySize {
 		return SignatureCheck{Kind: SignatureFailed, Reason: SigPublicKeyMalformed}
 	}
-	if !ed25519.Verify(ed25519.PublicKey(pub), []byte(message), sig) {
+	if !verifyEd25519Strict(pub, []byte(message), sig) {
 		return SignatureCheck{Kind: SignatureFailed, Reason: SigDoesNotVerify}
 	}
 	return SignatureCheck{Kind: SignatureVerified}
@@ -274,8 +274,8 @@ func embeddedSignature(proof map[string]interface{}) (string, bool) {
 }
 
 // VerifySignature verifies the proof's signature against the public key
-// EMBEDDED in its attestation. Proves integrity (not tampered since signing),
-// not authenticity. Returns Absent when no signature/key is present or the
+// EMBEDDED in its attestation. Proves integrity of the signed view (no signed byte
+// changed since signing), not authenticity. Returns Absent when no signature/key is present or the
 // version/mode is not signature-verifiable here.
 func VerifySignature(proof map[string]interface{}, cdpVersion string) SignatureCheck {
 	pub := lookupStringPath(proof, "attestation", "public_key")
@@ -318,7 +318,7 @@ func VerifySignatureAgainst(proof map[string]interface{}, cdpVersion, pubB64 str
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// the chain-timestamp recovery rule — chain-timestamp recovery from attestation key_id
+// Chain-timestamp recovery from attestation key_id
 // ─────────────────────────────────────────────────────────────────────────────
 
 // RecoverTimestampFromKeyID recovers the chain timestamp from an attestation

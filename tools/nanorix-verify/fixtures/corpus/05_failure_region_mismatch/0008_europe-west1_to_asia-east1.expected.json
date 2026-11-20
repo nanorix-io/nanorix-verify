@@ -8,5 +8,6 @@
     "required_region": "asia-east1"
   },
   "stage_reached": 2,
+  "status": "not_verified",
   "valid": false
 }

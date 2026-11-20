@@ -1,0 +1,12 @@
+{
+  "failure_reason": {
+    "type": "diagnostic_proof_refused"
+  },
+  "note": "A cdp_version 2.2 proof without a signature and without the diagnostic_mode_enabled event: no signature covers its activity, so it cannot show that the event is absent, and reject_diagnostic refuses it at stage 2. Without the setting it is valid at stage 4 and not verified.",
+  "policy": {
+    "reject_diagnostic": true
+  },
+  "stage_reached": 2,
+  "status": "not_verified",
+  "valid": false
+}

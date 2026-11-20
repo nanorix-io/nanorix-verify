@@ -1,10 +1,10 @@
 """
-Portable Pubkey Bundle (.ppb.json) — Wave B Item 8 surface, Python port.
+Portable Pubkey Bundle (.ppb.json) — Python port.
 
 Pure Python port of ``tools/nanorix-verify/src/pubkey_bundle.rs``. Cross-impl
 byte-equivalence with Rust/Go/TypeScript on the canonical reference vectors.
 
-Per feedback_open_verifier_bounded_manifest.md: the bundle algorithm is open
+Per the rule that the verifier algorithm is open and its trust chain is bounded by a manifest: the bundle algorithm is open
 + portable; the trust root (publisher pubkey) is bounded out-of-band by the
 verifier.
 
@@ -36,6 +36,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PrivateKey,
     Ed25519PublicKey,
 )
+from ._ed25519_strict import verify_strict
 
 # Mandatory disclaimer — factual language only.
 PORTABLE_PUBKEY_BUNDLE_DISCLAIMER = (
@@ -108,7 +109,7 @@ class BundleSignature:
 
 @dataclass
 class PortablePubkeyBundle:
-    """Wave B Item 8 wire shape mirroring Rust ``PortablePubkeyBundle``."""
+    """Wire shape mirroring Rust ``PortablePubkeyBundle``."""
 
     bundle_version: str
     bundle_type: str
@@ -294,7 +295,7 @@ def verify_pubkey_bundle(
 
     canonical = _canonical_bytes_for_signing(bundle)
     try:
-        publisher_pubkey.verify(sig_bytes, canonical)
+        verify_strict(publisher_pubkey, sig_bytes, canonical)
     except InvalidSignature as e:
         raise PubkeyBundleError(PUBKEY_BUNDLE_ERR_BUNDLE_SIGNATURE_FAILED) from e
 

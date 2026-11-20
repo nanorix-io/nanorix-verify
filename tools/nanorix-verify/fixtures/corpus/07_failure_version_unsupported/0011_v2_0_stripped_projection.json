@@ -1,0 +1,38 @@
+{
+  "attestation": {
+    "algorithm": "Ed25519",
+    "key_id": "nrx-verify-2026-05-08T00-00-00Z-cap_0000",
+    "public_key": "base64:GVHak/xHE0xBsS1K/zXf3f5XTSdINLQ568meFsvQvCw=",
+    "signature": "base64:u68cmhJZMubpMp3a7cTqdZCyLc8fNPzQPK6+sPHEHuP0s7/q5zSreq5fHmgjguO7TXCfUGYOZCHY9LOoQjlqDw=="
+  },
+  "capsule_id": "cap_00000000000000000000000000000263",
+  "cdp_version": "2.0",
+  "data_extracted": {
+    "content_hash": "sha512:f21cb255553c21185a42a939da33c3d0c51cd3bfa23680e891465fae85c8dc7cf1b591979e96d8d293719ca582b3b6d5171339f8714c412b0c09f14c9c268733",
+    "file_count": 1,
+    "total_bytes": 512
+  },
+  "data_ingested": {
+    "content_hash": "sha512:a5709023216f0ca4a86c552788527fa0cac073ca6b187e7a2fa5be7fbebba865b2a0b50333b3f5e04613d02ac5eb5b4b38ccd7de677a2ada37341623674cd734",
+    "file_count": 1,
+    "total_bytes": 1024
+  },
+  "destroyed_at": "2026-05-08T00:00:00Z",
+  "destruction": {
+    "chain": "8/8 steps",
+    "chain_hash": "sha512:d38aeece17d513a3a2fd8547cc503bddbc450798e6d34904e6555c72c25ad91887367f283e5bde0bb529ff3e135783e56b8978f6f996f13a2ec78c7ac9ed7fd2",
+    "trigger": "user_explicit"
+  },
+  "document_hash": "sha512:11403718bbf3cd53f7bc2158da43180deed4af8dbec33d261694993879de21781b17cc8bc19e2f3d5b2de81a74b7e684f7dd4b6b32b3ee33f049f463f74d273a",
+  "environment": {
+    "encryption": "aes-256-gcm",
+    "network": "isolated",
+    "sealed": true
+  },
+  "residency": {
+    "destroyed": "2026-05-08T00:00:00Z",
+    "started": "2026-05-08T00:00:00Z",
+    "total_seconds": 0
+  },
+  "signing_key_version": "1"
+}

@@ -1,6 +1,6 @@
-// Tests for the canonical-hash recompute, the signature stage, and the chain-timestamp recovery rule
+// Tests for the canonical-hash recompute, the signature stage, and the
 // chain-timestamp recovery — the Go peers of the test module in
-// `tools/nanorix-verify/src/canonical_recompute.rs` and the chain-timestamp recovery rule block in
+// `tools/nanorix-verify/src/canonical_recompute.rs` and the block in
 // `tools/nanorix-verify/src/lib.rs`.
 //
 // The corpus sweep covers the signature stage end-to-end on every corpus fixture, but
@@ -17,7 +17,7 @@ import (
 	"testing"
 )
 
-// goldenInput is the wire form of the AuditProof document builder::test_cdp()`
+// goldenInput is the wire form of `test_cdp` in `the AuditProof document builder()`
 // — the fixed input behind the server's `golden_canonical_hash` test. Only the
 // fields the canonical view actually reads are present.
 func goldenInput() map[string]interface{} {
@@ -39,7 +39,7 @@ func goldenInput() map[string]interface{} {
 
 // TestCanonicalRecomputeMatchesServerGolden is the BYTE-EXACTNESS LOCK against
 // the signer. The Go recompute must equal the server's golden `402f533e…`
-// (`cdp_document.rs::golden_canonical_hash`, also asserted by the Rust
+// (`golden_canonical_hash` in the reference implementation, also asserted by the Rust
 // verifier) for the same input. This is what keeps the independent Go verifier
 // from silently drifting away from how proofs are actually signed — a drift
 // that would make every v2.1 signature check meaningless.

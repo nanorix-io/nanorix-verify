@@ -1,0 +1,14 @@
+{
+  "failure_reason": {
+    "actual": "",
+    "required": "europe-west1",
+    "type": "region_mismatch"
+  },
+  "note": "A cdp_version 2.2 proof without a signature: no signature covers its activity, so the residency pin reads no region and refuses the proof, even though its capsule_started region equals the pin. Without the pin it is valid at stage 4 and not verified.",
+  "policy": {
+    "required_region": "europe-west1"
+  },
+  "stage_reached": 2,
+  "status": "not_verified",
+  "valid": false
+}

@@ -1,11 +1,11 @@
 //! Nanorix AuditProof verifier — standalone library.
 //!
-//! Implements the 8-step AuditProof specification verification pipeline against an AuditProof
+//! Implements the 8-step verification pipeline against an AuditProof
 //! JSON document. Independent of any Nanorix service: this crate has no HTTP
 //! client, so every verification is local. The trust-chain manifest, when one
 //! is used, is supplied as a local file and is itself signed.
 //!
-//! Per the verifier specification : "auditor
+//! Per the verifier specification: "auditor
 //! verification CLI — the literal moment-of-truth artifact when an OCR
 //! auditor walks in."
 //!
@@ -23,9 +23,9 @@
 //!
 //! # Verification stages
 //!
-//! Per the AuditProof specification:
+//!
 //! 1. Schema validation (required fields present, types correct)
-//! 2. cdp_version recognized (1.0 / 2.0 / 2.1 / 2.2)
+//! 2. cdp_version recognized (1.0 / 2.1 / 2.2)
 //! 3. Chain reproducibility (recompute SHA-512 chain from genesis)
 //! 4. Final hash binding (final_hash matches last step's chain_hash)
 //! 5. Canonical hash binding (v2.x; canonical_hash recompute matches)
@@ -35,6 +35,10 @@
 //!
 //! Each stage emits a typed `FailureReason` on failure (per the verifier specification).
 
+// `VerificationResult::valid` is deprecated for callers; this crate sets it on
+// every path and forms `status()` from it.
+#![allow(deprecated)]
+
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha512};
 
@@ -43,6 +47,11 @@ pub mod bundle;
 pub mod canonical_recompute;
 pub mod checkpoint;
 pub mod customer_activity;
+pub mod ed25519_strict;
+pub mod mldsa;
+pub mod population_head;
+pub mod population_tick;
+pub mod pqc_transcript;
 pub mod pubkey_bundle;
 pub mod streaming_merkle;
 pub mod trust_chain;
@@ -53,8 +62,9 @@ pub use boundary::{
     BOUNDARY_CONTINUATION_STATEMENT, BOUNDARY_OBSERVATION_METHODS, BOUNDARY_SUPPORTED_VERSIONS,
 };
 pub use bundle::{
-    bundle_verdict_text, extract_receipt_bundle, verify_receipt_bundle, AuditProofAnchors,
-    BundleError, PortableReceiptBundle, PORTABLE_RECEIPT_BUNDLE_DISCLAIMER,
+    bundle_verdict_text, extract_receipt_bundle, verify_receipt_bundle,
+    verify_receipt_bundle_detailed, AuditProofAnchors, BundleError, BundleVerification,
+    PortableReceiptBundle, PORTABLE_RECEIPT_BUNDLE_DISCLAIMER,
     SIGNATURE_TARGET_DOCUMENT_CANONICAL_HASH, SIGNATURE_TARGET_STEP8_CHAIN_HASH,
 };
 pub use customer_activity::{
@@ -75,8 +85,98 @@ pub const NANORIX_GENESIS_HASH: &str =
     "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e";
 pub const NANORIX_CHAIN_STEPS: usize = 8;
 
-/// Reserved attestation slots that sit outside `CanonicalCdpView` (the specification
-/// I18-I21, I24-I25 + the specification/D3) AND that no Nanorix signer populates.
+/// Authority a proof anchors under when it carries no top-level
+/// `authority_id` (the Nanorix-hosted signing path).
+pub const DEFAULT_AUTHORITY_ID: &str = "us-kms-nanorix-v1";
+
+/// The authority a proof is anchored under: the top-level `authority_id`, or
+/// `DEFAULT_AUTHORITY_ID` when that field is absent or not a string. Only
+/// cdp_version 2.1 and 2.2 sign that field (the canonical view binds it); on
+/// 1.0 nothing signed covers it, which the pin gate handles, and 2.0 is
+/// refused at the version gate before any of this is read. The policy-pin gate
+/// and the trust-chain lookup both read it from here so they cannot disagree,
+/// and the CLI and the hosted `/v1/verify` route call it rather than repeat
+/// the default.
+pub fn effective_authority_id(json: &serde_json::Value) -> &str {
+    json.get("authority_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or(DEFAULT_AUTHORITY_ID)
+}
+
+/// The `signing_mode` a proof carries when the install's customer authority
+/// signed it (Part A). Compared byte for byte.
+pub const SIGNING_MODE_CUSTOMER_ONLY: &str = "customer_only";
+
+/// The byte strings that make an authority id customer-classified.
+///
+/// This is the issuer's test, `AuthorityKind::from_authority_id` in
+/// the reference server implementation, and the
+/// amendment's Terms: a segment anywhere in the id, byte-exact and
+/// case-sensitive, not anchored at the start and with no normalization.
+/// the hosted verification endpoint holds a test that the two classify the
+/// same probe ids the same way.
+pub const CUSTOMER_AUTHORITY_SEGMENTS: [&str; 4] = [
+    "customer-hsm-",
+    "customer-kms-",
+    "customer-tee-",
+    "customer-byo-",
+];
+
+/// Whether `authority_id` is customer-classified (see
+/// [`CUSTOMER_AUTHORITY_SEGMENTS`]). Every other id is Nanorix-classified.
+pub fn is_customer_authority(authority_id: &str) -> bool {
+    CUSTOMER_AUTHORITY_SEGMENTS
+        .iter()
+        .any(|segment| authority_id.contains(segment))
+}
+
+/// The consistency rule of the amendment, section 4: on cdp_version
+/// 2.1 and 2.2, a proof whose `signing_mode` is exactly `customer_only` while
+/// its `authority_id` is Nanorix-classified is refused. An absent, null or
+/// non-string `authority_id` is Nanorix-classified. Returns `None` when the
+/// pair is consistent or the version signs neither label.
+///
+/// Both labels are inside the canonical view, so the rule tests what the
+/// signature covers, never which key signed. A `nanorix_only` proof under a
+/// customer-classified authority passes; the amendment's "Legacy proofs"
+/// section rules it.
+pub fn signing_mode_authority_mismatch(
+    json: &serde_json::Value,
+    cdp_version: &str,
+) -> Option<FailureReason> {
+    if !CANONICAL_VIEW_SIGNED_VERSIONS.contains(&cdp_version) {
+        return None;
+    }
+    let claimed = json.get("authority_id").and_then(|v| v.as_str());
+    let customer_only =
+        json.get("signing_mode").and_then(|v| v.as_str()) == Some(SIGNING_MODE_CUSTOMER_ONLY);
+    if !customer_only || claimed.is_some_and(is_customer_authority) {
+        return None;
+    }
+    Some(FailureReason::SigningModeAuthorityMismatch {
+        claimed_authority_id: claimed.map(String::from),
+    })
+}
+
+/// Activity event an issuer writes when a capsule ran in diagnostic mode.
+pub const DIAGNOSTIC_MODE_EVENT: &str = "diagnostic_mode_enabled";
+
+/// Whether the activity trail holds an entry whose `event` is
+/// `DIAGNOSTIC_MODE_EVENT`. The trail is signed only on 2.1 and 2.2 with a
+/// signature, so a `false` here proves nothing on 1.0 or on an unsigned 2.1 or
+/// 2.2 proof; the diagnostic gate refuses those outright for that reason.
+fn records_diagnostic_mode(json: &serde_json::Value) -> bool {
+    json.get("activity")
+        .and_then(|v| v.as_array())
+        .is_some_and(|events| {
+            events
+                .iter()
+                .any(|e| e.get("event").and_then(|t| t.as_str()) == Some(DIAGNOSTIC_MODE_EVENT))
+        })
+}
+
+/// Reserved attestation slots that sit outside `CanonicalCdpView`
+/// AND that no Nanorix signer populates.
 ///
 /// Every construction site in the workspace hard-codes these to `None`, so the
 /// signature never covered them and a genuine document never carries them. A
@@ -87,9 +187,9 @@ pub const NANORIX_CHAIN_STEPS: usize = 8;
 /// `per_event_attestations` is the ninth reserved slot and is deliberately
 /// ABSENT from this list: the reference server implementation drains
 /// `capsule_event_attestations` into it at destroy, so genuine proofs do carry
-/// it. Its entries are individually signed by the customer's own key, so it is
-/// self-authenticating rather than silently injectable; verifying those
-/// per-entry signatures is separate work.
+/// it. The slot sits outside the signed hash and is accepted unchecked: its
+/// entries prove nothing about who signed, and verifying or binding them is
+/// separate work.
 pub const UNSIGNED_RESERVED_SLOTS: [&str; 7] = [
     "customer_attestation",
     "policy_attestation",
@@ -145,7 +245,7 @@ fn count_unattested_parent_attribution(json: &serde_json::Value) -> Option<usize
 
 /// The canonical 8-step chain identity: `(subsystem, method)` at each index.
 ///
-/// Forever-Standard per INVARIANTS #1 / the Forever-Standard wire discipline — the order, the count, the
+/// Forever-Standard — the order, the count, the
 /// subsystem names, and each subsystem's fixed method are all fixed for the
 /// life of the format. Mirrors `CHAIN_DEFS` / `CANONICAL_SUBSYSTEMS` in
 /// the chain specification, duplicated here because the auditor verifier
@@ -168,14 +268,30 @@ pub const CANONICAL_CHAIN: [(&str, &str); NANORIX_CHAIN_STEPS] = [
 /// authenticated `POST /v1/verify` endpoint will return once the specification ships.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct VerificationResult {
-    /// True if and only if every check stage passed.
+    /// True when the chain and the signature hold under the key used: the key
+    /// resolved in `policy.trust_chain` (stage 8) or, without one, the key the
+    /// proof carries (stage 7). Also true at stage 4, where the chain
+    /// reproduced and no signature was checked. On its own it says nothing
+    /// about who signed: verified is `valid && stage_reached >= 8`.
+    ///
+    /// Stage 8 is reached only when `policy.trust_chain` is a manifest whose
+    /// own signature holds under `policy.pinned_identity_fingerprint`, which
+    /// this call checks. A manifest placed without a pin anchors nothing: a
+    /// proof whose key it lists ends at stage 7.
+    ///
+    /// Deprecated as a verdict: read [`VerificationResult::status`], which is
+    /// `"verified"` only at stage 8, or [`VerificationResult::ok`]. The field
+    /// and its JSON meaning stay.
+    #[deprecated(
+        note = "valid is not a verdict: it is also true at stage 7 (the key the proof carries) and stage 4; read status() or ok()"
+    )]
     pub valid: bool,
 
     /// Populated when `valid` is false. Closed enum aligned with the API
     /// surface (per the specification).
     pub failure_reason: Option<FailureReason>,
 
-    /// 1..=8 indicating the highest stage reached (advisory; matches the specification
+    /// 1..=8 indicating the highest stage reached (advisory; matches the authority-agnostic signing rules
     /// I8 step numbering).
     pub stage_reached: u8,
 
@@ -183,19 +299,51 @@ pub struct VerificationResult {
     pub metadata: VerificationMetadata,
 }
 
+impl VerificationResult {
+    /// The three-state verdict: `"verified"` when `valid` holds at stage 8
+    /// (the key anchored in a trust-chain manifest), `"not_anchored"` when it
+    /// holds at stage 7 (the key the proof carries), and `"not_verified"`
+    /// otherwise, which includes a chain with no signature checked (stage 4).
+    ///
+    /// Stage 8 needs both [`VerifierPolicy::trust_chain`] and
+    /// [`VerifierPolicy::pinned_identity_fingerprint`], and the manifest's
+    /// signature holding under that pin. A manifest without a pin gives
+    /// `"not_anchored"` at most.
+    pub fn status(&self) -> &'static str {
+        if self.valid && self.stage_reached >= 8 {
+            "verified"
+        } else if self.valid && self.stage_reached == 7 {
+            "not_anchored"
+        } else {
+            "not_verified"
+        }
+    }
+
+    /// True only when [`VerificationResult::status`] is `"verified"`.
+    pub fn ok(&self) -> bool {
+        self.status() == "verified"
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct VerificationMetadata {
     pub cdp_version: Option<String>,
     pub capsule_id: Option<String>,
     pub region: Option<String>,
+    /// Read from `attestation.signing_key_version` when present, else the
+    /// top-level `signing_key_version` string, as written. Outside every
+    /// signature: the canonical view does not bind
+    /// `attestation.signing_key_version`, and it binds the top-level value
+    /// only as its integer parse, which `authority_signed` describes. The
+    /// issuer does not write the attestation field.
     pub signing_key_version: Option<String>,
     pub algorithm: Option<String>,
     pub step_count: Option<usize>,
     pub activity_event_count: Option<usize>,
 
     /// `Some(ts)` when the document carried no usable `destroyed_at` and the
-    /// chain timestamp was recovered from `attestation.key_id` (the chain-timestamp recovery rule
-    /// pre-restoration proofs). `None` means the timestamp was read from the
+    /// chain timestamp was recovered from `attestation.key_id` (pre-restoration
+    /// proofs). `None` means the timestamp was read from the
     /// document's own `destroyed_at` field. An auditor reading a verdict can
     /// therefore always tell which route produced it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -214,7 +362,7 @@ pub struct VerificationMetadata {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unattested_parent_attribution: Option<usize>,
 
-    /// The `customer_declared_activity_root` the proof carries (the specification), as
+    /// The `customer_declared_activity_root` the proof carries, as
     /// written. `None` when the proof declares none. Disclosed whether or not
     /// the record was supplied: a verdict that stays silent about a declared
     /// root invites a reader to assume it was checked.
@@ -230,9 +378,55 @@ pub struct VerificationMetadata {
     /// declared root is unsigned and the proof is rejected before this point.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub customer_declared_activity_checked: Option<bool>,
+
+    /// The proof's own top-level `authority_id` string, as written. Absent
+    /// when the proof has none or a non-string, so a reader can tell a value
+    /// the proof carries from the Nanorix default (`DEFAULT_AUTHORITY_ID`),
+    /// which the issuer applies only on read; on 2.1 and 2.2 the canonical
+    /// view then binds `null` or that non-string value, not the default. A
+    /// verifier output field, not a receipt field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authority_id: Option<String>,
+
+    /// Whether the verified signature covers the proof's top-level
+    /// `authority_id`, `signing_mode` and `signing_key_version` as the
+    /// canonical view binds them (the key version as its integer parse, 0 when
+    /// absent or unparseable). It does not extend to the metadata
+    /// `signing_key_version` above, which is read from the unsigned
+    /// `attestation.signing_key_version` first. `Some(true)` once a signature
+    /// verified against the proof's own key on cdp_version 2.1 or 2.2, whose
+    /// signed message is the canonical view; `Some(false)` once one verified on
+    /// 1.0, which signs `final_hash` only; absent when no signature verified
+    /// (the result stops before the signature check, carries no signature, or
+    /// its signature failed). Set only from the signature check, never from the
+    /// version alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authority_signed: Option<bool>,
+
+    /// The proof's own top-level `signing_mode` string, as written. Absent
+    /// when the proof has none or a non-string; on 2.1 and 2.2 the canonical
+    /// view then binds `null` or that value, while the issuer reads the
+    /// default `nanorix_only`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signing_mode: Option<String>,
+
+    /// The identity fingerprint pinned for the key list the proof was checked
+    /// against. Set once the list's signature verified against that pin, before
+    /// the key lookup, so a failed lookup still reports it. Absent on the
+    /// library path when a key list was given without a pin: there the list's
+    /// signature was not checked against any pin.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trust_chain_identity_fingerprint: Option<String>,
+
+    /// The `issued_at` of the key list (trust-chain manifest) the proof was
+    /// checked against, set at the same point as
+    /// `trust_chain_identity_fingerprint`. On the library path without a pin it
+    /// is still set, and that list's signature was not checked against any pin.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trust_chain_issued_at: Option<String>,
 }
 
-// trust-chain anchoring (commit landing this re-export): closed-enum verification
+// Trust-chain anchoring (commit landing this re-export): closed-enum verification
 // failure reasons + signature sub-reasons extracted to the
 // `nanorix-verify-types` workspace crate (governance/verify-types).
 // Re-exporting here preserves the `nanorix_verify::{FailureReason,
@@ -240,7 +434,7 @@ pub struct VerificationMetadata {
 // `main.rs`, `tests/integration_tests.rs`, downstream auditor tooling)
 // keep working with zero call-site change.
 //
-// services/api now consumes the SAME definition from this single source
+// the reference server implementation now consumes the SAME definition from this single source
 // of truth — no more "must stay in lockstep" comment, no more drift
 // surface. Forever-Standard wire form (serde tag = "type", rename_all =
 // "snake_case") locked in the shared crate's tests.
@@ -248,7 +442,7 @@ pub use nanorix_verify_types::{AuthorityIdMismatchReason, FailureReason, Signatu
 
 /// Verifier policy. Customer / auditor decides what to refuse.
 ///
-/// Per the Forever-Standard wire discipline + the customer-authority specification G7: this struct is field-additive
+/// This struct is field-additive
 /// Forever-Standard. Pre-amendment callers passing
 /// `VerifierPolicy::default()` continue to behave identically — every
 /// new field defaults to its "accept anything" semantics. New fields
@@ -256,44 +450,78 @@ pub use nanorix_verify_types::{AuthorityIdMismatchReason, FailureReason, Signatu
 /// breaking-shape changes.
 #[derive(Debug, Clone, Default)]
 pub struct VerifierPolicy {
-    /// If true, refuse AuditProofs whose attestation indicates
-    /// `diagnostic_mode: true` (the specification). Default: false (accept diagnostic
-    /// proofs).
+    /// If true, refuse at stage 2, with `FailureReason::DiagnosticProofRefused`,
+    /// an AuditProof whose signed activity trail records diagnostic mode (a
+    /// `diagnostic_mode_enabled` event), and every AuditProof that cannot show
+    /// it does not: one whose trail is unsigned, which is cdp_version 1.0, or
+    /// 2.1 or 2.2 without a signature, so the event could be removed and the
+    /// proof would still verify. Only a stage 8 (`verified`) result ties the
+    /// trail to a Nanorix key; at stage 7 the key is the one the proof carries.
+    /// Default: false (diagnostic-mode proofs are accepted).
     pub reject_diagnostic: bool,
 
-    /// If Some, require the AuditProof's `region` field match. None = accept
-    /// any region.
+    /// If Some, require the region on the signed `capsule_started` activity
+    /// event to match, else reject with `RegionMismatch`. An AuditProof whose
+    /// trail is unsigned (cdp_version 1.0, or 2.1 or 2.2 without a signature)
+    /// is rejected with an empty `actual`. Only a stage 8 (`verified`) result
+    /// ties the region to a Nanorix key. None = accept any region.
     pub required_region: Option<String>,
 
-    /// If `Some(authority_id)`, require the AuditProof's
-    /// `signing_authority.authority_id` match. AuditProofs that omit
-    /// `signing_authority` entirely (Nanorix-default signing path) OR
-    /// carry a different `authority_id` are rejected with
-    /// `FailureReason::AuthorityIdMismatch`. Per the customer-authority specification G7 + VP Security
-    /// extended-review F4.3 — closes the policy-mode-mismatch attack where
-    /// a malicious AuditProof claims `signing_authority: None` while the
-    /// customer's policy demands customer-HSM signing.
+    /// If `Some(authority_id)`, require the AuditProof's top-level
+    /// `authority_id` (absent means `us-kms-nanorix-v1`) to equal it, else reject with
+    /// `FailureReason::AuthorityIdMismatch`. An unsigned
+    /// `signing_authority.authority_id` that disagrees with the top-level
+    /// value is rejected too and can never make a proof match.
+    /// And VP Security extended-review F4.3. Only cdp_version 2.1 and 2.2 sign
+    /// the top-level `authority_id`; on 1.0 nothing signed covers it, so a
+    /// string other than `us-kms-nanorix-v1` there is rejected and a pin
+    /// accepts only the Nanorix default authority. cdp_version 2.0 is refused
+    /// at the version gate before the pin is read. Without a trust-chain
+    /// manifest the authority is only as trustworthy as the embedded key, so
+    /// a pin is a full authority check only when the result reaches stage 8.
     ///
     /// Default `None` — no policy pin. AuditProofs with any signing
     /// authority (Nanorix-default OR customer-HSM) verify successfully
     /// against this gate.
     pub required_authority_id: Option<String>,
 
-    /// trust-chain anchoring trust root. When `Some`, the verifier resolves the proof's
-    /// signing key against this (already-verified) manifest and re-verifies the
-    /// signature against the manifest key — reaching stage 8 ("verify without
-    /// trusting Nanorix"). `main.rs` verifies the manifest's OWN signature
-    /// against `pinned_identity_fingerprint` BEFORE placing it here, so by the
-    /// time `verify_auditproof` sees it the trust root is established. `None`
-    /// (default) → integrity-only stage 7 (embedded-key check).
+    /// Trust-chain anchoring trust root. When `Some`, the verifier resolves the proof's
+    /// signing key against this manifest and re-verifies the signature
+    /// against the manifest key — reaching stage 8 ("verify without trusting
+    /// Nanorix"). `None` (default) → integrity-only stage 7 (embedded-key
+    /// check).
+    ///
+    /// The manifest is a trust root only with `pinned_identity_fingerprint`
+    /// set: [`verify_auditproof`] checks its signature against that pin.
+    /// Without a pin the list is still read and can refuse a proof, but a
+    /// proof it holds ends at stage 7 (`not_anchored`). A manifest from
+    /// [`trust_chain::TrustChainManifest::into_verified`] is no exception:
+    /// this field cannot tell where it came from, so set the pin with it.
+    ///
+    /// Under a `hybrid1-sha256:` pin, or a manifest whose own
+    /// `identity_fingerprint` is one, every record is refused with
+    /// `algorithm_unsupported`, with or without a manifest.
     pub trust_chain: Option<crate::trust_chain::TrustChainManifest>,
 
     /// The out-of-band-pinned identity fingerprint the `trust_chain` manifest
-    /// was verified against. Carried for provenance/auditability. `None` when
-    /// no trust root is in use.
+    /// was verified against. When both are set, every [`verify_auditproof`]
+    /// call re-checks the manifest's signature against this pin and fails at
+    /// stage 6 with `SigningKeyVersionUnknown` if it does not hold: no key
+    /// resolves in a list the pin did not sign. `None` with a manifest set
+    /// caps a success at stage 7. A `hybrid1-sha256:` pin here, or a
+    /// `trust_chain` manifest whose own `identity_fingerprint` is one, refuses
+    /// every record with `algorithm_unsupported`, with or without a manifest.
+    ///
+    /// Boundary verification ([`verify_boundary_attestation`] and
+    /// [`verify_boundary_chain`]) reads only this pin's form, and the
+    /// `trust_chain` manifest's own `identity_fingerprint`: when either is a
+    /// `hybrid1-sha256:` pin it refuses every BoundaryAttestation, which has no
+    /// hybrid form. It never checks the manifest's signature against this pin:
+    /// otherwise it trusts `trust_chain` as given, so give it only a manifest
+    /// obtained through [`trust_chain::TrustChainManifest::into_verified`].
     pub pinned_identity_fingerprint: Option<String>,
 
-    /// the specification — the raw bytes of the customer's activity record, when the
+    /// The raw bytes of the customer's activity record, when the
     /// reader has it. The proof carries only `customer_declared_activity_root`;
     /// with the record in hand the verifier recomputes the root and compares
     /// (`customer_activity`). Supplying a record to a proof that declares no
@@ -314,10 +542,10 @@ pub struct TrustedAuthority {
 }
 
 /// Top-level verify entrypoint. Loads AuditProof JSON, runs 8-stage
-/// verification per the AuditProof specification, returns structured result.
+/// verification returns structured result.
 ///
 /// **NOTE:** This is the V1 implementation scaffold. Per the verifier specification ship plan, the
-/// full the AuditProof specification stage 5 (canonical_hash recompute) and stage 6 (signing
+/// full the stage 5 (canonical_hash recompute) and stage 6 (signing
 /// key resolution from trust chain) need the shared verification crate
 /// extracted from the AuditProof document builder to avoid divergence.
 /// V1 provides chain integrity (stages 1-4) which catches the common
@@ -339,6 +567,11 @@ pub fn verify_auditproof(
         unattested_parent_attribution: None,
         customer_declared_activity_root: None,
         customer_declared_activity_checked: None,
+        authority_id: None,
+        authority_signed: None,
+        signing_mode: None,
+        trust_chain_identity_fingerprint: None,
+        trust_chain_issued_at: None,
     };
 
     // Stage 1: schema validation — cdp_version present
@@ -361,12 +594,12 @@ pub fn verify_auditproof(
 
     // Stage 2: cdp_version recognized.
     //
-    // "2.2" (the specification + the specification) is verified exactly as "2.1": the canonical
+    // "2.2" is verified exactly as "2.1": the canonical
     // view, the signed-message form and every stage below are unchanged. What
     // 2.2 adds is carried inside fields the 2.1 recompute already covers — new
     // activity-trail events, and `customer_declared_activity_root`, which the
     // recompute includes whenever present.
-    if !["1.0", "2.0", "2.1", "2.2"].contains(&cdp_version.as_str()) {
+    if !["1.0", "2.1", "2.2"].contains(&cdp_version.as_str()) {
         return VerificationResult {
             valid: false,
             failure_reason: Some(FailureReason::CdpVersionUnsupported { found: cdp_version }),
@@ -393,11 +626,11 @@ pub fn verify_auditproof(
         };
     }
 
-    // the specification gate on `customer_declared_activity_root`, same position and
+    // Gate on `customer_declared_activity_root`, same position and
     // same reasoning as the reserved-slot gate. The root is signed only where
     // the signed message is the canonical view (2.1 / 2.2); on 1.0 the message
-    // is `final_hash` and on 2.0 the `document_hash` field, so a root there is
-    // a value anyone can write and the signature cannot tell. On 2.1 / 2.2 a
+    // is `final_hash`, so a root there is a value anyone can write and the
+    // signature cannot tell. On 2.1 / 2.2 a
     // root that is not a `sha512:` + 128-lowercase-hex string is a shape no
     // signer emits, named here before any recompute consumes it so the
     // verdict blames the field and not the signature or the record.
@@ -410,15 +643,35 @@ pub fn verify_auditproof(
         };
     }
 
-    metadata.capsule_id = json
-        .get("capsule_id")
-        .and_then(|v| v.as_str())
+    // The capsule id as the document states it. The record-receipt check below
+    // hashes it on every version, so it is read here whatever the version.
+    let document_capsule_id = json.get("capsule_id").and_then(|v| v.as_str());
+
+    // The metadata names a capsule and a region only on a version whose
+    // signature covers them. A 1.0 signature covers `final_hash` alone, which
+    // binds `destroyed_at` and the two optional Merkle roots. It does not bind
+    // the capsule_id itself (only through record receipts, which a holder can
+    // remove), the region or the key id, so on 1.0 neither is reported: a
+    // reader would take them as signed.
+    let names_signed_fields = CANONICAL_VIEW_SIGNED_VERSIONS.contains(&cdp_version.as_str());
+    // The region is read from the activity trail, so it is reported only when
+    // the signature step below will check a signature over that trail: on a
+    // proof without a signature or key, no return names it.
+    let trail_checked = names_signed_fields
+        && !matches!(
+            canonical_recompute::verify_signature(json, &cdp_version),
+            canonical_recompute::SignatureCheck::Absent
+        );
+    metadata.capsule_id = document_capsule_id
+        .filter(|_| names_signed_fields)
         .map(String::from);
 
-    // Region resolves from the SIGNED `capsule_started` activity event only.
+    // Region resolves from the `capsule_started` activity event only, on 2.1
+    // and 2.2 carrying a signature.
     //
-    // The activity trail is inside `CanonicalCdpView`, so a region carried
-    // there cannot be altered without breaking the signature. The two paths
+    // On 2.1 and 2.2 the activity trail is inside `CanonicalCdpView`, so a
+    // region carried there cannot be altered without breaking the signature.
+    // An unsigned 2.1 or 2.2 proof reports no region. The two paths
     // this replaced — `/environment/region` and top-level `region` — are both
     // outside the canonical hash: `environment` is a derived projection built
     // by `FullCdp::to_verification()` and its struct has no region field at
@@ -427,6 +680,7 @@ pub fn verify_auditproof(
     // genuine signed proof with no key, while the signed value went unread.
     metadata.region = json
         .get("activity")
+        .filter(|_| trail_checked)
         .and_then(|v| v.as_array())
         .and_then(|events| {
             events
@@ -448,19 +702,52 @@ pub fn verify_auditproof(
         .and_then(|v| v.as_str())
         .map(String::from);
 
-    // Policy-pin gate (the customer-authority specification G7 / VP Security F4.3).
+    metadata.authority_id = json
+        .get("authority_id")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    metadata.signing_mode = json
+        .get("signing_mode")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
+    // Policy-pin gate (the customer-authority specification / VP Security F4.3).
     //
-    // When the customer / auditor pins `required_authority_id`, the
-    // AuditProof's `signing_authority.authority_id` must match. The
-    // AuditProof field is `Option<SigningAuthority>` per the customer-authority specification D2:
+    // When the customer / auditor pins `required_authority_id`, it is compared
+    // with the top-level `authority_id`: the field the trust-chain lookup reads
+    // and, on cdp_version 2.1 and 2.2 only, the one the canonical view binds
+    // (so the signature covers it). On 1.0 nothing signed covers it: 1.0
+    // signs `final_hash`, and no issuer writes `authority_id` on it. cdp_version
+    // 2.0 never reaches this gate: the version gate above refuses it first.
+    // An absent or non-string `authority_id` means the Nanorix default,
+    // `DEFAULT_AUTHORITY_ID`, exactly as `effective_authority_id` resolves it
+    // for the chain walk, so the gate and the anchor cannot read different
+    // values.
     //
-    // - `signing_authority` field absent OR explicit JSON `null` →
-    //   Nanorix-default signing path. Reject with reason
-    //   `verifier_policy_demands_customer_hsm_audit_proof_has_none`.
-    // - `signing_authority.authority_id` present and equals policy →
-    //   accept; continue to chain integrity checks.
-    // - `signing_authority.authority_id` present and differs from policy →
-    //   reject with reason `verifier_policy_authority_id_mismatch`.
+    // `signing_authority` is not in the canonical view today and
+    // no issuer emits it, so it can never widen what a pin accepts:
+    //
+    // - cdp_version not in `CANONICAL_VIEW_SIGNED_VERSIONS` and a top-level
+    //   `authority_id` that is a string other than `DEFAULT_AUTHORITY_ID`
+    //   (the empty string included) → reject with
+    //   `verifier_policy_authority_id_mismatch`, claimed = that value. The
+    //   field is unsigned there, so adding it to a genuine proof would
+    //   otherwise satisfy any pin with no key. On those versions the
+    //   effective authority can only be the default.
+    // - `signing_authority.authority_id` present and different from the
+    //   top-level `authority_id` → reject with
+    //   `verifier_policy_authority_id_mismatch`, claimed = the
+    //   `signing_authority` value. An unsigned object cannot be told apart
+    //   from a forged one, so any disagreement is refused.
+    // - `signing_authority` absent, `null`, or without `authority_id` → ignored.
+    // - effective authority differs from the pin → reject; claimed is null
+    //   with `verifier_policy_demands_customer_hsm_audit_proof_has_none` when
+    //   the top-level field is absent, else the top-level value with
+    //   `verifier_policy_authority_id_mismatch`.
+    //
+    // Without a trust-chain manifest the authority is only as trustworthy as
+    // the embedded key, so a pin is a full authority check only when the
+    // result reaches stage 8.
     //
     // The gate runs BEFORE chain integrity checks because the policy
     // decision is independent of chain validity — a customer who pinned
@@ -468,29 +755,14 @@ pub fn verify_auditproof(
     // SHA-512 chain walk. Stage_reached carries the conventional value
     // 2 (post-version-check, pre-chain-walk).
     if let Some(required) = policy.required_authority_id.as_ref() {
-        let claimed = json
-            .pointer("/signing_authority/authority_id")
-            .and_then(|v| v.as_str())
-            .map(String::from);
-        match claimed {
-            None => {
+        let top_level = json.get("authority_id").and_then(|v| v.as_str());
+        let effective = effective_authority_id(json);
+        if !CANONICAL_VIEW_SIGNED_VERSIONS.contains(&cdp_version.as_str()) {
+            if let Some(unsigned) = top_level.filter(|t| *t != DEFAULT_AUTHORITY_ID) {
                 return VerificationResult {
                     valid: false,
                     failure_reason: Some(FailureReason::AuthorityIdMismatch {
-                        claimed_authority_id: None,
-                        expected_authority_id: required.clone(),
-                        reason:
-                            AuthorityIdMismatchReason::VerifierPolicyDemandsCustomerHsmAuditProofHasNone,
-                    }),
-                    stage_reached: 2,
-                    metadata,
-                };
-            }
-            Some(actual) if actual != *required => {
-                return VerificationResult {
-                    valid: false,
-                    failure_reason: Some(FailureReason::AuthorityIdMismatch {
-                        claimed_authority_id: Some(actual),
+                        claimed_authority_id: Some(unsigned.to_string()),
                         expected_authority_id: required.clone(),
                         reason: AuthorityIdMismatchReason::VerifierPolicyAuthorityIdMismatch,
                     }),
@@ -498,21 +770,73 @@ pub fn verify_auditproof(
                     metadata,
                 };
             }
-            Some(_match) => {
-                // Authority matches policy pin; fall through to chain checks.
-            }
+        }
+        let unsigned_claim = json
+            .pointer("/signing_authority/authority_id")
+            .and_then(|v| v.as_str());
+        if let Some(conflict) = unsigned_claim.filter(|c| *c != effective) {
+            return VerificationResult {
+                valid: false,
+                failure_reason: Some(FailureReason::AuthorityIdMismatch {
+                    claimed_authority_id: Some(conflict.to_string()),
+                    expected_authority_id: required.clone(),
+                    reason: AuthorityIdMismatchReason::VerifierPolicyAuthorityIdMismatch,
+                }),
+                stage_reached: 2,
+                metadata,
+            };
+        }
+        if effective != required.as_str() {
+            let (claimed, reason) = match top_level {
+                None => (
+                    None,
+                    AuthorityIdMismatchReason::VerifierPolicyDemandsCustomerHsmAuditProofHasNone,
+                ),
+                Some(t) => (
+                    Some(t.to_string()),
+                    AuthorityIdMismatchReason::VerifierPolicyAuthorityIdMismatch,
+                ),
+            };
+            return VerificationResult {
+                valid: false,
+                failure_reason: Some(FailureReason::AuthorityIdMismatch {
+                    claimed_authority_id: claimed,
+                    expected_authority_id: required.clone(),
+                    reason,
+                }),
+                stage_reached: 2,
+                metadata,
+            };
         }
     }
 
-    // Residency-pin gate (the specification G1 / the region policy).
+    // The residency pin and the diagnostic gate read the activity trail, so
+    // each trusts it only when the signature step below will check a signature
+    // over it: the version's signed message is the canonical view (2.1 / 2.2)
+    // and that step does not end as `Absent`. A 1.0 trail, and the trail of a
+    // 2.1 or 2.2 proof without a signature or key, is unsigned: anyone could
+    // add a region equal to the pin, or delete a `diagnostic_mode_enabled`
+    // event, and the proof would still verify. Computed only under a policy
+    // that reads the trail.
+    let trail_signed =
+        (policy.required_region.is_some() || policy.reject_diagnostic) && trail_checked;
+
+    // Residency-pin gate.
     //
     // Same shape and rationale as the authority pin above: when the auditor
     // pins `required_region`, a proof asserting a different region is rejected
     // before the chain walk. A proof that carries no region at all cannot
     // satisfy a residency pin — it is rejected with an empty `actual` rather
     // than accepted, so the pin fails closed.
+    //
+    // Only a signed region counts: on an unsigned trail the pin reads no
+    // region and refuses with an empty `actual`.
     if let Some(required) = policy.required_region.as_ref() {
-        let actual = metadata.region.clone().unwrap_or_default();
+        let actual = if trail_signed {
+            metadata.region.clone().unwrap_or_default()
+        } else {
+            String::new()
+        };
         if actual != *required {
             return VerificationResult {
                 valid: false,
@@ -524,6 +848,20 @@ pub fn verify_auditproof(
                 metadata,
             };
         }
+    }
+
+    // Diagnostic-mode gate, after the residency pin and before
+    // the chain walk, like the other policy pins. A proof whose trail is
+    // unsigned (1.0, or 2.1 or 2.2 without a signature) cannot show it was not
+    // run in diagnostic mode, since the event could be deleted and the proof
+    // would still verify: the setting refuses every one.
+    if policy.reject_diagnostic && (!trail_signed || records_diagnostic_mode(json)) {
+        return VerificationResult {
+            valid: false,
+            failure_reason: Some(FailureReason::DiagnosticProofRefused),
+            stage_reached: 2,
+            metadata,
+        };
     }
 
     // Stage 3: chain reproducibility
@@ -554,7 +892,7 @@ pub fn verify_auditproof(
         };
     }
 
-    // the chain-timestamp recovery rule — proofs issued before `destroyed_at` was restored to the wire
+    // Proofs issued before `destroyed_at` was restored to the wire
     // document carry the chain timestamp only in `attestation.key_id`. Recover
     // it there so authentic pre-restoration proofs reproduce their chain; the
     // recovered value is disclosed in the verdict metadata, never silently
@@ -563,7 +901,7 @@ pub fn verify_auditproof(
     let timestamp = timestamp.as_str();
     metadata.recovered_chain_timestamp = recovered;
 
-    // the per-record receipt specification + the receipt-batching specification the receipt pipeline (2026-05-12) — extract optional Merkle roots
+    // The receipt pipeline (2026-05-12) — extract optional Merkle roots
     // for Step 8 amendment. None for pre-the receipt pipeline proofs (both branches collapse
     // to the legacy formula → byte-identical chain walk).
     let rrmr_opt = json
@@ -598,7 +936,7 @@ pub fn verify_auditproof(
             .unwrap_or("");
 
         let recomputed = if idx == NANORIX_CHAIN_STEPS - 1 {
-            // the per-record receipt specification + the receipt-batching specification Step 8 amendment — presence-conditional
+            // The per-record receipt specification + the cross-organisation chain specification Step 8 amendment — presence-conditional
             // Merkle-root incorporation. The (None, None) branch returns the
             // legacy formula bit-for-bit (Forever-Standard). The branch was
             // additionally keyed on the DECLARED subsystem being
@@ -647,16 +985,14 @@ pub fn verify_auditproof(
         prev_hash = recomputed;
     }
 
-    // ── the per-record receipt specification receipt set verification (Mode A step 3) ──
+    // ── receipt set verification (Mode A step 3) ──
     // If `record_receipts` is present, recompute the Merkle root from the
     // receipts in order and compare to the claimed `record_receipts_merkle_root`.
     // Each receipt's `record_chain_hash` is also recomputed from its fields.
     if let Some(receipts) = json.get("record_receipts").and_then(|v| v.as_array()) {
-        if let Some(failure) = verify_record_receipts(
-            receipts,
-            metadata.capsule_id.as_deref().unwrap_or(""),
-            rrmr_opt,
-        ) {
+        if let Some(failure) =
+            verify_record_receipts(receipts, document_capsule_id.unwrap_or(""), rrmr_opt)
+        {
             return VerificationResult {
                 valid: false,
                 failure_reason: Some(failure),
@@ -666,11 +1002,11 @@ pub fn verify_auditproof(
         }
     }
 
-    // ── the receipt-batching specification parent-proof set verification ──
+    // ── parent-proof set verification ──
     // If `parent_proof_hashes` is present, recompute the parent Merkle root
     // from each link's `parent_chain_hash` and compare to the claimed root.
     // Per-link signature verification (independent pubkey resolution) is
-    // out of Wave A scope — Wave B Portable Pubkey Bundle support.
+    // out of scope here; a Portable Pubkey Bundle supplies it.
     if let Some(parents) = json.get("parent_proof_hashes").and_then(|v| v.as_array()) {
         if let Some(failure) = verify_parent_proofs(parents, ppmr_opt) {
             return VerificationResult {
@@ -709,7 +1045,7 @@ pub fn verify_auditproof(
         }
     }
 
-    // ── the specification customer-declared activity root ──
+    // ── customer-declared activity root ──
     // The stage-2 gate above has already rejected a root on a version that
     // does not sign it and a root of any shape no signer emits, so a root
     // read here is a well-formed string on 2.1 / 2.2 and is canonical-bound:
@@ -761,7 +1097,7 @@ pub fn verify_auditproof(
         };
     }
 
-    // Algorithm dispatch precedes byte-shape checks (the specification C.1): a proof
+    // Algorithm dispatch precedes byte-shape checks: a proof
     // declaring a non-Ed25519 signature algorithm fails typed as
     // AlgorithmUnsupported here — it must never fall through to the 64/32-byte
     // decode gates and report as "malformed". Absent or "Ed25519" proceeds
@@ -775,9 +1111,21 @@ pub fn verify_auditproof(
         };
     }
 
+    // Consistency gate on the two signed labels. Runs before the signature
+    // check, so an unsigned proof carrying the contradiction is refused too
+    // rather than passing as "chain verified, signature not checked".
+    if let Some(failure) = signing_mode_authority_mismatch(json, &cdp_version) {
+        return VerificationResult {
+            valid: false,
+            failure_reason: Some(failure),
+            stage_reached: 4,
+            metadata,
+        };
+    }
+
     // Stages 5-8: signature verification. sub-A verifies the Ed25519 signature
-    // over the version/mode-appropriate message (v1.0 final_hash, v2.0
-    // document_hash, v2.1 nanorix_only canonical_hash) against the key EMBEDDED
+    // over the version/mode-appropriate message (v1.0 final_hash, v2.1
+    // and v2.2 nanorix_only or customer_only canonical_hash) against the key EMBEDDED
     // in the proof — integrity (stage 7). sub-B then ANCHORS that to the Nanorix
     // trust root: if a verified trust-chain manifest is supplied, resolve the
     // signing key from it and re-verify against the manifest key — authenticity
@@ -786,19 +1134,32 @@ pub fn verify_auditproof(
         // Embedded-key signature valid → integrity proven. Attempt sub-B
         // trust-anchoring to reach stage 8.
         canonical_recompute::SignatureCheck::Verified => {
+            let mut metadata = metadata;
+            metadata.authority_signed =
+                Some(CANONICAL_VIEW_SIGNED_VERSIONS.contains(&cdp_version.as_str()));
             anchor_to_trust_chain(json, &cdp_version, policy, metadata)
         }
-        // Chain reproduced but no signature this build can check (unsigned
-        // partial, or dual_signature/tee_attested). Honest: this is NOT a full
+        // Chain reproduced but the proof carries no signature (an unsigned
+        // partial; a declared mode this build cannot check is the Unsupported
+        // arm below). Honest: this is NOT a full
         // cryptographic verification — the CLI prints "Chain verified ·
         // signature NOT checked" at stage 4. Fail-closing the exit code in this
         // case is a policy decision deferred to sub-B.
-        canonical_recompute::SignatureCheck::Absent => VerificationResult {
-            valid: true,
-            failure_reason: None,
-            stage_reached: 4,
-            metadata,
-        },
+        canonical_recompute::SignatureCheck::Absent => {
+            if under_hybrid_pin(policy) {
+                return hybrid_record_refusal(4, metadata);
+            }
+            // No signature covers the activity trail here, so the region read
+            // from it is not reported.
+            let mut metadata = metadata;
+            metadata.region = None;
+            VerificationResult {
+                valid: true,
+                failure_reason: None,
+                stage_reached: 4,
+                metadata,
+            }
+        }
         // A signature was present and did not verify → reject.
         // Declared a signing_mode this build cannot verify. NOT the same as
         // "no signature": signing_mode is inside the canonical hash and is
@@ -842,7 +1203,7 @@ fn declared_non_ed25519_algorithm(json: &serde_json::Value) -> Option<String> {
     .map(str::to_string)
 }
 
-/// trust-chain anchoring — anchor an integrity-verified proof (sub-A passed, stage 7) to
+/// Trust-chain anchoring — anchor an integrity-verified proof (sub-A passed, stage 7) to
 /// the Nanorix trust root.
 ///
 /// With a verified trust-chain manifest in `policy.trust_chain`, resolve the
@@ -851,16 +1212,19 @@ fn declared_non_ed25519_algorithm(json: &serde_json::Value) -> Option<String> {
 /// signature against THAT key, and check the authority is not revoked. Success
 /// is stage 8 — "verify without trusting Nanorix", and the point at which a
 /// forged proof (carrying its own embedded key, not the manifest key) is
-/// rejected. Without a manifest, the proof stays at honest stage 7 (integrity
-/// only).
+/// rejected. Without a manifest, or with one but no pin, the proof stays at
+/// honest stage 7 (integrity only), except under a `hybrid1-sha256:` pin or a
+/// manifest whose own `identity_fingerprint` is one: there every record is
+/// refused with `algorithm_unsupported`, with or without a manifest.
 fn anchor_to_trust_chain(
     json: &serde_json::Value,
     cdp_version: &str,
     policy: &VerifierPolicy,
-    metadata: VerificationMetadata,
+    mut metadata: VerificationMetadata,
 ) -> VerificationResult {
     let manifest = match &policy.trust_chain {
         Some(m) => m,
+        None if under_hybrid_pin(policy) => return hybrid_record_refusal(7, metadata),
         None => {
             return VerificationResult {
                 valid: true,
@@ -871,15 +1235,40 @@ fn anchor_to_trust_chain(
         }
     };
 
-    let authority_id = json
-        .get("authority_id")
-        .and_then(|v| v.as_str())
-        .unwrap_or("us-kms-nanorix-v1");
+    let authority_id = effective_authority_id(json);
     let signing_key_version = json
         .pointer("/attestation/signing_key_version")
         .or_else(|| json.get("signing_key_version"))
         .and_then(|v| v.as_str())
         .unwrap_or("");
+
+    // FailureReason is a released wire type, so a list the pin did not sign
+    // reuses the stage-6 "no trusted list holds this key" reason.
+    //
+    // A list with no pin is the caller's say-so: stages 6 to 8 still run on
+    // it and can refuse the proof, but a success ends at stage 7
+    // (`not_anchored`), never stage 8.
+    let pinned = match policy.pinned_identity_fingerprint.as_deref() {
+        Some(pin) => {
+            if manifest.verify_signature(pin).is_err() {
+                return VerificationResult {
+                    valid: false,
+                    failure_reason: Some(FailureReason::SigningKeyVersionUnknown {
+                        version: signing_key_version.to_string(),
+                    }),
+                    stage_reached: 6,
+                    metadata,
+                };
+            }
+            true
+        }
+        None => false,
+    };
+
+    // The key list the proof is checked against, named in the output from here
+    // on: past the pin check when a pin was given.
+    metadata.trust_chain_identity_fingerprint = policy.pinned_identity_fingerprint.clone();
+    metadata.trust_chain_issued_at = Some(manifest.issued_at.clone());
 
     // Stage 6: resolve the signing key against the trust chain.
     let lookup = match manifest.find_key(authority_id, signing_key_version) {
@@ -927,6 +1316,9 @@ fn anchor_to_trust_chain(
             };
         }
         canonical_recompute::SignatureCheck::Absent => {
+            if under_hybrid_pin(policy) {
+                return hybrid_record_refusal(7, metadata);
+            }
             return VerificationResult {
                 valid: true,
                 failure_reason: None,
@@ -946,17 +1338,75 @@ fn anchor_to_trust_chain(
         };
     }
 
-    // Signature verified against the trust-anchored key + authority active →
-    // full "verify without trusting Nanorix".
+    // A 1.0 signature covers `final_hash` alone, which binds `destroyed_at` and
+    // the two optional Merkle roots. It does not bind the capsule_id itself
+    // (only through record receipts, which a holder can remove), the region or
+    // the key id. So a key list cannot tie it to a capsule: a 1.0 proof runs
+    // the lookup, the re-verify and the revocation check above as 2.x does,
+    // and where 2.x would reach stage 8 it ends at stage 7, never anchored.
+    // Under a hybrid pin it is refused there, as every record is.
+    if cdp_version == "1.0" {
+        if under_hybrid_pin(policy) {
+            return hybrid_record_refusal(7, metadata);
+        }
+        return VerificationResult {
+            valid: true,
+            failure_reason: None,
+            stage_reached: 7,
+            metadata,
+        };
+    }
+
+    // Under a hybrid pin a record is anchored only with its ML-DSA-65 half
+    // checked, which this build does not do yet, so the Ed25519 check above
+    // never stands alone as stage 8.
+    if under_hybrid_pin(policy) {
+        return hybrid_record_refusal(8, metadata);
+    }
+
+    // Signature verified against the listed key + authority active. Only a
+    // pinned list makes that "verify without trusting Nanorix".
     VerificationResult {
         valid: true,
         failure_reason: None,
-        stage_reached: 8,
+        stage_reached: if pinned { 8 } else { 7 },
         metadata,
     }
 }
 
-/// Compute one step's hash. Mirrors `governance/rzl::compute_step_hash`.
+/// The `found` text of the refusal every record gets under a hybrid pin until
+/// this verifier checks the record's ML-DSA-65 half. The shared vectors fix
+/// it, so every verifier gives the same text.
+pub const HYBRID_RECORD_CHECK_MISSING: &str = "ML-DSA-65 record check (hybrid pin)";
+
+/// Whether a record is refused for want of its ML-DSA-65 half: the pin is a
+/// `hybrid1-sha256:` pin, or the key list's own `identity_fingerprint` is
+/// one, which also covers a list given with no pin.
+fn under_hybrid_pin(policy: &VerifierPolicy) -> bool {
+    policy
+        .pinned_identity_fingerprint
+        .as_deref()
+        .is_some_and(trust_chain::is_hybrid_pin)
+        || policy
+            .trust_chain
+            .as_ref()
+            .is_some_and(|m| trust_chain::is_hybrid_pin(&m.identity_fingerprint))
+}
+
+/// The refusal a record gets under a hybrid pin, at the stage where it would
+/// otherwise have ended valid: signed, unsigned, or with no key list.
+fn hybrid_record_refusal(stage: u8, metadata: VerificationMetadata) -> VerificationResult {
+    VerificationResult {
+        valid: false,
+        failure_reason: Some(FailureReason::AlgorithmUnsupported {
+            found: HYBRID_RECORD_CHECK_MISSING.to_string(),
+        }),
+        stage_reached: stage,
+        metadata,
+    }
+}
+
+/// Compute one step's hash. Mirrors `compute_step_hash` in the reference chain implementation.
 ///
 /// Format: SHA-512(prev_hash \x00 subsystem \x00 action \x00 method \x00 timestamp)
 pub fn compute_step_hash(
@@ -1045,7 +1495,7 @@ fn is_iso8601_shaped(date: &str, time: &str) -> bool {
 /// Returns `(timestamp, recovered)` where `recovered` is `Some` only on the
 /// `key_id` recovery path — the caller records it so the verdict discloses
 /// which route was taken.
-fn resolve_chain_timestamp(json: &serde_json::Value) -> (String, Option<String>) {
+pub(crate) fn resolve_chain_timestamp(json: &serde_json::Value) -> (String, Option<String>) {
     let declared = json
         .get("destroyed_at")
         .and_then(|v| v.as_str())
@@ -1065,8 +1515,8 @@ fn resolve_chain_timestamp(json: &serde_json::Value) -> (String, Option<String>)
     }
 }
 
-/// Look up the canonical method string for a given subsystem (per CLAUDE.md
-/// CDP v1.0 chain spec). Forever-stable per the Forever-Standard wire discipline.
+/// Look up the canonical method string for a given subsystem (per the
+/// CDP v1.0 chain spec). Forever-stable.
 ///
 /// Unknown subsystems map to the empty string, which is why this must NOT be
 /// used to derive a chain-walk hash input from a document-supplied subsystem:
@@ -1090,7 +1540,7 @@ pub fn lookup_method(subsystem: &str) -> &'static str {
 }
 
 /// Strip canonical prefix conventions: `sha512:` from hash fields, `base64:`
-/// from key/signature fields. the specification forever-stable.
+/// from key/signature fields. Forever-stable.
 pub fn strip_hash_prefix(s: &str) -> &str {
     s.strip_prefix("sha512:").unwrap_or(s)
 }
@@ -1100,17 +1550,17 @@ pub fn strip_base64_prefix(s: &str) -> &str {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// the receipt pipeline (the per-record receipt specification + the receipt-batching specification) verifier extension
+// The receipt pipeline verifier extension
 //
-// Mirrors the reference chain implementation to keep the verifier independent of any
+// Mirrors `wave_n` in the reference chain implementation to keep the verifier independent of any
 // service-side dependency (the verifier ships as a standalone auditor
 // artifact per the verifier specification). The hash primitives are byte-identical to the
 // service-side implementation — pinned by the cross-impl byte-equivalence
 // test in the property-test suite.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Compute Step 8 amended hash per the per-record receipt specification + the receipt-batching specification combined formula. See
-/// the reference chain implementation for the spec; this
+/// Compute Step 8 amended hash combined formula. See
+/// `compute_step_8_amended` in the reference chain implementation for the spec; this
 /// is a verifier-side mirror.
 pub fn compute_step_8_amended_verifier(
     prev_hash: &str,
@@ -1200,7 +1650,7 @@ pub fn verifier_merkle_root(leaves: &[String]) -> Option<String> {
 }
 
 /// Compute a per-record chain hash mirroring
-/// the reference chain implementation.
+/// `compute_record_chain_hash` in the reference chain implementation.
 fn verifier_compute_record_chain_hash(
     capsule_id: &str,
     record_index: u32,
@@ -1227,7 +1677,7 @@ fn verifier_compute_record_chain_hash(
     data.extend_from_slice(output_h.as_bytes());
     data.push(0x00);
     data.extend_from_slice(activity_h.as_bytes());
-    // the per-record receipt specification conformance: a declared pattern_tag is a signed primitive and
+    // Conformance: a declared pattern_tag is a signed primitive and
     // is bound into the chain hash (trailing segment appended only when the
     // receipt carries a tag; activity_root's fixed 128-hex length gives
     // domain separation, so tagged and untagged preimages cannot collide).
@@ -1239,7 +1689,7 @@ fn verifier_compute_record_chain_hash(
     hex::encode(Sha512::digest(&data))
 }
 
-/// Verify the receipt set per the per-record receipt specification Mode A step 3. Returns `Some(failure)`
+/// Verify the receipt set Mode A step 3. Returns `Some(failure)`
 /// if any receipt's chain hash doesn't roundtrip OR the Merkle root doesn't
 /// match the claimed root. Returns `None` if all receipts verify.
 fn verify_record_receipts(
@@ -1339,7 +1789,7 @@ fn verify_record_receipts(
     None
 }
 
-/// Verify the parent-proof set Merkle root per the receipt-batching specification. Returns
+/// Verify the parent-proof set Merkle root. Returns
 /// `Some(failure)` if the recomputed root doesn't match claimed.
 fn verify_parent_proofs(
     parents: &[serde_json::Value],
@@ -1717,9 +2167,11 @@ mod tests {
                     effective_from: "2026-01-01T00:00:00Z".to_string(),
                     archived_at: None,
                     algorithm: None,
+                    pqc_partner_version: None,
                 }],
                 archived_versions: vec![],
                 revoked,
+                emits_population_heads: false,
             },
         );
         let manifest = crate::trust_chain::TrustChainManifest::build_and_sign(
@@ -1741,6 +2193,27 @@ mod tests {
             pinned_identity_fingerprint: Some(pin),
             ..Default::default()
         }
+    }
+
+    /// The pin gate and the trust-chain lookup read the same effective
+    /// authority: a signed proof with no top-level `authority_id` anchors under
+    /// the default authority and satisfies a pin on it, reaching stage 8.
+    #[test]
+    fn pin_and_anchor_agree_when_authority_id_absent() {
+        use ed25519_dalek::Signer as _;
+        let authority = ed25519_dalek::SigningKey::from_bytes(&[11u8; 32]);
+        let authority_pub = base64_encode(&authority.verifying_key().to_bytes());
+        let mut proof = make_signed_v21_proof(&authority, &authority_pub, "1");
+        proof.as_object_mut().unwrap().remove("authority_id");
+        let canonical = crate::canonical_recompute::recompute_canonical_hash(&proof);
+        let sig = authority.sign(canonical.as_bytes());
+        proof["attestation"]["signature"] = serde_json::json!(base64_encode(&sig.to_bytes()));
+        let (manifest, pin) = manifest_trusting([7u8; 32], &authority, "1", false);
+        let mut policy = policy_with(manifest, pin);
+        policy.required_authority_id = Some(NANORIX.into());
+        let result = verify_auditproof(&proof, &[], &policy);
+        assert!(result.valid, "expected valid; got {result:?}");
+        assert_eq!(result.stage_reached, 8);
     }
 
     #[test]
@@ -1769,6 +2242,50 @@ mod tests {
             result.stage_reached, 7,
             "no manifest → integrity-only stage 7"
         );
+    }
+
+    /// A list the pin did not sign anchors nothing, even when it holds the
+    /// proof's key: the pinned fingerprint is another identity's, or the list
+    /// was edited after signing.
+    #[test]
+    fn manifest_not_signed_by_the_pin_never_reaches_stage_8() {
+        let authority = ed25519_dalek::SigningKey::from_bytes(&[11u8; 32]);
+        let authority_pub = base64_encode(&authority.verifying_key().to_bytes());
+        let proof = make_signed_v21_proof(&authority, &authority_pub, "1");
+
+        let (manifest, _) = manifest_trusting([7u8; 32], &authority, "1", false);
+        let (_, other_pin) = manifest_trusting([8u8; 32], &authority, "1", false);
+        let result = verify_auditproof(&proof, &[], &policy_with(manifest, other_pin));
+        assert!(
+            !result.valid,
+            "a list under another pin must not anchor; got {result:?}"
+        );
+        assert_eq!(result.stage_reached, 6);
+        assert_eq!(
+            result.failure_reason,
+            Some(FailureReason::SigningKeyVersionUnknown {
+                version: "1".to_string()
+            })
+        );
+
+        let (mut edited, pin) = manifest_trusting([7u8; 32], &authority, "1", false);
+        edited.issued_at = "2026-06-01T00:00:00Z".to_string();
+        let result = verify_auditproof(&proof, &[], &policy_with(edited.clone(), pin));
+        assert!(
+            !result.valid,
+            "an edited list must not anchor; got {result:?}"
+        );
+        assert_eq!(result.stage_reached, 6);
+
+        // Without a pin the list anchors nothing: the proof ends at stage 7.
+        let unpinned = VerifierPolicy {
+            trust_chain: Some(edited),
+            ..Default::default()
+        };
+        let result = verify_auditproof(&proof, &[], &unpinned);
+        assert!(result.valid, "expected valid; got {result:?}");
+        assert_eq!(result.stage_reached, 7);
+        assert_eq!(result.status(), "not_anchored");
     }
 
     #[test]
@@ -1819,6 +2336,34 @@ mod tests {
             result.failure_reason,
             Some(FailureReason::AuthorityRevoked)
         ));
+    }
+
+    /// A 2.0-labelled document whose declared `document_hash` is signed by the
+    /// manifest's own authority key is still refused at the version gate: no
+    /// manifest, key or signature is consulted for a version outside the
+    /// supported set.
+    #[test]
+    fn subb_2_0_document_with_anchored_key_is_refused_at_stage_2() {
+        use ed25519_dalek::Signer as _;
+        let authority = ed25519_dalek::SigningKey::from_bytes(&[11u8; 32]);
+        let authority_pub = base64_encode(&authority.verifying_key().to_bytes());
+        let mut proof = make_signed_v21_proof(&authority, &authority_pub, "1");
+        let declared = "ab".repeat(64);
+        proof["cdp_version"] = serde_json::Value::String("2.0".into());
+        proof["document_hash"] = serde_json::Value::String(format!("sha512:{declared}"));
+        let sig = authority.sign(declared.as_bytes());
+        proof["attestation"]["signature"] =
+            serde_json::Value::String(base64_encode(&sig.to_bytes()));
+        let (manifest, pin) = manifest_trusting([7u8; 32], &authority, "1", false);
+        let result = verify_auditproof(&proof, &[], &policy_with(manifest, pin));
+        assert!(!result.valid, "expected refusal; got {result:?}");
+        assert_eq!(result.stage_reached, 2);
+        assert_eq!(
+            result.failure_reason,
+            Some(FailureReason::CdpVersionUnsupported {
+                found: "2.0".into()
+            })
+        );
     }
 
     #[test]
@@ -1906,7 +2451,7 @@ mod tests {
 
     #[test]
     fn genesis_hash_constant_matches_sha512_of_empty() {
-        // Per CLAUDE.md "Genesis: SHA-512('') = cf83e1357..."
+        // Per the CDP v1.0 chain spec "Genesis: SHA-512('') = cf83e1357..."
         let mut hasher = Sha512::new();
         hasher.update(b"");
         let computed = hex::encode(hasher.finalize());
@@ -1939,111 +2484,354 @@ mod tests {
         assert_eq!(strip_base64_prefix("xyz"), "xyz");
     }
 
-    // ── the customer-authority specification G7 — Verifier policy `required_authority_id` pin ──────
+    // ── the customer-authority specification — Verifier policy `required_authority_id` pin ──────
     //
-    // Five deterministic fixtures matching the runbook G7 test plan:
-    //
-    //   - policy_pin_customer_hsm_audit_proof_none_rejected
-    //   - policy_pin_customer_hsm_audit_proof_wrong_authority_rejected
-    //   - policy_pin_customer_hsm_audit_proof_matches_authority_accepted
-    //   - policy_none_audit_proof_none_accepted
-    //   - policy_none_audit_proof_some_accepted
+    // The pin compares the top-level `authority_id`; the tests below
+    // cover each gate rule, the attack, a full decision table and a property
+    // test, plus the no-pin cases.
     //
     // Plus a property test asserting that for any (audit_proof) when the
     // policy is `None`, verification result is identical to the no-policy
     // verifier path (≥10k iterations).
 
-    /// Fixture 1 — policy pins customer-HSM, AuditProof has no
-    /// `signing_authority` field. Reject with
-    /// `AuthorityIdMismatch { claimed: None, reason: ...DemandsCustomerHsmAuditProofHasNone }`.
-    #[test]
-    fn policy_pin_customer_hsm_audit_proof_none_rejected() {
-        let proof = make_minimal_v1_proof();
-        // AuditProof is the v1 minimal shape; no `signing_authority` field.
-        let policy = VerifierPolicy {
-            required_authority_id: Some("customer-hsm-example-org-v1".into()),
+    const PIN: &str = "customer-hsm-example-org-v1";
+    const NANORIX: &str = "us-kms-nanorix-v1";
+
+    fn pin_policy(pin: &str) -> VerifierPolicy {
+        VerifierPolicy {
+            required_authority_id: Some(pin.into()),
             ..Default::default()
-        };
-
-        let result = verify_auditproof(&proof, &[], &policy);
-
-        assert!(!result.valid, "expected reject; got {result:?}");
-        assert_eq!(result.stage_reached, 2);
-        match result.failure_reason {
-            Some(FailureReason::AuthorityIdMismatch {
-                claimed_authority_id,
-                expected_authority_id,
-                reason,
-            }) => {
-                assert_eq!(claimed_authority_id, None);
-                assert_eq!(expected_authority_id, "customer-hsm-example-org-v1");
-                assert_eq!(
-                    reason,
-                    AuthorityIdMismatchReason::VerifierPolicyDemandsCustomerHsmAuditProofHasNone
-                );
-            }
-            other => panic!("expected AuthorityIdMismatch with None claimed; got {other:?}"),
         }
     }
 
-    /// Fixture 2 — policy pins customer-HSM, AuditProof has
-    /// `signing_authority.authority_id` that disagrees. Reject with
-    /// `AuthorityIdMismatch { reason: ...AuthorityIdMismatch }`.
-    #[test]
-    fn policy_pin_customer_hsm_audit_proof_wrong_authority_rejected() {
+    /// The unsigned minimal proof relabelled as `version`. The pin gate runs
+    /// before any signature check, so its verdict does not depend on the
+    /// version's signed message.
+    fn make_pin_proof(version: &str) -> serde_json::Value {
         let mut proof = make_minimal_v1_proof();
-        proof["signing_authority"] = serde_json::json!({
-            "authority_id": "customer-hsm-other-v1",
+        proof["cdp_version"] = serde_json::json!(version);
+        proof
+    }
+
+    /// `make_pin_proof(version)` with `activity` set, when given, and signed
+    /// over its canonical view with an embedded key, so a policy that reads the
+    /// trail reads one the signature covers. Verifies at stage 7 with no policy.
+    fn make_signed_pin_proof(
+        version: &str,
+        activity: Option<serde_json::Value>,
+    ) -> serde_json::Value {
+        use ed25519_dalek::Signer as _;
+        let key = ed25519_dalek::SigningKey::from_bytes(&[23u8; 32]);
+        let mut proof = make_pin_proof(version);
+        if let Some(trail) = activity {
+            proof["activity"] = trail;
+        }
+        let canonical = crate::canonical_recompute::recompute_canonical_hash(&proof);
+        proof["attestation"] = serde_json::json!({
+            "algorithm": "Ed25519",
+            "public_key": base64_encode(key.verifying_key().as_bytes()),
+            "signature": base64_encode(&key.sign(canonical.as_bytes()).to_bytes()),
         });
+        proof
+    }
 
-        let policy = VerifierPolicy {
-            required_authority_id: Some("customer-hsm-example-org-v1".into()),
-            ..Default::default()
+    /// The pin rule restated independently of the implementation, behind the
+    /// version gate that runs first: `Some` is the exact stage-2 failure,
+    /// `None` means the gate passes. `top` is a string top-level
+    /// `authority_id`; `sa` the string `signing_authority.authority_id`.
+    fn pin_oracle(
+        version: &str,
+        top: Option<&str>,
+        sa: Option<&str>,
+        pin: &str,
+    ) -> Option<FailureReason> {
+        use AuthorityIdMismatchReason::{
+            VerifierPolicyAuthorityIdMismatch as Mismatch,
+            VerifierPolicyDemandsCustomerHsmAuditProofHasNone as HasNone,
         };
-
-        let result = verify_auditproof(&proof, &[], &policy);
-
-        assert!(!result.valid, "expected reject; got {result:?}");
-        assert_eq!(result.stage_reached, 2);
-        match result.failure_reason {
+        fn refuse(
+            claimed: Option<&str>,
+            pin: &str,
+            reason: AuthorityIdMismatchReason,
+        ) -> Option<FailureReason> {
             Some(FailureReason::AuthorityIdMismatch {
-                claimed_authority_id,
-                expected_authority_id,
+                claimed_authority_id: claimed.map(str::to_string),
+                expected_authority_id: pin.to_string(),
                 reason,
-            }) => {
-                assert_eq!(claimed_authority_id, Some("customer-hsm-other-v1".into()));
-                assert_eq!(expected_authority_id, "customer-hsm-example-org-v1");
-                assert_eq!(
-                    reason,
-                    AuthorityIdMismatchReason::VerifierPolicyAuthorityIdMismatch
-                );
+            })
+        }
+        // The version gate: 2.0 is retired, so no pin is ever read for it.
+        if !matches!(version, "1.0" | "2.1" | "2.2") {
+            return Some(FailureReason::CdpVersionUnsupported {
+                found: version.to_string(),
+            });
+        }
+        let signed = version == "2.1" || version == "2.2";
+        // Rule 0: nothing signed covers the top-level field on 1.0.
+        if let (false, Some(t)) = (signed, top) {
+            if t != NANORIX {
+                return refuse(Some(t), pin, Mismatch);
             }
-            other => panic!("expected AuthorityIdMismatch with Some claimed; got {other:?}"),
+        }
+        let effective = top.unwrap_or(NANORIX);
+        if let Some(c) = sa {
+            if c != effective {
+                return refuse(Some(c), pin, Mismatch);
+            }
+        }
+        if effective != pin {
+            return match top {
+                None => refuse(None, pin, HasNone),
+                Some(t) => refuse(Some(t), pin, Mismatch),
+            };
+        }
+        None
+    }
+
+    /// Asserts `result` equals the oracle's verdict: the exact failure at
+    /// stage 2, or the gate passing and the proof verifying at stage 4.
+    fn assert_matches_oracle(
+        result: &VerificationResult,
+        want: Option<FailureReason>,
+        label: &str,
+    ) {
+        match want {
+            None => {
+                assert!(result.valid, "{label}: expected valid; got {result:?}");
+                assert_eq!(result.stage_reached, 4, "{label}");
+            }
+            Some(reason) => {
+                assert!(!result.valid, "{label}: expected reject; got {result:?}");
+                assert_eq!(result.stage_reached, 2, "{label}");
+                assert_eq!(result.failure_reason, Some(reason), "{label}");
+            }
         }
     }
 
-    /// Fixture 3 — policy pins customer-HSM, AuditProof has a matching
-    /// `signing_authority.authority_id`. Accept (gate passes; continues to
-    /// chain checks; minimal v1 proof passes those).
+    /// Asserts a gate rejection at stage 2 with the exact wire fields.
+    fn assert_authority_reject(
+        result: &VerificationResult,
+        claimed: Option<&str>,
+        expected: &str,
+        reason: AuthorityIdMismatchReason,
+    ) {
+        assert!(!result.valid, "expected reject; got {result:?}");
+        assert_eq!(result.stage_reached, 2);
+        match &result.failure_reason {
+            Some(FailureReason::AuthorityIdMismatch {
+                claimed_authority_id,
+                expected_authority_id,
+                reason: got,
+            }) => {
+                assert_eq!(claimed_authority_id.as_deref(), claimed);
+                assert_eq!(expected_authority_id, expected);
+                assert_eq!(*got, reason);
+            }
+            other => panic!("expected AuthorityIdMismatch; got {other:?}"),
+        }
+    }
+
+    /// Pin equals the top-level `authority_id`, no `signing_authority`: the
+    /// gate passes and the chain checks run.
     #[test]
-    fn policy_pin_customer_hsm_audit_proof_matches_authority_accepted() {
-        let mut proof = make_minimal_v1_proof();
-        proof["signing_authority"] = serde_json::json!({
-            "authority_id": "customer-hsm-example-org-v1",
-        });
-
-        let policy = VerifierPolicy {
-            required_authority_id: Some("customer-hsm-example-org-v1".into()),
-            ..Default::default()
-        };
-
-        let result = verify_auditproof(&proof, &[], &policy);
-
+    fn policy_pin_equal_to_top_level_authority_accepted() {
+        let mut proof = make_pin_proof("2.1");
+        proof["authority_id"] = serde_json::json!(PIN);
+        let result = verify_auditproof(&proof, &[], &pin_policy(PIN));
         assert!(result.valid, "expected valid; got {result:?}");
         assert_eq!(result.stage_reached, 4);
     }
 
-    // ── Residency pin (the specification G1 / the region policy) ────────────────────────────
+    /// Pin differs from the top-level `authority_id`: mismatch, claimed is the
+    /// top-level value.
+    #[test]
+    fn policy_pin_differs_from_top_level_authority_rejected() {
+        let mut proof = make_pin_proof("2.1");
+        proof["authority_id"] = serde_json::json!(NANORIX);
+        let result = verify_auditproof(&proof, &[], &pin_policy(PIN));
+        assert_authority_reject(
+            &result,
+            Some(NANORIX),
+            PIN,
+            AuthorityIdMismatchReason::VerifierPolicyAuthorityIdMismatch,
+        );
+    }
+
+    /// Top-level `authority_id` absent means the Nanorix default: a pin on the
+    /// default passes, any other pin is refused with the has-none reason.
+    #[test]
+    fn policy_pin_absent_top_level_means_nanorix_default() {
+        let proof = make_pin_proof("2.1");
+        let ok = verify_auditproof(&proof, &[], &pin_policy(NANORIX));
+        assert!(ok.valid, "expected valid; got {ok:?}");
+        assert_eq!(ok.stage_reached, 4);
+
+        let result = verify_auditproof(&proof, &[], &pin_policy(PIN));
+        assert_authority_reject(
+            &result,
+            None,
+            PIN,
+            AuthorityIdMismatchReason::VerifierPolicyDemandsCustomerHsmAuditProofHasNone,
+        );
+    }
+
+    /// A non-string top-level `authority_id` resolves to the default exactly
+    /// as the trust-chain lookup resolves it.
+    #[test]
+    fn policy_pin_non_string_top_level_means_nanorix_default() {
+        let mut proof = make_pin_proof("2.1");
+        proof["authority_id"] = serde_json::json!(7);
+        let ok = verify_auditproof(&proof, &[], &pin_policy(NANORIX));
+        assert!(ok.valid, "expected valid; got {ok:?}");
+        let result = verify_auditproof(&proof, &[], &pin_policy(PIN));
+        assert_authority_reject(
+            &result,
+            None,
+            PIN,
+            AuthorityIdMismatchReason::VerifierPolicyDemandsCustomerHsmAuditProofHasNone,
+        );
+    }
+
+    /// The attack: a genuine proof under the Nanorix authority plus an
+    /// unsigned `signing_authority` naming the pin. The unsigned object
+    /// conflicts with the signed authority, so the proof is refused and never
+    /// matches the pin.
+    #[test]
+    fn policy_pin_unsigned_signing_authority_cannot_match_pin() {
+        for top_level in [Some(NANORIX), None] {
+            let mut proof = make_pin_proof("2.1");
+            if let Some(t) = top_level {
+                proof["authority_id"] = serde_json::json!(t);
+            }
+            proof["signing_authority"] = serde_json::json!({ "authority_id": PIN });
+            let result = verify_auditproof(&proof, &[], &pin_policy(PIN));
+            assert_authority_reject(
+                &result,
+                Some(PIN),
+                PIN,
+                AuthorityIdMismatchReason::VerifierPolicyAuthorityIdMismatch,
+            );
+        }
+    }
+
+    /// Exact result of every row: cdp_version (1.0 / 2.0 / 2.1 / 2.2) x
+    /// top-level (absent / default / equal to pin / other / empty) x
+    /// `signing_authority` (absent / null / no id / equal to top-level /
+    /// different), against the oracle that restates the rule. Every 2.0 row
+    /// is the version refusal, so no pin or label can reopen 2.0.
+    #[test]
+    fn policy_pin_decision_table() {
+        const OTHER: &str = "customer-hsm-other-v1";
+        const DIFF: &str = "customer-hsm-forged-v1";
+        let tops: [Option<&str>; 5] = [None, Some(NANORIX), Some(PIN), Some(OTHER), Some("")];
+        let mut rows = 0;
+        for version in ["1.0", "2.0", "2.1", "2.2"] {
+            for top in tops {
+                let effective = top.unwrap_or(NANORIX);
+                // (label, signing_authority value, its string id)
+                let shapes: [(&str, Option<serde_json::Value>, Option<&str>); 5] = [
+                    ("absent", None, None),
+                    ("null", Some(serde_json::Value::Null), None),
+                    ("no_id", Some(serde_json::json!({ "x": 1 })), None),
+                    (
+                        "equal_top",
+                        Some(serde_json::json!({ "authority_id": effective })),
+                        Some(effective),
+                    ),
+                    (
+                        "different",
+                        Some(serde_json::json!({ "authority_id": DIFF })),
+                        Some(DIFF),
+                    ),
+                ];
+                for (name, value, sa_id) in shapes {
+                    let mut proof = make_pin_proof(version);
+                    if let Some(t) = top {
+                        proof["authority_id"] = serde_json::json!(t);
+                    }
+                    if let Some(v) = value {
+                        proof["signing_authority"] = v;
+                    }
+                    let result = verify_auditproof(&proof, &[], &pin_policy(PIN));
+                    let label = format!("v{version} top={top:?} sa={name}");
+                    assert_matches_oracle(&result, pin_oracle(version, top, sa_id, PIN), &label);
+                    rows += 1;
+                }
+            }
+        }
+        assert_eq!(rows, 100);
+    }
+
+    /// The rows by name, with literal expectations rather than the oracle: on
+    /// 1.0 a top-level `authority_id` other than the default is refused
+    /// whatever the pin, and a pin accepts only the default. The same proofs
+    /// labelled 2.0 are all refused at the version gate, pin or no pin, so a
+    /// pin can never reopen 2.0.
+    #[test]
+    fn policy_pin_unsigned_authority_on_v1_0_and_v2_0_refused_first() {
+        use AuthorityIdMismatchReason::{
+            VerifierPolicyAuthorityIdMismatch as Mismatch,
+            VerifierPolicyDemandsCustomerHsmAuditProofHasNone as HasNone,
+        };
+        // Relabel: top-level equal to the pin is refused, claimed = it.
+        let mut relabelled = make_pin_proof("1.0");
+        relabelled["authority_id"] = serde_json::json!(PIN);
+        let result = verify_auditproof(&relabelled, &[], &pin_policy(PIN));
+        assert_authority_reject(&result, Some(PIN), PIN, Mismatch);
+        // The empty string is a string other than the default.
+        let mut empty = make_pin_proof("1.0");
+        empty["authority_id"] = serde_json::json!("");
+        let result = verify_auditproof(&empty, &[], &pin_policy(PIN));
+        assert_authority_reject(&result, Some(""), PIN, Mismatch);
+        // A pin on the default accepts the unlabelled proof and the default
+        // label, and any other pin on the unlabelled proof is has_none.
+        let unlabelled = make_pin_proof("1.0");
+        let ok = verify_auditproof(&unlabelled, &[], &pin_policy(NANORIX));
+        assert!(ok.valid, "v1.0: expected valid; got {ok:?}");
+        assert_eq!(ok.stage_reached, 4);
+        let mut labelled = make_pin_proof("1.0");
+        labelled["authority_id"] = serde_json::json!(NANORIX);
+        assert!(verify_auditproof(&labelled, &[], &pin_policy(NANORIX)).valid);
+        let result = verify_auditproof(&unlabelled, &[], &pin_policy(PIN));
+        assert_authority_reject(&result, None, PIN, HasNone);
+        // The conflict rule still applies after rule 0.
+        let mut attack = make_pin_proof("1.0");
+        attack["signing_authority"] = serde_json::json!({ "authority_id": PIN });
+        let result = verify_auditproof(&attack, &[], &pin_policy(PIN));
+        assert_authority_reject(&result, Some(PIN), PIN, Mismatch);
+        // No pin: the label is accepted, as before.
+        assert!(verify_auditproof(&relabelled, &[], &VerifierPolicy::default()).valid);
+
+        // Every one of those proofs and policies on 2.0: the version refusal.
+        let cases = [
+            (&relabelled, pin_policy(PIN)),
+            (&empty, pin_policy(PIN)),
+            (&unlabelled, pin_policy(NANORIX)),
+            (&labelled, pin_policy(NANORIX)),
+            (&unlabelled, pin_policy(PIN)),
+            (&attack, pin_policy(PIN)),
+            (&relabelled, VerifierPolicy::default()),
+        ];
+        for (i, (proof, policy)) in cases.into_iter().enumerate() {
+            let mut proof = proof.clone();
+            proof["cdp_version"] = serde_json::json!("2.0");
+            let result = verify_auditproof(&proof, &[], &policy);
+            assert!(
+                !result.valid,
+                "v2.0 case {i}: expected refusal; got {result:?}"
+            );
+            assert_eq!(result.stage_reached, 2, "v2.0 case {i}");
+            assert_eq!(
+                result.failure_reason,
+                Some(FailureReason::CdpVersionUnsupported {
+                    found: "2.0".into()
+                }),
+                "v2.0 case {i}"
+            );
+        }
+    }
+
+    // ── Residency pin ────────────────────────────────────────────────────
 
     /// A pinned region that the proof does not match is rejected before the
     /// chain walk. Until this gate existed, `--required-region` parsed fine and
@@ -2051,25 +2839,35 @@ mod tests {
     /// on a us-central1 proof.
     #[test]
     fn residency_pin_rejects_disagreeing_region() {
-        let mut proof = make_minimal_v1_proof();
-        proof["activity"] = serde_json::json!([
-            { "event": "capsule_started", "region": "us-central1" }
-        ]);
+        for version in CANONICAL_VIEW_SIGNED_VERSIONS {
+            let proof = make_signed_pin_proof(
+                version,
+                Some(serde_json::json!([
+                    { "event": "capsule_started", "region": "us-central1" }
+                ])),
+            );
 
-        let policy = VerifierPolicy {
-            required_region: Some("europe-west1".into()),
-            ..Default::default()
-        };
+            let policy = VerifierPolicy {
+                required_region: Some("europe-west1".into()),
+                ..Default::default()
+            };
 
-        let result = verify_auditproof(&proof, &[], &policy);
+            let result = verify_auditproof(&proof, &[], &policy);
 
-        assert!(!result.valid, "expected rejection; got {result:?}");
-        assert_eq!(result.stage_reached, 2);
-        assert!(matches!(
-            result.failure_reason,
-            Some(FailureReason::RegionMismatch { ref required, ref actual })
-                if required == "europe-west1" && actual == "us-central1"
-        ));
+            assert!(
+                !result.valid,
+                "{version}: expected rejection; got {result:?}"
+            );
+            assert_eq!(result.stage_reached, 2, "{version}");
+            assert!(
+                matches!(
+                    result.failure_reason,
+                    Some(FailureReason::RegionMismatch { ref required, ref actual })
+                        if required == "europe-west1" && actual == "us-central1"
+                ),
+                "{version}: {result:?}"
+            );
+        }
     }
 
     /// A proof carrying no region at all cannot satisfy a residency pin — the
@@ -2091,22 +2889,97 @@ mod tests {
         ));
     }
 
-    /// A matching pin is transparent — the proof continues to the chain checks.
+    /// A matching pin on a signed trail is transparent — the proof continues
+    /// to the chain and signature checks.
     #[test]
     fn residency_pin_accepts_matching_region() {
-        let mut proof = make_minimal_v1_proof();
-        proof["activity"] = serde_json::json!([
-            { "event": "capsule_started", "region": "europe-west1" }
-        ]);
+        for version in CANONICAL_VIEW_SIGNED_VERSIONS {
+            let proof = make_signed_pin_proof(
+                version,
+                Some(serde_json::json!([
+                    { "event": "capsule_started", "region": "europe-west1" }
+                ])),
+            );
 
-        let policy = VerifierPolicy {
-            required_region: Some("europe-west1".into()),
-            ..Default::default()
-        };
+            let policy = VerifierPolicy {
+                required_region: Some("europe-west1".into()),
+                ..Default::default()
+            };
 
-        let result = verify_auditproof(&proof, &[], &policy);
+            let result = verify_auditproof(&proof, &[], &policy);
 
-        assert!(result.valid, "expected valid; got {result:?}");
+            assert!(result.valid, "{version}: expected valid; got {result:?}");
+            assert_eq!(result.stage_reached, 7, "{version}");
+        }
+    }
+
+    /// cdp_version 1.0 signs only `final_hash`, so its activity trail, and the
+    /// region in it, is unsigned: anyone could add a `capsule_started` region
+    /// equal to the pin to a genuine 1.0 proof. Under a residency pin every 1.0
+    /// proof is refused with an empty `actual`, whatever region it states;
+    /// without a pin it verifies as before.
+    #[test]
+    fn residency_pin_refuses_every_v1_0_proof() {
+        for stated in [Some("europe-west1"), Some("us-central1"), None] {
+            let mut proof = make_minimal_v1_proof();
+            if let Some(region) = stated {
+                proof["activity"] = serde_json::json!([
+                    { "event": "capsule_started", "region": region }
+                ]);
+            }
+            let policy = VerifierPolicy {
+                required_region: Some("europe-west1".into()),
+                ..Default::default()
+            };
+
+            let result = verify_auditproof(&proof, &[], &policy);
+
+            assert!(
+                !result.valid,
+                "{stated:?}: expected rejection; got {result:?}"
+            );
+            assert_eq!(result.stage_reached, 2, "{stated:?}");
+            assert_eq!(
+                result.failure_reason,
+                Some(FailureReason::RegionMismatch {
+                    required: "europe-west1".into(),
+                    actual: String::new(),
+                }),
+                "{stated:?}"
+            );
+            assert!(
+                verify_auditproof(&proof, &[], &VerifierPolicy::default()).valid,
+                "{stated:?}: without a pin the proof verifies"
+            );
+        }
+    }
+
+    /// A 2.1 or 2.2 proof without a signature has an unsigned trail: under a
+    /// residency pin it is refused at stage 2, and no return names the region
+    /// it states, here or where it ends without a pin.
+    #[test]
+    fn an_unsigned_proof_names_no_region_on_any_return() {
+        for version in ["2.1", "2.2"] {
+            let mut proof = make_signed_pin_proof(
+                version,
+                Some(serde_json::json!([
+                    { "event": "capsule_started", "region": "europe-west1" }
+                ])),
+            );
+            proof["attestation"]
+                .as_object_mut()
+                .unwrap()
+                .remove("signature");
+            let pinned = VerifierPolicy {
+                required_region: Some("europe-west1".into()),
+                ..Default::default()
+            };
+            let result = verify_auditproof(&proof, &[], &pinned);
+            assert_eq!(result.stage_reached, 2, "{version}: {result:?}");
+            assert_eq!(result.metadata.region, None, "{version}: {result:?}");
+            let result = verify_auditproof(&proof, &[], &VerifierPolicy::default());
+            assert_eq!(result.metadata.region, None, "{version}: {result:?}");
+        }
     }
 
     /// An outsider must not be able to satisfy a residency pin by appending a
@@ -2127,10 +3000,12 @@ mod tests {
     #[test]
     fn residency_pin_ignores_unsigned_region_fields() {
         for injected_at in ["region", "environment"] {
-            let mut proof = make_minimal_v1_proof();
-            proof["activity"] = serde_json::json!([
-                { "event": "capsule_started", "region": "us-central1" }
-            ]);
+            let mut proof = make_signed_pin_proof(
+                "2.1",
+                Some(serde_json::json!([
+                    { "event": "capsule_started", "region": "us-central1" }
+                ])),
+            );
             if injected_at == "region" {
                 proof["region"] = serde_json::json!("europe-west1");
             } else {
@@ -2171,6 +3046,270 @@ mod tests {
         assert!(result.valid, "expected valid; got {result:?}");
     }
 
+    // ── Diagnostic-mode refusal ──────────────────────────────────────────
+
+    fn reject_diagnostic() -> VerifierPolicy {
+        VerifierPolicy {
+            reject_diagnostic: true,
+            ..Default::default()
+        }
+    }
+
+    fn assert_diagnostic_refused(result: &VerificationResult, label: &str) {
+        assert!(!result.valid, "{label}: {result:?}");
+        assert_eq!(result.stage_reached, 2, "{label}");
+        assert_eq!(
+            result.failure_reason,
+            Some(FailureReason::DiagnosticProofRefused),
+            "{label}"
+        );
+    }
+
+    /// With the setting on, a proof on a signed-activity version whose trail
+    /// holds a `diagnostic_mode_enabled` entry, wherever it sits, is refused
+    /// at stage 2. Without the setting the same proof is accepted.
+    #[test]
+    fn reject_diagnostic_refuses_a_proof_recording_diagnostic_mode() {
+        let started = serde_json::json!({ "event": "capsule_started", "region": "us-central1" });
+        let diagnostic =
+            serde_json::json!({ "event": "diagnostic_mode_enabled", "at": "2026-05-06T12:00:00Z" });
+        for version in ["2.1", "2.2"] {
+            for trail in [
+                serde_json::json!([started, diagnostic]),
+                serde_json::json!([diagnostic, started]),
+                serde_json::json!([diagnostic]),
+            ] {
+                let proof = make_signed_pin_proof(version, Some(trail.clone()));
+                let label = format!("{version} {trail}");
+                assert_diagnostic_refused(
+                    &verify_auditproof(&proof, &[], &reject_diagnostic()),
+                    &label,
+                );
+                let accepted = verify_auditproof(&proof, &[], &VerifierPolicy::default());
+                assert!(
+                    accepted.valid,
+                    "{label}: accepted without the setting: {accepted:?}"
+                );
+                assert_eq!(accepted.stage_reached, 7, "{label}");
+            }
+        }
+    }
+
+    /// The setting refuses only what it names: a signed proof without the
+    /// event, or with a different or differently spelled event, continues to
+    /// the chain and signature checks.
+    #[test]
+    fn reject_diagnostic_accepts_a_proof_without_the_event() {
+        for version in ["2.1", "2.2"] {
+            for trail in [
+                None,
+                Some(serde_json::json!([])),
+                Some(serde_json::json!([{ "event": "capsule_started", "region": "us-central1" }])),
+                Some(serde_json::json!([{ "event": "Diagnostic_Mode_Enabled" }])),
+                Some(serde_json::json!([{ "event": "diagnostic_mode" }])),
+                Some(serde_json::json!([{ "diagnostic_mode_enabled": true }])),
+            ] {
+                let proof = make_signed_pin_proof(version, trail.clone());
+                let result = verify_auditproof(&proof, &[], &reject_diagnostic());
+                assert!(result.valid, "{version} {trail:?}: {result:?}");
+                assert_eq!(result.stage_reached, 7, "{version} {trail:?}");
+            }
+        }
+    }
+
+    /// cdp_version 1.0 signs only `final_hash`, so a holder could delete the
+    /// event from a genuine diagnostic-mode 1.0 proof and the signature would
+    /// still hold. The setting therefore refuses every 1.0 proof, with or
+    /// without an activity trail, and accepts it when off.
+    #[test]
+    fn reject_diagnostic_refuses_every_v1_0_proof() {
+        for trail in [
+            None,
+            Some(serde_json::json!([])),
+            Some(serde_json::json!([{ "event": "capsule_started", "region": "us-central1" }])),
+            Some(serde_json::json!([{ "event": "diagnostic_mode_enabled" }])),
+        ] {
+            let mut proof = make_minimal_v1_proof();
+            if let Some(trail) = &trail {
+                proof["activity"] = trail.clone();
+            }
+            let label = format!("1.0 {trail:?}");
+            assert_diagnostic_refused(
+                &verify_auditproof(&proof, &[], &reject_diagnostic()),
+                &label,
+            );
+            assert!(
+                verify_auditproof(&proof, &[], &VerifierPolicy::default()).valid,
+                "{label}: accepted without the setting"
+            );
+        }
+    }
+
+    /// The gate sits after the authority and residency pins and before the
+    /// chain walk: a pin that refuses names itself first, and a broken chain is
+    /// never reached.
+    #[test]
+    fn reject_diagnostic_runs_after_the_pins_and_before_the_chain_walk() {
+        let mut proof = make_signed_pin_proof(
+            "2.2",
+            Some(serde_json::json!([
+                { "event": "capsule_started", "region": "us-central1" },
+                { "event": "diagnostic_mode_enabled" }
+            ])),
+        );
+
+        let region = VerifierPolicy {
+            required_region: Some("europe-west1".into()),
+            ..reject_diagnostic()
+        };
+        assert!(matches!(
+            verify_auditproof(&proof, &[], &region).failure_reason,
+            Some(FailureReason::RegionMismatch { .. })
+        ));
+        let authority = VerifierPolicy {
+            required_authority_id: Some("customer-hsm-example-org-v1".into()),
+            ..reject_diagnostic()
+        };
+        assert!(matches!(
+            verify_auditproof(&proof, &[], &authority).failure_reason,
+            Some(FailureReason::AuthorityIdMismatch { .. })
+        ));
+        let matching = VerifierPolicy {
+            required_region: Some("us-central1".into()),
+            required_authority_id: Some(DEFAULT_AUTHORITY_ID.into()),
+            ..reject_diagnostic()
+        };
+        assert_diagnostic_refused(&verify_auditproof(&proof, &[], &matching), "pins match");
+
+        proof["chain"] = serde_json::json!([]);
+        assert_diagnostic_refused(
+            &verify_auditproof(&proof, &[], &reject_diagnostic()),
+            "empty chain",
+        );
+        let mut v1 = make_minimal_v1_proof();
+        v1["chain"] = serde_json::json!([]);
+        assert_diagnostic_refused(
+            &verify_auditproof(&v1, &[], &reject_diagnostic()),
+            "1.0 empty chain",
+        );
+    }
+
+    /// A 2.1 or 2.2 proof whose signature step ends as `Absent` has an
+    /// unsigned trail, like a 1.0 proof: both policies refuse it at stage 2.
+    /// The four inputs are the ones `verify_signature` reads as Absent: no
+    /// signature, an empty signature, no key, and an empty `public_key` beside
+    /// a valid `verification_key` (an empty `public_key` does not fall back).
+    /// Each is asserted Absent here, so the gate and stage 4 cannot disagree.
+    #[test]
+    fn trail_policies_refuse_a_proof_whose_signature_step_ends_absent() {
+        let trail = serde_json::json!([
+            { "event": "capsule_started", "region": "europe-west1" }
+        ]);
+        let region = VerifierPolicy {
+            required_region: Some("europe-west1".into()),
+            ..Default::default()
+        };
+        for version in CANONICAL_VIEW_SIGNED_VERSIONS {
+            let signed = make_signed_pin_proof(version, Some(trail.clone()));
+            for (policy, label) in [(&region, "pin"), (&reject_diagnostic(), "setting")] {
+                let result = verify_auditproof(&signed, &[], policy);
+                assert!(result.valid, "{version} signed, {label}: {result:?}");
+                assert_eq!(result.stage_reached, 7, "{version} signed, {label}");
+            }
+            let key = signed["attestation"]["public_key"].clone();
+            let mut inputs = Vec::new();
+            let mut no_signature = signed.clone();
+            no_signature["attestation"]
+                .as_object_mut()
+                .unwrap()
+                .remove("signature");
+            inputs.push(("no signature", no_signature));
+            let mut empty_signature = signed.clone();
+            empty_signature["attestation"]["signature"] = serde_json::json!("");
+            inputs.push(("empty signature", empty_signature));
+            let mut no_key = signed.clone();
+            no_key["attestation"]
+                .as_object_mut()
+                .unwrap()
+                .remove("public_key");
+            inputs.push(("no key", no_key));
+            let mut empty_public_key = signed.clone();
+            empty_public_key["attestation"]["public_key"] = serde_json::json!("");
+            empty_public_key["attestation"]["verification_key"] = key;
+            inputs.push(("empty public_key", empty_public_key));
+
+            for (name, proof) in inputs {
+                let label = format!("{version} {name}");
+                assert_eq!(
+                    canonical_recompute::verify_signature(&proof, version),
+                    canonical_recompute::SignatureCheck::Absent,
+                    "{label}"
+                );
+                assert_diagnostic_refused(
+                    &verify_auditproof(&proof, &[], &reject_diagnostic()),
+                    &label,
+                );
+                let pinned = verify_auditproof(&proof, &[], &region);
+                assert!(!pinned.valid, "{label}: {pinned:?}");
+                assert_eq!(pinned.stage_reached, 2, "{label}");
+                assert_eq!(
+                    pinned.failure_reason,
+                    Some(FailureReason::RegionMismatch {
+                        required: "europe-west1".into(),
+                        actual: String::new(),
+                    }),
+                    "{label}"
+                );
+                let plain = verify_auditproof(&proof, &[], &VerifierPolicy::default());
+                assert!(plain.valid, "{label}: without a policy: {plain:?}");
+                assert_eq!(plain.stage_reached, 4, "{label}");
+            }
+        }
+    }
+
+    /// Only the no-signature case is refused at stage 2. A signature that is
+    /// present but no longer covers the trail fails at stage 7, and a
+    /// `signing_mode` this build cannot verify fails at stage 4, as without
+    /// the setting.
+    #[test]
+    fn reject_diagnostic_leaves_a_present_signature_to_the_signature_step() {
+        for version in CANONICAL_VIEW_SIGNED_VERSIONS {
+            let mut stripped = make_signed_pin_proof(
+                version,
+                Some(serde_json::json!([
+                    { "event": "capsule_started", "region": "us-central1" },
+                    { "event": "diagnostic_mode_enabled" }
+                ])),
+            );
+            stripped["activity"]
+                .as_array_mut()
+                .unwrap()
+                .retain(|e| e["event"] != DIAGNOSTIC_MODE_EVENT);
+            let result = verify_auditproof(&stripped, &[], &reject_diagnostic());
+            assert!(!result.valid, "{version} stripped: {result:?}");
+            assert_eq!(result.stage_reached, 7, "{version} stripped");
+            assert!(
+                matches!(
+                    result.failure_reason,
+                    Some(FailureReason::SignatureMismatch { .. })
+                ),
+                "{version} stripped: {result:?}"
+            );
+
+            let mut unsupported = make_signed_pin_proof(version, None);
+            unsupported["signing_mode"] = serde_json::json!("dual_signature");
+            let result = verify_auditproof(&unsupported, &[], &reject_diagnostic());
+            assert_eq!(result.stage_reached, 4, "{version} unsupported");
+            assert!(
+                matches!(
+                    result.failure_reason,
+                    Some(FailureReason::AlgorithmUnsupported { .. })
+                ),
+                "{version} unsupported: {result:?}"
+            );
+        }
+    }
+
     /// Fixture 4 — policy is None (default), AuditProof has no
     /// `signing_authority` field. Accept (Nanorix-default path; pre-G7
     /// behavior preserved).
@@ -2208,7 +3347,7 @@ mod tests {
     /// when the policy is `None`, verification result is byte-equivalent
     /// to the no-policy verifier path. ≥10k iterations.
     ///
-    /// Per `feedback_canonical_hash_under_fault.md`: locks the invariant
+    /// Locks the invariant
     /// that the policy-pin gate is a NO-OP when the gate is unconfigured.
     /// Any future change to the gate that accidentally activates it under
     /// `None` policy is caught here.
@@ -2279,13 +3418,11 @@ mod tests {
         }
     }
 
-    /// Fault-injection property: for any pinned policy
-    /// `required_authority_id` and arbitrary AuditProof signing_authority
-    /// shape, the policy-pin gate fires correctly on (None | mismatch)
-    /// and accepts on (match). ≥10k iterations.
-    ///
-    /// This is the dual of `policy_none_invariant_*` — confirms the gate
-    /// fires deterministically under all input combinations.
+    /// Fault-injection property: for any cdp_version, pin, top-level
+    /// `authority_id` and unsigned `signing_authority` shape, the gate follows
+    /// the decided rule. At least 10k iterations over all four versions, 2.0
+    /// expecting the version refusal; the oracle restates the rule
+    /// independently of the implementation.
     #[test]
     fn policy_pin_decision_under_random_inputs_10k() {
         let mut state: u64 = 0xBEEF_DEAD_C0DE_F00D;
@@ -2296,104 +3433,53 @@ mod tests {
             state
         };
 
-        let auth_id_pool = [
+        let pool = [
             "customer-hsm-example-org-v1",
             "customer-hsm-other-v1",
             "customer-hsm-acme-prod-2026-q2",
             "us-kms-nanorix-v1",
         ];
+        let versions = ["1.0", "2.0", "2.1", "2.2"];
 
         for iter in 0..10_000 {
             let r = next();
-            let mut proof = make_minimal_v1_proof();
+            let version = versions[((r >> 28) as usize) % versions.len()];
+            let mut proof = make_pin_proof(version);
+            let pinned = pool[((r >> 4) as usize) % pool.len()].to_string();
 
-            let pinned = auth_id_pool[((r >> 4) as usize) % auth_id_pool.len()].to_string();
-            let policy = VerifierPolicy {
-                required_authority_id: Some(pinned.clone()),
-                ..Default::default()
+            let top: Option<String> = if (r >> 8) & 3 == 0 {
+                None
+            } else {
+                Some(pool[((r >> 10) as usize) % pool.len()].to_string())
             };
+            if let Some(t) = &top {
+                proof["authority_id"] = serde_json::json!(t);
+            }
 
-            let payload_kind = r & 3;
-            let (expected_valid, expected_claimed) = match payload_kind {
-                0 => {
-                    // No `signing_authority` field — must reject (None claimed).
-                    (false, None::<String>)
-                }
+            let sa: Option<String> = match (r >> 16) & 3 {
+                0 => None,
                 1 => {
-                    // `signing_authority` is null — equivalent to omitted.
                     proof["signing_authority"] = serde_json::Value::Null;
-                    (false, None)
+                    None
                 }
                 2 => {
-                    // Populated with the SAME authority — must accept.
-                    proof["signing_authority"] = serde_json::json!({
-                        "authority_id": pinned.clone(),
-                    });
-                    (true, Some(pinned.clone()))
+                    proof["signing_authority"] = serde_json::json!({ "other": 1 });
+                    None
                 }
                 _ => {
-                    // Populated with a DIFFERENT authority — must reject (Some claimed).
-                    let alt =
-                        auth_id_pool[((r >> 16) as usize ^ 1) % auth_id_pool.len()].to_string();
-                    let alt = if alt == pinned {
-                        // Force a mismatch by appending a suffix.
-                        format!("{}_alt", pinned)
-                    } else {
-                        alt
-                    };
-                    proof["signing_authority"] = serde_json::json!({
-                        "authority_id": alt.clone(),
-                    });
-                    (false, Some(alt))
+                    let c = pool[((r >> 20) as usize) % pool.len()].to_string();
+                    proof["signing_authority"] = serde_json::json!({ "authority_id": c });
+                    Some(c)
                 }
             };
 
-            let result = verify_auditproof(&proof, &[], &policy);
-
-            assert_eq!(
-                result.valid, expected_valid,
-                "iter {} (kind {}): expected_valid={}; got valid={}, failure={:?}",
-                iter, payload_kind, expected_valid, result.valid, result.failure_reason
-            );
-
-            if !expected_valid {
-                match result.failure_reason {
-                    Some(FailureReason::AuthorityIdMismatch {
-                        claimed_authority_id,
-                        expected_authority_id,
-                        reason,
-                    }) => {
-                        assert_eq!(
-                            claimed_authority_id, expected_claimed,
-                            "iter {} (kind {}): claimed_authority_id mismatch",
-                            iter, payload_kind
-                        );
-                        assert_eq!(
-                            expected_authority_id, pinned,
-                            "iter {} (kind {}): expected_authority_id mismatch",
-                            iter, payload_kind
-                        );
-                        let want_reason = if expected_claimed.is_some() {
-                            AuthorityIdMismatchReason::VerifierPolicyAuthorityIdMismatch
-                        } else {
-                            AuthorityIdMismatchReason::VerifierPolicyDemandsCustomerHsmAuditProofHasNone
-                        };
-                        assert_eq!(
-                            reason, want_reason,
-                            "iter {} (kind {}): sub-reason mismatch",
-                            iter, payload_kind
-                        );
-                    }
-                    other => panic!(
-                        "iter {} (kind {}): expected AuthorityIdMismatch; got {:?}",
-                        iter, payload_kind, other
-                    ),
-                }
-            }
+            let want = pin_oracle(version, top.as_deref(), sa.as_deref(), &pinned);
+            let result = verify_auditproof(&proof, &[], &pin_policy(&pinned));
+            assert_matches_oracle(&result, want, &format!("iter {iter} v{version}"));
         }
     }
 
-    // ── the specification an earlier release-A cdp_kind verifier byte-equivalence pins ──────
+    // ── the wire-format evolution policy an earlier release-A cdp_kind verifier byte-equivalence pins ──────
     //
     // The cdp_kind reserved-slot lives at the FullCdp / VerificationCdp
     // canonical-hash layer (the AuditProof document builder), NOT in the
@@ -2491,7 +3577,7 @@ mod tests {
         }
     }
 
-    // ── the specification C.1-2 — algorithm dispatch + additive-evolution tolerance ─
+    // ── the EU signing profile — algorithm dispatch + additive-evolution tolerance ─
 
     #[test]
     fn non_ed25519_attestation_algorithm_fails_typed_at_stage_4() {
@@ -2524,7 +3610,7 @@ mod tests {
 
     #[test]
     fn unknown_fields_do_not_disturb_verification() {
-        // Additive-evolution insurance (the specification C.2): a proof carrying fields
+        // Additive-evolution insurance: a proof carrying fields
         // this build has never heard of must verify exactly as without them.
         let mut proof = make_minimal_v1_proof();
         proof["future_sibling_artifact"] = serde_json::json!({ "anything": [1, 2, 3] });
@@ -2841,5 +3927,356 @@ mod tests {
             "got {:?}",
             result.failure_reason
         );
+    }
+
+    // ── customer_only, the consistency gate, the signer metadata ────
+
+    const CUSTOMER: &str = "us-customer-kms-acme-v1";
+
+    /// Re-sign `proof`'s canonical view with `key` after its labels changed.
+    fn resign(proof: &mut serde_json::Value, key: &ed25519_dalek::SigningKey) {
+        use ed25519_dalek::Signer as _;
+        let canonical = crate::canonical_recompute::recompute_canonical_hash(proof);
+        proof["attestation"]["signature"] =
+            serde_json::json!(base64_encode(&key.sign(canonical.as_bytes()).to_bytes()));
+    }
+
+    /// A chain-valid signed proof carrying `mode` and `authority` (`None`
+    /// removes `authority_id`), signed by `key` over its own canonical view.
+    fn signed_with_labels(
+        key: &ed25519_dalek::SigningKey,
+        version: &str,
+        mode: &str,
+        authority: Option<&str>,
+    ) -> serde_json::Value {
+        let embedded = base64_encode(&key.verifying_key().to_bytes());
+        let mut proof = make_signed_v21_proof(key, &embedded, "1");
+        proof["cdp_version"] = serde_json::json!(version);
+        proof["signing_mode"] = serde_json::json!(mode);
+        match authority {
+            Some(a) => proof["authority_id"] = serde_json::json!(a),
+            None => {
+                proof.as_object_mut().unwrap().remove("authority_id");
+            }
+        }
+        resign(&mut proof, key);
+        proof
+    }
+
+    /// A signed key list trusting `key` under `(authority, version)`.
+    fn key_list_for(
+        authority: &str,
+        key: &ed25519_dalek::SigningKey,
+        version: &str,
+    ) -> (crate::trust_chain::TrustChainManifest, String) {
+        let identity = ed25519_dalek::SigningKey::from_bytes(&[21u8; 32]);
+        let mut authorities = std::collections::HashMap::new();
+        authorities.insert(
+            authority.to_string(),
+            crate::trust_chain::AuthorityRecord {
+                display_name: "Test customer KMS".to_string(),
+                active_versions: vec![crate::trust_chain::KeyVersionRecord {
+                    signing_key_version: version.to_string(),
+                    public_key_b64: base64_encode(&key.verifying_key().to_bytes()),
+                    public_key_fingerprint: "sha256:test".to_string(),
+                    effective_from: "2026-01-01T00:00:00Z".to_string(),
+                    archived_at: None,
+                    algorithm: None,
+                    pqc_partner_version: None,
+                }],
+                archived_versions: vec![],
+                revoked: false,
+                emits_population_heads: false,
+            },
+        );
+        let manifest = crate::trust_chain::TrustChainManifest::build_and_sign(
+            "1",
+            "2026-10-01T00:00:00Z",
+            authorities,
+            &identity,
+        );
+        let pin = manifest.identity_fingerprint.clone();
+        (manifest, pin)
+    }
+
+    #[test]
+    fn customer_only_recomputes_the_canonical_hash_on_2_1_and_2_2() {
+        let key = ed25519_dalek::SigningKey::from_bytes(&[31u8; 32]);
+        for version in ["2.1", "2.2"] {
+            let proof = signed_with_labels(&key, version, "customer_only", Some(CUSTOMER));
+            let result = verify_auditproof(&proof, &[], &VerifierPolicy::default());
+            assert!(result.valid, "{version}: got {result:?}");
+            assert_eq!(result.stage_reached, 7, "{version}");
+            assert_eq!(result.metadata.authority_id.as_deref(), Some(CUSTOMER));
+            assert_eq!(result.metadata.authority_signed, Some(true));
+            assert_eq!(
+                result.metadata.signing_mode.as_deref(),
+                Some("customer_only")
+            );
+            assert_eq!(result.metadata.trust_chain_identity_fingerprint, None);
+        }
+    }
+
+    #[test]
+    fn customer_only_reaches_stage_8_against_the_customer_key_list() {
+        let key = ed25519_dalek::SigningKey::from_bytes(&[31u8; 32]);
+        let proof = signed_with_labels(&key, "2.1", "customer_only", Some(CUSTOMER));
+        let (list, pin) = key_list_for(CUSTOMER, &key, "1");
+        let result = verify_auditproof(&proof, &[], &policy_with(list, pin.clone()));
+        assert!(result.valid, "got {result:?}");
+        assert_eq!(result.stage_reached, 8);
+        assert_eq!(
+            result.metadata.trust_chain_identity_fingerprint.as_deref(),
+            Some(pin.as_str())
+        );
+        assert_eq!(
+            result.metadata.trust_chain_issued_at.as_deref(),
+            Some("2026-10-01T00:00:00Z")
+        );
+    }
+
+    #[test]
+    fn customer_only_with_its_mode_edited_fails_the_signature() {
+        let key = ed25519_dalek::SigningKey::from_bytes(&[31u8; 32]);
+        let mut proof = signed_with_labels(&key, "2.1", "customer_only", Some(CUSTOMER));
+        proof["signing_mode"] = serde_json::json!("nanorix_only");
+        let result = verify_auditproof(&proof, &[], &VerifierPolicy::default());
+        assert!(!result.valid);
+        assert_eq!(result.stage_reached, 7);
+        assert_eq!(
+            result.failure_reason,
+            Some(FailureReason::SignatureMismatch {
+                reason: SignatureFailureReason::DoesNotVerify
+            })
+        );
+    }
+
+    #[test]
+    fn customer_only_under_a_nanorix_authority_is_refused() {
+        let key = ed25519_dalek::SigningKey::from_bytes(&[31u8; 32]);
+        let cases: [Option<&str>; 8] = [
+            Some(NANORIX),
+            None,
+            Some("us-Customer-kms-acme-v1"),
+            Some("us-Customer-KMS-acme-v1"),
+            Some("us-customerkms-acme-v1"),
+            Some("us-customer-kms"),
+            Some("customer-"),
+            Some("us-customer_kms-acme-v1"),
+        ];
+        for version in ["2.1", "2.2"] {
+            for authority in cases {
+                let proof = signed_with_labels(&key, version, "customer_only", authority);
+                let result = verify_auditproof(&proof, &[], &VerifierPolicy::default());
+                assert!(!result.valid, "{version} {authority:?}: got {result:?}");
+                assert_eq!(result.stage_reached, 4, "{version} {authority:?}");
+                assert_eq!(
+                    result.failure_reason,
+                    Some(FailureReason::SigningModeAuthorityMismatch {
+                        claimed_authority_id: authority.map(String::from),
+                    }),
+                    "{version} {authority:?}"
+                );
+            }
+        }
+        // A null or non-string authority_id is Nanorix-classified and is
+        // reported as no claimed authority.
+        for value in [serde_json::Value::Null, serde_json::json!(7)] {
+            let mut proof = signed_with_labels(&key, "2.1", "customer_only", Some(NANORIX));
+            proof["authority_id"] = value.clone();
+            let result = verify_auditproof(&proof, &[], &VerifierPolicy::default());
+            assert_eq!(
+                result.failure_reason,
+                Some(FailureReason::SigningModeAuthorityMismatch {
+                    claimed_authority_id: None,
+                }),
+                "{value}"
+            );
+        }
+        // The algorithm check runs first (corpus vector 5).
+        let mut other_algorithm = signed_with_labels(&key, "2.1", "customer_only", Some(NANORIX));
+        other_algorithm["attestation"]["algorithm"] = serde_json::json!("ML-DSA-65");
+        let result = verify_auditproof(&other_algorithm, &[], &VerifierPolicy::default());
+        assert_eq!(
+            result.failure_reason,
+            Some(FailureReason::AlgorithmUnsupported {
+                found: "ML-DSA-65".into()
+            })
+        );
+        // An unsigned proof carrying the contradiction is refused as well,
+        // never "chain verified, signature not checked".
+        let mut unsigned = signed_with_labels(&key, "2.1", "customer_only", Some(NANORIX));
+        unsigned.as_object_mut().unwrap().remove("attestation");
+        let result = verify_auditproof(&unsigned, &[], &VerifierPolicy::default());
+        assert!(!result.valid, "got {result:?}");
+        assert!(matches!(
+            result.failure_reason,
+            Some(FailureReason::SigningModeAuthorityMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn every_customer_segment_passes_the_gate_anywhere_in_the_id() {
+        let key = ed25519_dalek::SigningKey::from_bytes(&[31u8; 32]);
+        for segment in CUSTOMER_AUTHORITY_SEGMENTS {
+            for authority in [
+                format!("{segment}acme-v2"),
+                format!("eu-{segment}acme-v2"),
+                format!("eu-west-1-acme-{segment}v2"),
+            ] {
+                assert!(is_customer_authority(&authority), "{authority}");
+                let proof = signed_with_labels(&key, "2.1", "customer_only", Some(&authority));
+                let result = verify_auditproof(&proof, &[], &VerifierPolicy::default());
+                assert!(result.valid, "{authority}: got {result:?}");
+                assert_eq!(result.status(), "not_anchored", "{authority}");
+            }
+        }
+        for not_customer in [
+            "us-Customer-KMS-acme-v1",
+            "us-customer-KMS-acme-v1",
+            "us-customer-kms",
+            "us-customerkms-acme-v1",
+            "",
+            NANORIX,
+        ] {
+            assert!(!is_customer_authority(not_customer), "{not_customer}");
+        }
+    }
+
+    #[test]
+    fn legacy_nanorix_only_under_a_customer_authority_still_verifies() {
+        let key = ed25519_dalek::SigningKey::from_bytes(&[31u8; 32]);
+        for version in ["2.1", "2.2"] {
+            let proof = signed_with_labels(&key, version, "nanorix_only", Some(CUSTOMER));
+            let result = verify_auditproof(&proof, &[], &VerifierPolicy::default());
+            assert!(result.valid, "{version}: got {result:?}");
+            assert_eq!(result.stage_reached, 7);
+            assert_eq!(
+                result.metadata.signing_mode.as_deref(),
+                Some("nanorix_only")
+            );
+            assert_eq!(result.metadata.authority_id.as_deref(), Some(CUSTOMER));
+        }
+    }
+
+    #[test]
+    fn modes_other_than_the_two_exact_values_are_still_refused() {
+        let key = ed25519_dalek::SigningKey::from_bytes(&[31u8; 32]);
+        for mode in [
+            "Customer_Only",
+            "CUSTOMER_ONLY",
+            "customer_onlyx",
+            "customer_only ",
+            "customer",
+            "customer-only",
+            "customer_dual",
+            "dual_signature",
+            "tee_attested",
+            "",
+        ] {
+            let proof = signed_with_labels(&key, "2.1", mode, Some(CUSTOMER));
+            let result = verify_auditproof(&proof, &[], &VerifierPolicy::default());
+            assert!(!result.valid, "{mode:?}: got {result:?}");
+            assert_eq!(result.stage_reached, 4, "{mode:?}");
+            assert_eq!(
+                result.failure_reason,
+                Some(FailureReason::AlgorithmUnsupported {
+                    found: format!("signing_mode={mode}")
+                }),
+                "{mode:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn signer_metadata_marks_v1_0_labels_as_not_signed() {
+        use ed25519_dalek::Signer as _;
+        let key = ed25519_dalek::SigningKey::from_bytes(&[31u8; 32]);
+        let sign_v1 = |proof: &mut serde_json::Value| {
+            let message = proof["final_hash"]
+                .as_str()
+                .unwrap()
+                .trim_start_matches("sha512:")
+                .to_string();
+            proof["attestation"] = serde_json::json!({
+                "public_key": base64_encode(&key.verifying_key().to_bytes()),
+                "signature": base64_encode(&key.sign(message.as_bytes()).to_bytes()),
+            });
+        };
+        let mut proof = make_minimal_v1_proof();
+        sign_v1(&mut proof);
+        let result = verify_auditproof(&proof, &[], &VerifierPolicy::default());
+        assert!(result.valid, "got {result:?}");
+        assert_eq!(result.stage_reached, 7, "got {result:?}");
+        assert_eq!(result.metadata.authority_id, None);
+        assert_eq!(result.metadata.authority_signed, Some(false));
+        assert_eq!(result.metadata.signing_mode, None);
+
+        // v1.0 signs final_hash only, so a mode label there is not gated.
+        let mut labelled = make_minimal_v1_proof();
+        labelled["signing_mode"] = serde_json::json!("customer_only");
+        sign_v1(&mut labelled);
+        let result = verify_auditproof(&labelled, &[], &VerifierPolicy::default());
+        assert!(result.valid, "got {result:?}");
+        assert_eq!(result.metadata.authority_signed, Some(false));
+        assert_eq!(
+            result.metadata.signing_mode.as_deref(),
+            Some("customer_only")
+        );
+    }
+
+    #[test]
+    fn absent_labels_are_reported_absent_not_as_the_default() {
+        let key = ed25519_dalek::SigningKey::from_bytes(&[31u8; 32]);
+        let mut proof = signed_with_labels(&key, "2.1", "nanorix_only", None);
+        proof.as_object_mut().unwrap().remove("signing_mode");
+        resign(&mut proof, &key);
+        let result = verify_auditproof(&proof, &[], &VerifierPolicy::default());
+        assert!(result.valid, "got {result:?}");
+        assert_eq!(result.stage_reached, 7);
+        assert_eq!(result.metadata.signing_mode, None);
+        assert_eq!(result.metadata.authority_id, None);
+        assert_eq!(result.metadata.authority_signed, Some(true));
+        let wire = serde_json::to_value(&result.metadata).unwrap();
+        assert!(wire.get("authority_id").is_none(), "{wire}");
+        assert!(wire.get("signing_mode").is_none(), "{wire}");
+        assert_eq!(wire["authority_signed"], serde_json::json!(true));
+
+        proof["authority_id"] = serde_json::json!(7);
+        resign(&mut proof, &key);
+        let result = verify_auditproof(&proof, &[], &VerifierPolicy::default());
+        assert!(result.valid, "got {result:?}");
+        assert_eq!(result.metadata.authority_id, None);
+        assert_eq!(result.metadata.authority_signed, Some(true));
+    }
+
+    #[test]
+    fn authority_signed_is_absent_when_no_signature_verified() {
+        let key = ed25519_dalek::SigningKey::from_bytes(&[31u8; 32]);
+        let signed = signed_with_labels(&key, "2.1", "customer_only", Some(CUSTOMER));
+
+        let mut unsigned = signed.clone();
+        unsigned.as_object_mut().unwrap().remove("attestation");
+        let result = verify_auditproof(&unsigned, &[], &VerifierPolicy::default());
+        assert!(result.valid, "got {result:?}");
+        assert_eq!(result.stage_reached, 4);
+        assert_eq!(result.metadata.authority_signed, None);
+        let wire = serde_json::to_value(&result.metadata).unwrap();
+        assert!(wire.get("authority_signed").is_none(), "{wire}");
+        assert_eq!(result.metadata.authority_id.as_deref(), Some(CUSTOMER));
+
+        let mut tampered = signed.clone();
+        tampered["jurisdiction"] = serde_json::json!("eu");
+        let result = verify_auditproof(&tampered, &[], &VerifierPolicy::default());
+        assert!(!result.valid);
+        assert_eq!(result.stage_reached, 7);
+        assert_eq!(result.metadata.authority_signed, None);
+
+        let mut mismatch = signed;
+        mismatch["authority_id"] = serde_json::json!(NANORIX);
+        resign(&mut mismatch, &key);
+        let result = verify_auditproof(&mismatch, &[], &VerifierPolicy::default());
+        assert_eq!(result.stage_reached, 4);
+        assert_eq!(result.metadata.authority_signed, None);
     }
 }

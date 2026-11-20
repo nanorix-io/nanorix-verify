@@ -1,0 +1,35 @@
+{
+  "authorities": {
+    "us-customer-kms-acme-v1": {
+      "active_versions": [
+        {
+          "effective_from": "2026-11-01T00:00:00Z",
+          "public_key_b64": "25lf4lFp0UHKubu6krqgH58uHs599MsqwFGQ83/MH50=",
+          "public_key_fingerprint": "sha256:9a92d2b54a9a5402de3e65a07a5cb12a8dc6758bd8e8c2ec459563d6b2c081c4",
+          "signing_key_version": "1"
+        }
+      ],
+      "archived_versions": [],
+      "display_name": "Acme Health signing authority",
+      "revoked": false
+    },
+    "us-kms-nanorix-v1": {
+      "active_versions": [
+        {
+          "effective_from": "2026-11-01T00:00:00Z",
+          "public_key_b64": "11l5O7wTooGagnx2rbb7qKSa7gB/SfLQmS2ZuCWtLEg=",
+          "public_key_fingerprint": "sha256:b14705888f4a68391a09aa5968dd25d16c3bba7bb3b6d15bf354d8dcaae85a47",
+          "signing_key_version": "1"
+        }
+      ],
+      "archived_versions": [],
+      "display_name": "Nanorix default authority",
+      "revoked": false
+    }
+  },
+  "identity_fingerprint": "sha256:3097e2dee2cb4a34b53840cdb705aed71067c36f68db0e0f559c3f3fa043315f",
+  "identity_public_key_b64": "IVL40Zt5HSRFMkLhXy6rbLfP+ntqXtMAl5YOBpiB2xI=",
+  "issued_at": "2026-11-01T00:00:00Z",
+  "manifest_signature": "base64:QgLf9dbpsedFgQk13oI7yKM+BjpLMQiLX6B4IqIsUY9MaffoQIASBWzRG5iqV1ayyBCBgOJDMFHZEILhhKnnAw==",
+  "schema_version": "1"
+}

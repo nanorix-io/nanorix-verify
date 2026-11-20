@@ -2,24 +2,31 @@
 Offline AuditProof (CDP) verifier — pure Python, no network.
 
 Re-implements the canonical 8-step SHA-512 chain + Ed25519 attestation defined
-in the chain specification and the chain specification.
+in the chain specification.
 Customers, auditors, and air-gapped systems can verify any AuditProof
 independently without trusting the Nanorix API.
 
 Usage:
-    from nanorix.verifier import verify
+    from nanorix.verifier import TrustChain, VerifierPolicy, verify
 
-    result = verify(proof_dict)         # accepts dict / path / JSON string / bytes
-    if result.ok:
+    # The key list and its pinned identity fingerprint, obtained yourself:
+    # https://verify.nanorix.io/.well-known/trust-chain.json and
+    # https://verify.nanorix.io/.well-known/identity.txt
+    chain = TrustChain.from_key_list(key_list_json, "sha256:<pinned fingerprint>")
+    result = verify(proof_dict, VerifierPolicy(trust_chain=chain))  # dict / path / JSON string / bytes
+    if result.ok:                       # status == "verified" (stage 8)
         print("VERIFIED:", result.chain_hash)
+    elif result.status == "not_anchored":
+        print("SIGNATURE VALID, key not anchored:", result.verification_scope)
     else:
-        print("FAIL:", result.failure_reason)
+        print("NOT VERIFIED:", result.failure_reason)
 
 `verify()` and `nanorix.debug.verify_auditproof()` are two surfaces over one
 implementation (`_ladder.py`), held to the pinned reference corpus at
 `tools/nanorix-verify/fixtures/corpus/` — the same contract as the Rust
-verifier. `verify()` returns a flat result with an `.ok` that requires a verified
-signature; `verify_auditproof()` returns the staged wire verdict
+verifier. `verify()` returns a flat result whose `.status` is `verified`,
+`not_anchored` or `not_verified`, and whose `.ok` is True only for `verified`;
+`verify_auditproof()` returns the staged wire verdict
 (`valid` / `failure_reason` / `stage_reached`) and takes a `VerifierPolicy`.
 
 The stages:
@@ -33,14 +40,24 @@ The stages:
    `chain_hash`.
 
 3. **Ed25519 attestation** — verify `signature` over the message that version
-   signs: `final_hash` for v1.0, `document_hash` for v2.0, and the specification
-   Part-3 canonical-view hash for v2.1 `nanorix_only`, which is what
-   production emits.
+   signs: `final_hash` for v1.0 and the canonical-view hash
+   for v2.1 `nanorix_only`, which is what production emits. A document that
+   declares cdp_version 2.0 is retired and refused at stage 2.
 
-Stage 8 — anchoring the signing key to a signed trust-chain manifest — needs
-an operator-supplied manifest and is not implemented here, so a proof whose
-embedded-key signature verifies tops out at stage 7: integrity proven,
-authenticity not established.
+4. **Trust-chain anchoring (stage 8)** — with a signed key list and the identity
+   fingerprint that must have signed it, resolve the proof's authority and key
+   version in the list and check the signature against the listed key:
+
+       from nanorix.verifier import TrustChain, VerifierPolicy, verify_auditproof
+
+       chain = TrustChain.from_key_list(key_list_json, "sha256:<pinned fingerprint>")
+       result = verify_auditproof(proof, VerifierPolicy(trust_chain=chain))
+
+   A list the pinned identity did not sign raises `TrustChainError` before any
+   proof is read. Without a key list a proof whose embedded-key signature
+   verifies tops out at stage 7: integrity proven, authenticity not established.
+   The flat `verify()` takes the same policy; without a trust chain its result
+   is `not_anchored` and `.ok` is False.
 """
 
 from __future__ import annotations
@@ -60,7 +77,29 @@ from nanorix.verifier._ladder import (
     VerifierPolicy,
     verify_auditproof,
 )
-from nanorix.verifier._verify import VerifyResult, verify
+from nanorix.verifier._trust_chain import (
+    HYBRID_PIN_PREFIX,
+    TrustChain,
+    TrustChainError,
+    compare_partners,
+    hybrid_pin,
+    is_hybrid_pin,
+    mldsa_available,
+)
+from nanorix.verifier._verify import (
+    OFFLINE_CHAIN_ONLY_SCOPE,
+    OFFLINE_EMBEDDED_KEY_SCOPE,
+    OFFLINE_V1_0_SCOPE,
+    STATUS_NOT_ANCHORED,
+    STATUS_NOT_VERIFIED,
+    STATUS_VERIFIED,
+    TRUST_CHAIN_ANCHORED_SCOPE,
+    VerifyResult,
+    VerifyStatus,
+    verification_scope_for,
+    verification_status_for,
+    verify,
+)
 from nanorix.verifier.customer_activity import (
     CUSTOMER_DECLARED_ACTIVITY_ROOT_FIELD,
     CustomerDeclaredActivityCheck,
@@ -72,11 +111,15 @@ from nanorix.verifier.customer_activity import (
 )
 from nanorix.verifier.bundle import (
     PORTABLE_RECEIPT_BUNDLE_DISCLAIMER,
+    SIGNATURE_TARGET_DOCUMENT_CANONICAL_HASH,
+    SIGNATURE_TARGET_STEP8_CHAIN_HASH,
     AuditProofAnchors,
     BundleError,
+    BundleVerification,
     PortableReceiptBundle,
     extract_receipt_bundle,
     verify_receipt_bundle,
+    verify_receipt_bundle_detailed,
 )
 from nanorix.verifier.pubkey_bundle import (
     PORTABLE_PUBKEY_BUNDLE_DISCLAIMER,
@@ -117,11 +160,28 @@ __all__ = [
     # Original V1 surface.
     "verify",
     "VerifyResult",
+    "VerifyStatus",
+    "STATUS_VERIFIED",
+    "STATUS_NOT_ANCHORED",
+    "STATUS_NOT_VERIFIED",
+    "verification_status_for",
+    "verification_scope_for",
+    "OFFLINE_EMBEDDED_KEY_SCOPE",
+    "OFFLINE_V1_0_SCOPE",
+    "OFFLINE_CHAIN_ONLY_SCOPE",
+    "TRUST_CHAIN_ANCHORED_SCOPE",
     # Stage-ladder surface (shared with `nanorix.debug`).
     "verify_auditproof",
     "VerificationResult",
     "VerificationMetadata",
     "VerifierPolicy",
+    "HYBRID_PIN_PREFIX",
+    "TrustChain",
+    "TrustChainError",
+    "compare_partners",
+    "hybrid_pin",
+    "is_hybrid_pin",
+    "mldsa_available",
     "FailureReason",
     "FailureReasonType",
     "CANONICAL_SUBSYSTEMS",
@@ -129,7 +189,7 @@ __all__ = [
     "recompute_canonical_hash",
     "signed_message",
     "recover_timestamp_from_key_id",
-    # the specification — customer_declared_activity_root sidecar check.
+    # customer_declared_activity_root sidecar check.
     "CUSTOMER_DECLARED_ACTIVITY_ROOT_FIELD",
     "CustomerDeclaredActivityCheck",
     "CustomerDeclaredActivityStatus",
@@ -137,7 +197,7 @@ __all__ = [
     "customer_declared_activity_leaf_hashes",
     "split_customer_declared_activity_lines",
     "verify_customer_declared_activity",
-    # the receipt pipeline (the per-record receipt specification + the receipt-batching specification) surface.
+    # Per-record receipt surface.
     "GENESIS_SHA512_HEX",
     "PARENT_PROOF_MAX_DEPTH",
     "PATTERN_TAGS_WIRE",
@@ -159,14 +219,18 @@ __all__ = [
     "enforce_depth_cap",
     "verify_record_receipt",
     "verify_full_audit_proof",
-    # Wave B Item 7 — Portable Receipt Bundle surface.
+    # Portable Receipt Bundle surface.
     "PORTABLE_RECEIPT_BUNDLE_DISCLAIMER",
+    "SIGNATURE_TARGET_DOCUMENT_CANONICAL_HASH",
+    "SIGNATURE_TARGET_STEP8_CHAIN_HASH",
     "AuditProofAnchors",
     "BundleError",
+    "BundleVerification",
     "PortableReceiptBundle",
     "extract_receipt_bundle",
     "verify_receipt_bundle",
-    # Wave B Item 8 — Portable Pubkey Bundle surface.
+    "verify_receipt_bundle_detailed",
+    # Portable Pubkey Bundle surface.
     "PORTABLE_PUBKEY_BUNDLE_DISCLAIMER",
     "BundleSignature",
     "PortablePubkeyBundle",

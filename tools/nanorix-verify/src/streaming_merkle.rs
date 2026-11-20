@@ -4,8 +4,11 @@
 //! activity event per chunk and closes the stream with a
 //! `streaming_egress_completed` event carrying `streaming_merkle_root` — an
 //! RFC 6962 SHA-512 commitment over exactly those chunk hashes, emitted by
-//! `runtime/eee/src/daemon/streaming.rs::merkle_root_from_leaves` and wrapped
-//! in the `sha512:` prefix at `runtime/eee/src/daemon/relay.rs:819`.
+//! `merkle_root_from_leaves` in the capsule runtime and wrapped
+//! in the `sha512:` prefix in the capsule runtime. A stream
+//! the relay stopped on a budget break closes instead with a
+//! `streaming_policy_violation` event and has no root; the walk below carries
+//! it past.
 //!
 //! Until this module, no verifier in any of the four implementations read that
 //! root. It was signed and carried past. The activity trail is inside
@@ -26,7 +29,7 @@
 //! unchecked, exactly as today.
 //!
 //! Leaves are ordered by their `seq` field rather than by document order,
-//! matching the contract stated at `streaming.rs:150` ("verifiers replay the
+//! matching the contract stated in the reference implementation ("verifiers replay the
 //! tree by collecting `chunk_hash` values in `seq` order").
 
 use nanorix_verify_types::FailureReason;
@@ -42,13 +45,13 @@ const MERKLE_INNER_PREFIX: u8 = 0x01;
 const EMPTY_SHA512_HEX: &str = "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e";
 
 /// Byte-for-byte mirror of
-/// `runtime/eee/src/daemon/streaming.rs::merkle_root_from_leaves`.
+/// `merkle_root_from_leaves` in the capsule runtime.
 ///
 /// Empty → SHA-512 of empty. Single leaf → `SHA-512(0x00 || leaf)`. Inner →
 /// `SHA-512(0x01 || left || right)`. An odd tail node is promoted unchanged.
 /// Returns 128 lowercase hex characters, unprefixed.
 ///
-/// **Forever-Standard (the Forever-Standard wire discipline).** Changing any of the three rules above
+/// **Forever-Standard.** Changing any of the three rules above
 /// invalidates every streaming Merkle root ever emitted.
 pub fn merkle_root_from_leaves(leaves: &[[u8; 64]]) -> String {
     if leaves.is_empty() {
@@ -208,8 +211,8 @@ mod tests {
     use serde_json::json;
 
     /// Independently computed (outside this crate, in Python) over the same
-    /// three leaves the EEE-side anchor test uses at
-    /// `runtime/eee/src/daemon/streaming.rs::merkle_root_for_streaming_chunk_hashes_pinned_anchor`.
+    /// three leaves the runtime-side anchor test uses at
+    /// `merkle_root_for_streaming_chunk_hashes_pinned_anchor` in the capsule runtime.
     /// Exercises leaf prefix, inner prefix and odd-tail promotion in one value.
     /// Drift here means the verifier stopped agreeing with the emitter.
     const PINNED_3LEAF_ROOT: &str = "28f59b1c8b9304b9a2d5c23d85aeee777b74655ee1104f0ec497c771ba85a9658b04969e7d1ab4c4793fb2eca3d62ad94020d29a79f0486bbf3ae828042a4e82";
@@ -446,6 +449,37 @@ mod tests {
             completed_event(3, PINNED_3LEAF_ROOT),
         ];
         assert_eq!(verify_streaming_merkle_roots(&trail), None);
+    }
+
+    fn violation_event(seq: u64) -> serde_json::Value {
+        json!({
+            "event": "streaming_policy_violation",
+            "seq": seq,
+            "violation_kind": "unauthorized_size",
+            "at": "2026-08-18T00:00:00Z",
+            "violation_detail": null,
+        })
+    }
+
+    /// A violation does not end the stream it sits in: a completed event after
+    /// it, with no started event between, is checked over every chunk event.
+    #[test]
+    fn a_violation_does_not_end_the_stream_before_its_completed_event() {
+        let trail = |third_leaf: u8| {
+            vec![
+                started_event(),
+                chunk_event(0, 0xaa),
+                chunk_event(1, 0xbb),
+                chunk_event(2, third_leaf),
+                violation_event(3),
+                completed_event(3, PINNED_3LEAF_ROOT),
+            ]
+        };
+        assert_eq!(verify_streaming_merkle_roots(&trail(0xcc)), None);
+        assert!(matches!(
+            verify_streaming_merkle_roots(&trail(0xdd)),
+            Some(FailureReason::StreamingMerkleRootMismatch { .. })
+        ));
     }
 
     #[test]

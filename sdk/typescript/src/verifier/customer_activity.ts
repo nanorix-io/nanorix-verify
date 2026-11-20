@@ -1,5 +1,5 @@
 /**
- * the specification — `customer_declared_activity_root` recompute-and-compare.
+ * `customer_declared_activity_root` recompute-and-compare.
  *
  * The proof carries ONE field about the customer's own activity record: a
  * root over the raw bytes of the file the SDK's activity helpers append to
@@ -123,7 +123,7 @@ export async function customerDeclaredActivityLeafHashes(
 }
 
 /**
- * The the specification root over a sidecar's raw bytes, in wire form `sha512:<hex>`.
+ * The root over a sidecar's raw bytes, in wire form `sha512:<hex>`.
  *
  * Byte-equivalent with the Rust, Go, Python and browser verifiers; every
  * vector in `customer_declared_activity_root_vectors.json` pins it.

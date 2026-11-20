@@ -1,0 +1,4 @@
+{
+  "description": "Canonical hash that is only its prefix.",
+  "outcome": "malformed_canonical_hash_anchor"
+}

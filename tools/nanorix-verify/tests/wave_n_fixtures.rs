@@ -1,4 +1,4 @@
-//! the receipt pipeline (the per-record receipt specification + the receipt-batching specification) fixture corpus extension tests.
+//! The receipt pipeline fixture corpus extension tests.
 //!
 //! Synthesizes 10 NEW fixtures spanning receipt set sizes + parent-proof
 //! depths + cyclic-rejection + missing-signature variants. Each fixture
@@ -10,6 +10,9 @@
 //! The 100-fixture pre-the receipt pipeline corpus baseline is verified separately
 //! (`tests/integration_tests.rs`) — this file ADDS to that surface
 //! WITHOUT mutating it.
+
+// These tests pin the wire field `valid`, which is deprecated for callers.
+#![allow(deprecated)]
 
 use nanorix_verify::{
     compute_step_8_amended_verifier, compute_step_hash, lookup_method, verifier_merkle_root,
@@ -47,7 +50,7 @@ fn compute_record_chain_hash_local(
     data.extend_from_slice(out_h.as_bytes());
     data.push(0x00);
     data.extend_from_slice(activity_root.as_bytes());
-    // the per-record receipt specification conformance (2026-08-08): a declared pattern_tag is bound into
+    // Conformance (2026-08-08): a declared pattern_tag is bound into
     // the chain hash — the fixture mirror must match the production formula
     // or every tagged fixture verifies against the wrong hash.
     if let Some(tag) = pattern_tag_wire {
@@ -213,7 +216,7 @@ fn fixture_01_n0_no_receipts_no_parents_byte_equivalent_baseline() {
     let result = verify_auditproof(&proof, &[], &VerifierPolicy::default());
     assert!(
         result.valid,
-        "N=0 (pre-the receipt pipeline) MUST verify cleanly; got {result:?}"
+        "N=0 (no receipts) MUST verify cleanly; got {result:?}"
     );
     assert!(proof.get("record_receipts").is_none());
     assert!(proof.get("parent_proof_hashes").is_none());
@@ -268,7 +271,7 @@ fn fixture_06_n1000_thousand_receipts() {
 
 #[test]
 fn fixture_07_parent_depth_1() {
-    let proof = synthesize_wave_n_proof(1, &[("input-data", "banjo")]);
+    let proof = synthesize_wave_n_proof(1, &[("input-data", "acme")]);
     let result = verify_auditproof(&proof, &[], &VerifierPolicy::default());
     assert!(result.valid, "depth-1 parent MUST verify; got {result:?}");
 }
@@ -280,10 +283,10 @@ fn fixture_08_parent_depth_4() {
     let proof = synthesize_wave_n_proof(
         2,
         &[
-            ("input-data", "banjo"),
+            ("input-data", "acme"),
             ("rag-retrieval", "llamaindex"),
             ("safety-review", "guardrails"),
-            ("output-validation", "anterior"),
+            ("output-validation", "acme-pa"),
         ],
     );
     let result = verify_auditproof(&proof, &[], &VerifierPolicy::default());
@@ -301,7 +304,7 @@ fn fixture_09_cyclic_parent_rejected() {
     // Merkle root binds into Step 8 — recomputed Step 8 differs from
     // the claimed hash because the parent set has a different root.
     //
-    // For Wave A this fixture is constructed as a *structural-anomaly*
+    // For structural verification this fixture is constructed as a *structural-anomaly*
     // proof; verify_auditproof returns invalid at stage 3 because the
     // proof's claimed parent_proofs_merkle_root doesn't match the
     // recomputed root over the cyclic parent set.
@@ -313,7 +316,7 @@ fn fixture_09_cyclic_parent_rejected() {
     // prev_hash + the NEW parent Merkle root (cycle leaf) — which DIFFERS
     // from the Step 8 chain hash stamped under the ORIGINAL parent set.
     // Chain-walk detects the mismatch at step 8 and rejects.
-    let mut proof = synthesize_wave_n_proof(1, &[("input-data", "banjo")]);
+    let mut proof = synthesize_wave_n_proof(1, &[("input-data", "acme")]);
     let step_8_hash = proof["chain"][7]["chain_hash"]
         .as_str()
         .unwrap()
@@ -344,12 +347,12 @@ fn fixture_09_cyclic_parent_rejected() {
 #[test]
 fn fixture_10_missing_signature_parent() {
     // The verifier accepts parent_proof_hashes WITHOUT per-link signature
-    // verification at Wave A (that's a Wave B Portable Pubkey Bundle
+    // verification (that's a Portable Pubkey Bundle
     // surface). The verifier DOES check the Merkle root binding, which
     // is independent of the signature presence. So this fixture verifies
     // structurally (Merkle root matches claimed) but a Wave-B-aware
     // verifier would flag the empty signature.
-    let proof = synthesize_wave_n_proof(1, &[("input-data", "banjo")]);
+    let proof = synthesize_wave_n_proof(1, &[("input-data", "acme")]);
     // Mutate the parent's signature to empty string in-place.
     let mut proof = proof;
     if let Some(parents) = proof["parent_proof_hashes"].as_array_mut() {
@@ -365,11 +368,11 @@ fn fixture_10_missing_signature_parent() {
 
     let result = verify_auditproof(&proof, &[], &VerifierPolicy::default());
     // Structural verification passes (Merkle root + chain hash both
-    // intact; per-link signature not checked at Wave A). Wave B will
+    // intact; per-link signature not checked here). A later release will
     // surface a per-link signature failure here.
     assert!(
         result.valid,
-        "missing-signature parent fixture verifies structurally at Wave A; got {result:?}"
+        "missing-signature parent fixture verifies structurally; got {result:?}"
     );
 }
 
@@ -442,7 +445,7 @@ fn forever_standard_pre_wave_n_proof_byte_identical() {
     let result = verify_auditproof(&pre_wave_n_proof, &[], &VerifierPolicy::default());
     assert!(
         result.valid,
-        "Pre-the receipt pipeline proof MUST verify byte-identically post-amendment; got {result:?}"
+        "A proof without receipts MUST verify byte-identically post-amendment; got {result:?}"
     );
     assert_eq!(result.stage_reached, 4);
 }
@@ -466,7 +469,7 @@ fn parent_attribution_rewrite_still_verifies_and_is_still_reported() {
     // The honest statement of what this release does and does not fix.
     // Rewriting `parent_organization_tag` on a genuine proof leaves the
     // signature intact — the field is not covered, and binding it is an
-    // the receipt-batching specification wire change that would move the signed Step-8 root. What
+    // wire change that would move the signed Step-8 root. What
     // changed is that the verdict no longer stays silent about the exposure.
     let mut proof = synthesize_wave_n_proof(0, &[("safety-review", "example-health")]);
     proof["parent_proof_hashes"][0]["parent_organization_tag"] =

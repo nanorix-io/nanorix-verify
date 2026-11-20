@@ -9,5 +9,6 @@
     "required_authority_id": "us-kms-nanorix-v1"
   },
   "stage_reached": 2,
+  "status": "not_verified",
   "valid": false
 }

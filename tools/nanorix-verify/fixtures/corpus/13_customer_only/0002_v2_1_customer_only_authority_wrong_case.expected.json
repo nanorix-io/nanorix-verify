@@ -1,0 +1,10 @@
+{
+  "failure_reason": {
+    "claimed_authority_id": "us-Customer-kms-acme-v1",
+    "type": "signing_mode_authority_mismatch"
+  },
+  "note": "The classification is case-sensitive: Customer-kms- is not customer-kms-, so this id is Nanorix-classified and the pair is refused. Registration refuses this id; the proof is hand-built.",
+  "stage_reached": 4,
+  "status": "not_verified",
+  "valid": false
+}

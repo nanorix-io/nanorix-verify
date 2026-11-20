@@ -1,4 +1,4 @@
-//! the specification — `customer_declared_activity_root`: recompute the customer's
+//! `customer_declared_activity_root`: recompute the customer's
 //! activity-record commitment from the raw record bytes and compare it with
 //! the root the proof carries.
 //!
@@ -8,7 +8,7 @@
 //! (`/data/activity_events.jsonl`, written by the customer's own SDK
 //! integrations) committed to one SHA-512 Merkle root at destroy. The proof
 //! carries the root only; the record itself goes back to the customer. Nanorix
-//! never parses, validates or interprets the record (INVARIANTS #6) — the
+//! never parses, validates or interprets the record — the
 //! commitment is over bytes, and the field name carries that provenance.
 //!
 //! ## The exact algorithm
@@ -21,7 +21,7 @@
 //!    lines. Nothing is trimmed: a leading space is content; an empty line in
 //!    the middle is a leaf.
 //! 2. Leaf = lowercase SHA-512 hex of the line's raw bytes.
-//! 3. `m` = the per-record receipt specification null-separated Merkle root over the leaves in order
+//! 3. `m` = the null-separated Merkle root over the leaves in order
 //!    (pairs hashed as `SHA-512(left_hex || 0x00 || right_hex)`, odd last node
 //!    duplicated), the same construction `record_receipts_merkle_root` and
 //!    `parent_proofs_merkle_root` use — or the genesis hash (SHA-512 of the
@@ -38,9 +38,10 @@
 //! ## Which proofs can carry it
 //!
 //! The root is bound only where the signed message is the canonical view —
-//! cdp_version 2.1 and 2.2. In 1.0 the signed message is `final_hash` and in
-//! 2.0 it is the `document_hash` field, so a root on either of those sits
-//! outside the signature and anyone holding the document can write one. A
+//! cdp_version 2.1 and 2.2. In 1.0 the signed message is `final_hash`, so a
+//! root there sits outside the signature and anyone holding the document can
+//! write one. cdp_version 2.0 is retired and refused at the version gate
+//! before this gate runs. A
 //! present, non-null root on any other version is therefore rejected as
 //! `UnsignedFieldPopulated` before the chain walk — the same gate the
 //! reserved attestation slots use — and is never reported as checked. The
@@ -79,7 +80,7 @@ use nanorix_verify_types::FailureReason;
 use serde_json::Value;
 use sha2::{Digest, Sha512};
 
-/// The proof field that carries the root (the specification).
+/// The proof field that carries the root.
 pub const CUSTOMER_DECLARED_ACTIVITY_ROOT_FIELD: &str = "customer_declared_activity_root";
 
 /// The cdp_versions whose signed message is the canonical view, and so the

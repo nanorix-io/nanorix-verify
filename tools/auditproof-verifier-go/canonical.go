@@ -9,15 +9,15 @@
 // Reference: https://www.rfc-editor.org/rfc/rfc8785
 //
 // Algorithm summary:
-//   1. Numbers serialize per ECMAScript Number-to-String (IEEE 754 double
-//      shortest-round-trip), with integer-valued doubles emitted as integers.
+//   1. Numbers serialize per ECMAScript Number-to-String: every number is read
+//      as an IEEE 754 double and written in its shortest round-trip form.
 //   2. Strings serialize per RFC 8259 §7 with the minimal escape set:
 //      \" \\ \b \f \n \r \t  for control chars < 0x20, \uXXXX (lowercase hex).
 //   3. Objects emit keys in lexicographic order of UTF-16 code units.
 //   4. Arrays emit elements in input order.
 //   5. No whitespace, no trailing commas.
 //
-// Forever-Standard discipline (the Forever-Standard wire discipline): the canonical form is the
+// Forever-Standard discipline: the canonical form is the
 // cryptographic-attestation contract. Any future Go-side change to this
 // implementation must produce byte-identical output to the Rust verifier on
 // the reference corpus, otherwise it's a P0.
@@ -28,6 +28,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -110,22 +111,25 @@ func jcsEmit(buf *bytes.Buffer, v interface{}) error {
 }
 
 // jcsEmitNumber emits a JSON number per RFC 8785 §3.2.2.3 (ECMAScript
-// Number-to-String). For integer-valued numbers within int64 range, emit as
-// integer literals. For non-integer floats, emit shortest-round-trip via
-// strconv.FormatFloat with the 'g' format (Go's shortest-round-trip).
+// Number-to-String). Every number is read as an IEEE 754 double, as serde_jcs
+// does with integers too, so an integer beyond 2^53 is written rounded to the
+// nearest double. Integers within 2^53 are exact doubles and are written as
+// integer literals directly.
 func jcsEmitNumber(buf *bytes.Buffer, raw string) error {
-	// Try int64 first; preserves "0", "1", "-7", etc.
-	if i, err := strconv.ParseInt(raw, 10, 64); err == nil {
+	const maxExactInt = 1 << 53
+	if i, err := strconv.ParseInt(raw, 10, 64); err == nil && -maxExactInt <= i && i <= maxExactInt {
 		buf.WriteString(strconv.FormatInt(i, 10))
 		return nil
 	}
-	// Try float — match ECMAScript Number-to-String shortest-round-trip.
 	f, err := strconv.ParseFloat(raw, 64)
 	if err != nil {
 		return fmt.Errorf("JCS: invalid number %q: %w", raw, err)
 	}
 	if f != f { // NaN
 		return fmt.Errorf("JCS: NaN not allowed by RFC 8785")
+	}
+	if math.IsInf(f, 0) {
+		return fmt.Errorf("JCS: infinite number not allowed by RFC 8785")
 	}
 	if f == 0 {
 		// -0.0 normalizes to "0" per RFC 8785.
@@ -211,12 +215,13 @@ func jcsEmitString(buf *bytes.Buffer, s string) error {
 		default:
 			if r < 0x20 {
 				fmt.Fprintf(buf, `\u%04x`, r)
-			} else if r < 0x10000 {
-				buf.WriteRune(r)
 			} else {
-				// Emit surrogate pair per RFC 8785 §3.2.2.2.
-				lead, trail := utf16.EncodeRune(r)
-				fmt.Fprintf(buf, `\u%04x\u%04x`, lead, trail)
+				// RFC 8785 §3.2.2.2: every character outside the escape set
+				// is emitted literally as UTF-8 — including astral-plane
+				// code points (U+10000+). Escaping those as \uXXXX surrogate
+				// pairs diverged from Rust serde_jcs and the Python SDK and
+				// broke cross-implementation byte-equivalence.
+				buf.WriteRune(r)
 			}
 		}
 	}

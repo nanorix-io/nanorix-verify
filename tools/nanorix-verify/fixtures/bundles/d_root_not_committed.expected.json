@@ -1,0 +1,4 @@
+{
+  "description": "(d) bundled Merkle root differs from the root Step 8 committed; the signature over that Step 8 value is genuine.",
+  "outcome": "step_8_mismatch"
+}

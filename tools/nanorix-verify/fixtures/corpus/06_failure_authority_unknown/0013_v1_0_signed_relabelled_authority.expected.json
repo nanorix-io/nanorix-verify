@@ -1,0 +1,15 @@
+{
+  "failure_reason": {
+    "claimed_authority_id": "customer-hsm-example-org-v1",
+    "expected_authority_id": "customer-hsm-example-org-v1",
+    "reason": "verifier_policy_authority_id_mismatch",
+    "type": "authority_id_mismatch"
+  },
+  "note": "cdp_version 1.0 signs no authority_id, so a top-level authority_id added after signing is refused at stage 2 and a pin accepts only us-kms-nanorix-v1.",
+  "policy": {
+    "required_authority_id": "customer-hsm-example-org-v1"
+  },
+  "stage_reached": 2,
+  "status": "not_verified",
+  "valid": false
+}

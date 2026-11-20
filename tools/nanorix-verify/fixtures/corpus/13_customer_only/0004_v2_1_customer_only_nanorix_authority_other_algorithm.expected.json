@@ -1,0 +1,10 @@
+{
+  "failure_reason": {
+    "found": "Ed448",
+    "type": "algorithm_unsupported"
+  },
+  "note": "customer_only under a Nanorix-classified authority that declares an algorithm other than Ed25519. The algorithm check runs before the consistency rule, so the reason is algorithm_unsupported.",
+  "stage_reached": 4,
+  "status": "not_verified",
+  "valid": false
+}

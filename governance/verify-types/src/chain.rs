@@ -2,7 +2,7 @@
 //!
 //! ## What this module is
 //!
-//! the specification (Accepted 2026-05-07) introduces `parent_audit_proof_id` as a
+//! The specification introduces `parent_audit_proof_id` as a
 //! customer-declared field on FullCdp / VerificationCdp. D2 — this module —
 //! ships the verifier semantics that turn a chain of customer-linked
 //! AuditProofs into a single signed trust DAG: walk from leaf back to genesis,
@@ -25,8 +25,8 @@
 //! sqlx, no cdp_document concrete types). The runbook example pseudocode uses
 //! `crate::AuditProof` for readability, but pulling the concrete `FullCdp` /
 //! `VerificationCdp` type into this crate would create a cyclic dependency
-//! (services/api depends on verify-types via `FailureReason`). Instead, this
-//! module exposes a `ChainNode` trait that `services/api`, `tools/cli`, and
+//! (the reference server implementation depends on verify-types via `FailureReason`). Instead, this
+//! module exposes a `ChainNode` trait that the reference server implementation, the Nanorix CLI, and
 //! the Python/TypeScript SDKs each implement for their concrete AuditProof
 //! variant. Chain-walk semantics are locked here once; the algorithm is
 //! adapter-agnostic.
@@ -37,15 +37,15 @@
 //! a DAG, not just a tree). Within a single `verify_chain` invocation, parents
 //! are cached in a `HashMap<String, ChainVerification>` so a node touched
 //! multiple times is verified once. The cache drops when `verify_chain`
-//! returns; cross-walk caching is forbidden by zero-retention discipline
-//! (`feedback_no_post_destroy_cache.md`).
+//! returns; cross-walk caching is forbidden by zero-retention discipline.
 //!
-//! ## Forever-Standard discipline (the Forever-Standard wire discipline)
+//!
+//! ## Forever-Standard discipline
 //!
 //! Chain-walk semantics are themselves Forever-Standard locked once shipped.
 //! Future ADRs cannot change the cycle-detection algorithm, the depth-limit
 //! default, the customer-id binding enforcement, or the in-walk caching
-//! policy without an specification minor-bump. The cdp_version field is NOT
+//! policy without an minor-bump. The cdp_version field is NOT
 //! modified by this module — chain-walk is an additive verifier capability;
 //! AuditProof shape stays "2.1" per Path A precedent (commit `c32cf37`).
 //!
@@ -55,9 +55,9 @@
 //! module. Without it, customer A could declare customer B's AuditProof as
 //! its parent, falsely coupling two unrelated trust DAGs. Defense is layered:
 //!
-//! 1. **API layer** (services/api): refuses INSERT if `parent_audit_proof_id`
+//! 1. **API layer** (the reference server implementation): refuses INSERT if `parent_audit_proof_id`
 //!    references a row in `proofs` whose `org_id` differs from the caller.
-//! 2. **DB CHECK constraint** (migration 049, future): enforces same-org
+//! 2. **DB CHECK constraint** (future): enforces same-org
 //!    linkage at write time as a structural guard.
 //! 3. **Verifier layer** (this module): fails closed on `child.org_id !=
 //!    parent.org_id` regardless of how the chain got into the verifier's
@@ -66,7 +66,7 @@
 //!
 //! Property test `prop_chain_walk_rejects_cross_customer_parent_under_random_chain_depth`
 //! exhausts random org_id permutations across chain depths to lock this
-//! invariant under fault paths per `feedback_canonical_hash_under_fault.md`.
+//! invariant under fault paths.
 
 use std::collections::{HashMap, HashSet};
 
@@ -78,7 +78,7 @@ use crate::FailureReason;
 /// customer override is a deliberate operational decision.
 ///
 /// **Forever-Standard** — value of 100 is locked at the specification ship; future
-/// changes require the specification minor-bump per the chain-walk semantics lock.
+/// changes require minor-bump per the chain-walk semantics lock.
 pub const DEFAULT_MAX_CHAIN_DEPTH: usize = 100;
 
 /// Trait exposing the minimal AuditProof surface that chain-walk needs.
@@ -86,7 +86,7 @@ pub const DEFAULT_MAX_CHAIN_DEPTH: usize = 100;
 /// Concrete implementations live in
 /// - the AuditProof document builder (impl for `FullCdp` and
 ///   `VerificationCdp`),
-/// - `tools/cli` (impl for the offline-deserialized AuditProof JSON),
+/// - the Nanorix CLI (impl for the offline-deserialized AuditProof JSON),
 /// - SDK adapters (Python / TypeScript; deferred per SDK 1.0 publish-block).
 ///
 /// Implementors are responsible for `verify_self()` — that is where signature
@@ -101,7 +101,7 @@ pub trait ChainNode {
     /// destroy time. **Load-bearing** for cross-customer attack closure.
     fn org_id(&self) -> &str;
 
-    /// The customer-declared parent AuditProof reference (the specification).
+    /// The customer-declared parent AuditProof reference.
     /// `None` indicates a pipeline-genesis capsule — chain-walk terminates here.
     fn parent_audit_proof_id(&self) -> Option<&str>;
 
@@ -129,10 +129,10 @@ pub struct SingleVerification {
     /// The owning org_id of the verified AuditProof. Matches `ChainNode::org_id()`.
     pub org_id: String,
     /// `true` iff the AuditProof's Ed25519 signature verified against the
-    /// signed canonical_hash bytes per the specification.
+    /// signed canonical_hash bytes.
     pub signature_verified: bool,
     /// `true` iff the AuditProof's `final_hash` recomputed identically from
-    /// the canonical view per the AuditProof specification.
+    /// the canonical view.
     pub canonical_hash_verified: bool,
     /// The `signing_key_version` field from the AuditProof — identifies which
     /// signing-authority version produced the signature. Useful for top-level
@@ -142,7 +142,7 @@ pub struct SingleVerification {
 
 /// Per-link verification failure surface — produced by
 /// `ChainNode::verify_self()` when a link does not verify. The `reason` is
-/// the closed `FailureReason` enum (the Forever-Standard wire discipline forever-stable wire-form).
+/// the closed `FailureReason` enum (forever-stable wire-form).
 #[derive(Debug, Clone, PartialEq)]
 pub struct SingleVerificationFailure {
     /// The capsule_id of the failed AuditProof. Lets the auditor pinpoint
@@ -264,8 +264,8 @@ pub enum ChainVerificationError {
 ///
 /// - `audit_proof` — the leaf AuditProof to verify.
 /// - `fetch_parent_fn` — callback resolving a parent `capsule_id` to its
-///   AuditProof. Online verifier (services/api): SQL query against `proofs`
-///   table. Offline verifier (tools/cli): read from sibling JSON files. SDK
+///   AuditProof. Online verifier (the reference server implementation): SQL query against `proofs`
+///   table. Offline verifier (the Nanorix CLI): read from sibling JSON files. SDK
 ///   verifier (Python/TypeScript): customer-supplied callback.
 /// - `max_depth` — maximum chain depth. Pass `DEFAULT_MAX_CHAIN_DEPTH` (100)
 ///   unless the customer's chain is genuinely deeper.
@@ -396,7 +396,7 @@ where
 
     // Step 8: customer-id binding — child.org_id MUST equal parent.org_id.
     // **Class-A trust invariant** — cross-customer parent-chain attack
-    // closure. Co-owned with Internal Auditor per the specification runbook.
+    // closure. Co-owned with Internal Auditor runbook.
     if this_verification.org_id != parent_node.org_id() {
         return Err(ChainVerificationError::CrossCustomerLinkage {
             child_org: this_verification.org_id,
@@ -447,7 +447,7 @@ mod tests {
     //! 6. **In-walk cache** — DAG ancestor hit through two paths is fetched
     //!    once.
     //! 7. **Property tests (10k iter)** — invariants 3, 4, 5, 6 under random
-    //!    chain shapes per `feedback_canonical_hash_under_fault.md`.
+    //!    chain shapes.
     use super::*;
     use crate::SignatureFailureReason;
     use proptest::prelude::*;
@@ -835,7 +835,7 @@ mod tests {
 
     // ── Property-based tests (10k iter) ────────────────────────────────────
     //
-    // Per `feedback_canonical_hash_under_fault.md`: every chain-bearing
+    // Every chain-bearing
     // invariant is exhausted at >=10k iterations. Each invariant gets its
     // own property; cumulative iteration count is 4 * 10k = 40k.
 

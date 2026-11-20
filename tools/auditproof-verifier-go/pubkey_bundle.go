@@ -1,10 +1,10 @@
-// Portable Pubkey Bundle (.ppb.json) — Wave B Item 8 surface, Go port.
+// Portable Pubkey Bundle (.ppb.json) surface, Go port.
 //
 // Mirrors `tools/nanorix-verify/src/pubkey_bundle.rs` byte-for-byte.
 // Cross-impl byte-equivalence with Rust/Python/TypeScript bundle JSON on the
 // canonical reference vectors.
 //
-// Per feedback_open_verifier_bounded_manifest.md: the bundle algorithm is
+// The bundle algorithm is
 // open + portable; the trust root (publisher pubkey) is bounded out-of-band.
 
 package auditproof
@@ -23,7 +23,7 @@ import (
 // discipline forbids COMPLIANT, SATISFIED, PASSED, MEETS.
 const PortablePubkeyBundleDisclaimer = "This Portable Pubkey Bundle is a key-discovery aid for cross-org chain verification. The bundle_signature confirms publisher integrity. The bundle issuer attests that the listed pubkeys were valid as of generated_at; subsequent key rotation or revocation MUST be verified out-of-band by the consuming party."
 
-// PortablePubkeyBundle — Wave B Item 8 wire shape.
+// PortablePubkeyBundle — wire shape.
 type PortablePubkeyBundle struct {
 	BundleVersion      string          `json:"bundle_version"`
 	BundleType         string          `json:"bundle_type"`
@@ -157,7 +157,7 @@ func VerifyPubkeyBundle(bundle *PortablePubkeyBundle, publisherPubkey ed25519.Pu
 		return err
 	}
 
-	if !ed25519.Verify(publisherPubkey, canonical, sig) {
+	if !verifyEd25519Strict(publisherPubkey, canonical, sig) {
 		return &PubkeyBundleError{Kind: PubkeyBundleErrBundleSignatureFailed}
 	}
 	return nil

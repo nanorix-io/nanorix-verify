@@ -1,0 +1,10 @@
+{
+  "failure_reason": {
+    "field": "cdp_version",
+    "type": "required_field_missing"
+  },
+  "note": "null parses, so this is not a parse failure: like any document that is not an object, it has no cdp_version.",
+  "stage_reached": 1,
+  "status": "not_verified",
+  "valid": false
+}

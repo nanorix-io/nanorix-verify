@@ -1,0 +1,4 @@
+{
+  "description": "Bundle from a proof with parent links, parent_proofs_merkle_root omitted.",
+  "outcome": "step_8_mismatch"
+}

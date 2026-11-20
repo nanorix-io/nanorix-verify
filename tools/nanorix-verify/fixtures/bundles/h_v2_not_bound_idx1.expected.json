@@ -1,0 +1,6 @@
+{
+  "description": "Genuine document_canonical_hash bundle; the bundle alone cannot bind the receipt.",
+  "outcome": "receipt_not_bound",
+  "signature_authentic": true,
+  "receipt_bound": false
+}

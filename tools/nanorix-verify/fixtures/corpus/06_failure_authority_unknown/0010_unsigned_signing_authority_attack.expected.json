@@ -1,0 +1,15 @@
+{
+  "failure_reason": {
+    "claimed_authority_id": "customer-hsm-example-org-v1",
+    "expected_authority_id": "customer-hsm-example-org-v1",
+    "reason": "verifier_policy_authority_id_mismatch",
+    "type": "authority_id_mismatch"
+  },
+  "note": "An unsigned signing_authority that disagrees with the signed top-level authority_id is refused even when it equals the pin.",
+  "policy": {
+    "required_authority_id": "customer-hsm-example-org-v1"
+  },
+  "stage_reached": 2,
+  "status": "not_verified",
+  "valid": false
+}

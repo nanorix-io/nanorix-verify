@@ -6,7 +6,9 @@
  * activity event per chunk and closes the stream with a
  * `streaming_egress_completed` event carrying `streaming_merkle_root` — an
  * RFC 6962 SHA-512 commitment over exactly those chunk hashes, emitted by
- * `runtime/eee/src/daemon/streaming.rs::merkle_root_from_leaves`.
+ * `merkle_root_from_leaves` in the capsule runtime. A stream stopped on a
+ * budget break closes instead with a `streaming_policy_violation` event and
+ * has no root; the walk below carries it past.
  *
  * Until this module, no verifier in any implementation read that root. It was
  * signed and carried past. A commitment nothing recomputes is not evidence.
@@ -16,7 +18,7 @@
  * document disclosing the root with fewer leaves is the future truncation
  * shape, not a defect; recomputing from a partial set would fail every
  * truncated proof. Leaves are ordered by their `seq` field rather than by
- * document order, per the contract at `streaming.rs:150`.
+ * document order, per the contract in the reference implementation.
  *
  * Pure Web Crypto — no Node built-ins, so the browser verifier can consume it.
  */
@@ -74,13 +76,13 @@ async function domainDigest(
 
 /**
  * Byte-for-byte mirror of
- * `runtime/eee/src/daemon/streaming.rs::merkle_root_from_leaves`.
+ * `merkle_root_from_leaves` in the capsule runtime.
  *
  * Empty → SHA-512 of empty. Single leaf → `SHA-512(0x00 || leaf)`. Inner →
  * `SHA-512(0x01 || left || right)`. An odd tail node is promoted unchanged.
  * Returns 128 lowercase hex characters, unprefixed.
  *
- * Forever-Standard (the Forever-Standard wire discipline): changing any of those three rules
+ * Forever-Standard: changing any of those three rules
  * invalidates every streaming Merkle root ever emitted.
  */
 export async function merkleRootFromLeaves(

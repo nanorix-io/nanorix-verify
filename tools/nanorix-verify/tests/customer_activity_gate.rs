@@ -1,21 +1,25 @@
-//! The stage-2 gate on `customer_declared_activity_root` (the specification), pinned
+//! The stage-2 gate on `customer_declared_activity_root`, pinned
 //! from the outside through `verify_auditproof`.
 //!
 //! Two things the gate must hold:
 //!
 //! 1. **The root is signed only on cdp_version 2.1 / 2.2.** In 1.0 the signed
-//!    message is `final_hash`; in 2.0 it is the `document_hash` field. A root
-//!    on either sits outside the signature, so anyone holding the document can
-//!    write one and then present any bytes as "the record" it commits to. The
-//!    verdict for such a document is `UnsignedFieldPopulated` at stage 2 — the
-//!    same verdict the reserved attestation slots get — and
-//!    `customer_declared_activity_checked` is never `true`.
+//!    message is `final_hash`, so a root there sits outside the signature and
+//!    anyone holding the document can write one and then present any bytes as
+//!    "the record" it commits to. The verdict for such a document is
+//!    `UnsignedFieldPopulated` at stage 2 — the same verdict the reserved
+//!    attestation slots get — and `customer_declared_activity_checked` is
+//!    never `true`. cdp_version 2.0 is refused earlier still, at the version
+//!    gate, and a root on it never reaches this gate.
 //!
 //! 2. **On 2.1 / 2.2 the root must be a `sha512:` + 128-lowercase-hex string**
 //!    (bare 128-hex accepted). Any other shape is `FieldMalformed` at stage 2,
 //!    before the chain walk and before any recompute consumes it, so the
 //!    verdict blames the field rather than the signature or the record. The
 //!    empty string is malformed, not absent.
+
+// These tests pin the wire field `valid`, which is deprecated for callers.
+#![allow(deprecated)]
 
 use base64::Engine;
 use ed25519_dalek::{Signer, SigningKey};
@@ -74,9 +78,10 @@ fn genuine_v1_0() -> Value {
     proof
 }
 
-/// A genuine 2.0 proof: the fixture's chain, signed over its `document_hash`
-/// field — the 2.0 signed message, which is read, not recomputed.
-fn genuine_v2_0() -> Value {
+/// A 2.0-labelled document: the fixture's chain with a declared
+/// `document_hash` and a signature over that declared value. The version gate
+/// refuses it before any signature or root is consulted.
+fn declared_hash_v2_0() -> Value {
     let fixture = genuine_v2_1_fixture();
     let document_hash = format!("sha512:{}", "ab".repeat(64));
     let mut proof = json!({
@@ -160,24 +165,26 @@ fn an_injected_root_on_a_genuine_1_0_proof_is_unsigned_not_checked() {
     }
 }
 
-/// Same attack on 2.0, where the signed message is the `document_hash` field
-/// and the root is equally outside it.
+/// cdp_version 2.0 is refused at the version gate, with or without a declared
+/// root, so the root is never reported as checked.
 #[test]
-fn an_injected_root_on_a_genuine_2_0_proof_is_unsigned_not_checked() {
-    let baseline = verify_auditproof(&genuine_v2_0(), &[], &VerifierPolicy::default());
-    assert!(
-        baseline.valid,
-        "the 2.0 construction must be genuine: {baseline:?}"
-    );
-    assert_eq!(baseline.stage_reached, 7);
+fn a_2_0_proof_is_refused_at_the_version_gate_with_or_without_a_root() {
+    let unsupported = FailureReason::CdpVersionUnsupported {
+        found: "2.0".into(),
+    };
+
+    let baseline = verify_auditproof(&declared_hash_v2_0(), &[], &VerifierPolicy::default());
+    assert!(!baseline.valid, "{baseline:?}");
+    assert_eq!(baseline.failure_reason, Some(unsupported.clone()));
+    assert_eq!(baseline.stage_reached, 2);
 
     let (record, root) = three_vector();
-    let mut proof = genuine_v2_0();
+    let mut proof = declared_hash_v2_0();
     proof["customer_declared_activity_root"] = Value::String(root);
 
     let result = verify_auditproof(&proof, &[], &with_record(&record));
     assert!(!result.valid);
-    assert_eq!(result.failure_reason, Some(unsigned_root()));
+    assert_eq!(result.failure_reason, Some(unsupported));
     assert_eq!(result.stage_reached, 2);
     assert_ne!(
         result.metadata.customer_declared_activity_checked,
@@ -200,7 +207,7 @@ fn on_an_unsigned_version_the_shape_is_not_consulted() {
 /// explicit `null` when the customer did not opt in.
 #[test]
 fn a_null_root_is_absence_on_every_version() {
-    for mut proof in [genuine_v1_0(), genuine_v2_0()] {
+    for mut proof in [genuine_v1_0(), signed_v2_2_with_root(Value::Null)] {
         proof["customer_declared_activity_root"] = Value::Null;
         let result = verify_auditproof(&proof, &[], &VerifierPolicy::default());
         assert!(result.valid, "{result:?}");

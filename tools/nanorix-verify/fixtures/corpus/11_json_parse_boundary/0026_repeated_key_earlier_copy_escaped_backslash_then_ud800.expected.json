@@ -1,0 +1,7 @@
+{
+  "failure_reason": null,
+  "note": "future_field twice; the earlier copy is an escaped backslash followed by the text ud800, which is no surrogate escape: the control for 0023 to 0025.",
+  "stage_reached": 7,
+  "status": "not_anchored",
+  "valid": true
+}

@@ -1,0 +1,7 @@
+{
+  "failure_reason": null,
+  "note": "A legacy proof: nanorix_only under a customer-classified authority, the shape issued before customer_only. It keeps verifying (legacy proofs stay valid); a verifier that prints notes it, and nothing refuses it.",
+  "stage_reached": 7,
+  "status": "not_anchored",
+  "valid": true
+}

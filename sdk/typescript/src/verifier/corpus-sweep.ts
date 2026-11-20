@@ -5,9 +5,10 @@
  * TypeScript verifier's agreement with the reference implementation was
  * asserted rather than checked, and the README had to say so.
  *
- * Each fixture ships a committed verdict in a `.expected.json` sibling. Three
+ * Each fixture ships a committed verdict in a `.expected.json` sibling. Four
  * things are compared against it, under the policy the fixture itself declares:
- * `valid`, `stage_reached`, and the full wire-form failure object. The prose
+ * `valid`, `stage_reached`, the `status` they give, and the full wire-form
+ * failure object. The prose
  * rendering of a failure is not compared, only the structured form, because
  * the prose may differ between implementations and the wire form may not.
  *
@@ -21,6 +22,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, basename, dirname } from "node:path";
 import { verifyAuditProof, type VerifierPolicy } from "./auditproof.js";
+import { verificationStatusFor } from "./index.js";
 
 /** Every fixture in the corpus, sorted, excluding verdicts and the index. */
 function collectFixtures(root: string): string[] {
@@ -44,15 +46,18 @@ function collectFixtures(root: string): string[] {
 }
 
 /**
- * A region or authority mismatch is only reachable under the matching pin. The
- * pin travels with the fixture rather than living in this harness, so every
- * implementation reads the same policy from the same place.
+ * A region or authority mismatch, or a diagnostic-mode refusal, is only
+ * reachable under its pin. The pin travels with the fixture rather than living
+ * in this harness, so every implementation reads the same policy from the same
+ * place.
  */
 function policyFromExpected(expected: Record<string, unknown>): VerifierPolicy {
-  const pins = (expected.policy ?? {}) as Record<string, string | undefined>;
+  const pins = (expected.policy ?? {}) as Record<string, string | boolean | undefined>;
   return {
-    requiredRegion: pins.required_region,
-    requiredAuthorityId: pins.required_authority_id,
+    rejectDiagnostic: pins.reject_diagnostic === true,
+    requiredRegion: typeof pins.required_region === "string" ? pins.required_region : undefined,
+    requiredAuthorityId:
+      typeof pins.required_authority_id === "string" ? pins.required_authority_id : undefined,
   };
 }
 
@@ -100,8 +105,10 @@ async function main(): Promise<number> {
       continue;
     }
 
-    const proof = JSON.parse(readFileSync(fixture, "utf8")) as Record<string, unknown>;
-    const result = await verifyAuditProof(proof, policyFromExpected(expected));
+    const result = await verifyAuditProof(
+      new Uint8Array(readFileSync(fixture)),
+      policyFromExpected(expected),
+    );
 
     if (result.valid !== expected.valid) {
       failures.push(`${rel}: valid — expected ${expected.valid}, got ${result.valid}`);
@@ -110,6 +117,10 @@ async function main(): Promise<number> {
       failures.push(
         `${rel}: stage_reached — expected ${expected.stage_reached}, got ${result.stage_reached}`,
       );
+    }
+    const status = verificationStatusFor(result.valid, result.stage_reached);
+    if (status !== expected.status) {
+      failures.push(`${rel}: status — expected ${String(expected.status)}, got ${status}`);
     }
     const want = canonical(expected.failure_reason ?? null);
     const got = canonical(result.failure_reason ?? null);

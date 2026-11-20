@@ -1,14 +1,14 @@
-//! embedded-key verification — independent canonical-hash recompute + Ed25519 signature
+//! Embedded-key verification — independent canonical-hash recompute + Ed25519 signature
 //! verification for the single-proof path (`verify_auditproof`).
 //!
 //! ## Why this lives here (and not in a shared product crate)
 //!
 //! The offline verifier is deliberately INDEPENDENT of the product crates so
-//! an auditor can compile and read it without pulling `services/api` /
-//! `nanorix-rzl` and their transitive deps. `nanorix-verify-types` is a
+//! an auditor can compile and read it without pulling the reference server implementation /
+//! the reference chain implementation and their transitive deps. `nanorix-verify-types` is a
 //! pure-types crate (serde only) and cannot host the JCS + SHA-512 + Ed25519
 //! runtime code. So — consistent with how this crate already mirrors
-//! the reference chain implementation and the receipt pipeline primitives — we mirror the
+//! `compute_step_hash` in the reference chain implementation and the receipt pipeline primitives — we mirror the
 //! server's canonical view here and lock byte-identity with the cross-impl
 //! corpus (`fixtures/corpus/01_single_capsule_success` must verify; the
 //! `04_failure_signature_invalid` and `08_failure_canonical_hash_drift`
@@ -16,9 +16,9 @@
 //!
 //! ## What is mirrored
 //!
-//! the AuditProof document builder::FullCdp::canonical_view()` builds a
-//! `CanonicalCdpView` (the AuditProof specification) and hashes it via
-//! the reference chain implementation = `hex(sha512(serde_jcs(view)))`.
+//! `canonical_view` in `the AuditProof document builder()` builds a
+//! `CanonicalCdpView` and hashes it via
+//! `canonical_hash` in the reference chain implementation = `hex(sha512(serde_jcs(view)))`.
 //! Because the AuditProof JSON already contains every value in its exact
 //! serialized shape, we rebuild only the *view* — mapping `FullCdp` wire field
 //! names to the canonical-view keys and applying the two transforms the server
@@ -32,13 +32,15 @@
 //!
 //! This verifies the signature against the public key EMBEDDED in the proof —
 //! identical to what the hosted verification endpoint does today. That
-//! detects tampering of a signed proof. It does NOT establish that the key
+//! detects a change to any signed byte of a proof; fields outside the signed
+//! view (such as `metadata`) are not checked. It does NOT establish that the key
 //! belongs to Nanorix; binding the key to a Nanorix-rooted trust anchor is
-//! trust-chain anchoring (the trust-chain manifest in `trust_chain.rs`).
+//! Trust-chain anchoring (the trust-chain manifest in `trust_chain.rs`).
 
+use crate::ed25519_strict::VerifyCanonicalStrict;
 use crate::{strip_base64_prefix, strip_hash_prefix};
 use base64::Engine;
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, VerifyingKey};
 use nanorix_verify_types::SignatureFailureReason;
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha512};
@@ -70,7 +72,7 @@ pub enum SignatureCheck {
     Failed(SignatureFailureReason),
 }
 
-/// Rebuild the specification Part-3 canonical view from a proof's JSON and return its
+/// Rebuild the canonical view from a proof's JSON and return its
 /// RFC-8785 JCS SHA-512 hex digest — byte-identical to the server's
 /// `FullCdp::canonical_hash()`. Lowercase 128-char hex (or empty on the
 /// impossible JCS-serialize failure, which fails the signature check closed).
@@ -127,9 +129,9 @@ pub fn recompute_canonical_hash(proof: &Value) -> String {
 
     insert_if_present(&mut v, "parent_proofs_merkle_root", proof);
     insert_if_present(&mut v, "record_receipts_merkle_root", proof);
-    // the specification — the one signed root over the customer's own activity record.
+    // The one signed root over the customer's own activity record.
     // Same skip_serializing_if mechanic as the two Merkle roots above, so a
-    // document without it hashes byte-identically to a pre-the specification document.
+    // document without it hashes byte-identically to a earlier document.
     insert_if_present(&mut v, "customer_declared_activity_root", proof);
 
     // No skip attribute -> null when absent.
@@ -167,8 +169,10 @@ pub fn recompute_canonical_hash(proof: &Value) -> String {
             let digest = Sha512::digest(&bytes);
             digest.iter().map(|b| format!("{:02x}", b)).collect()
         }
-        // Object always serializes; on the impossible failure return empty so
-        // the signature comparison fails closed rather than panicking.
+        // An object of parsed JSON always serializes, which `population_head`
+        // relies on when it keeps this value as a document identity. On the
+        // impossible failure return empty so the signature comparison fails
+        // closed rather than panicking.
         Err(_) => String::new(),
     }
 }
@@ -184,12 +188,14 @@ fn insert_if_present(view: &mut Map<String, Value>, key: &str, proof: &Value) {
 /// Select the signed message for a proof by version/mode — mirrors
 /// the hosted verification endpoint:
 /// - `1.0` -> `final_hash` (ASCII hex, prefix-stripped)
-/// - `2.0` -> `document_hash`
-/// - `2.1` / `2.2` + `nanorix_only` -> recomputed `canonical_hash`
-/// - `2.1` / `2.2` + `dual_signature` / `tee_attested` -> `None` (not
-///   verifiable here)
+/// - `2.1` / `2.2` + `nanorix_only` or `customer_only` -> recomputed
+///   `canonical_hash`; the two modes differ only in the mode string the view
+///   carries, which the recompute already binds
+/// - `2.1` / `2.2` + any other mode (`dual_signature`, `tee_attested`, a
+///   value with different case or extra characters) -> the unsupported-mode
+///   sentinel (not verifiable here)
 ///
-/// `2.2` shares the `2.1` arm deliberately: the specification / the specification changed what the
+/// `2.2` shares the `2.1` arm deliberately: changed what the
 /// canonical view may carry, not how it is hashed or signed.
 fn signed_message(proof: &Value, cdp_version: &str) -> Option<String> {
     let signing_mode = proof
@@ -204,15 +210,8 @@ fn signed_message(proof: &Value, cdp_version: &str) -> Option<String> {
                 .unwrap_or(""),
         )
         .to_string(),
-        "2.0" => strip_hash_prefix(
-            proof
-                .get("document_hash")
-                .and_then(|v| v.as_str())
-                .unwrap_or(""),
-        )
-        .to_string(),
         "2.1" | "2.2" => match signing_mode {
-            "nanorix_only" => recompute_canonical_hash(proof),
+            "nanorix_only" | "customer_only" => recompute_canonical_hash(proof),
             // Any other declared mode is one this build cannot verify. It is NOT
             // "no signature" — see SignatureCheck::Unsupported. Signalled with a
             // sentinel the callers translate, so this fn keeps its Option shape.
@@ -225,7 +224,7 @@ fn signed_message(proof: &Value, cdp_version: &str) -> Option<String> {
 
 /// Decode base64 Ed25519 signature + public key and verify `message` under
 /// them. Shared by the embedded-key (sub-A) and manifest-key (sub-B) paths,
-/// and by the boundary-attestation specification BoundaryAttestation sibling pipeline (`boundary.rs`).
+/// and by the BoundaryAttestation sibling pipeline (`boundary.rs`).
 pub(crate) fn verify_message_with_key(
     message: &str,
     sig_b64: &str,
@@ -254,7 +253,7 @@ pub(crate) fn verify_message_with_key(
         Ok(k) => k,
         Err(_) => return SignatureCheck::Failed(SignatureFailureReason::PublicKeyMalformed),
     };
-    match verifying_key.verify(message.as_bytes(), &signature) {
+    match verifying_key.verify_canonical_strict(message.as_bytes(), &signature) {
         Ok(()) => SignatureCheck::Verified,
         Err(_) => SignatureCheck::Failed(SignatureFailureReason::DoesNotVerify),
     }
@@ -269,8 +268,8 @@ fn embedded_signature(proof: &Value) -> Option<&str> {
 }
 
 /// sub-A — verify the proof's signature against the public key EMBEDDED in the
-/// proof's attestation. Proves integrity (not tampered since signing), NOT
-/// authenticity. Returns `Absent` when no signature/key is present or the
+/// proof's attestation. Proves integrity of the signed view (no signed byte
+/// changed since signing), NOT authenticity. Returns `Absent` when no signature/key is present or the
 /// version/mode is not signature-verifiable here.
 pub fn verify_signature(proof: &Value, cdp_version: &str) -> SignatureCheck {
     let pub_b64 = proof
@@ -319,7 +318,7 @@ mod tests {
     use ed25519_dalek::{Signer, SigningKey};
     use serde_json::json;
 
-    /// The wire form of the AuditProof document builder::test_cdp()` — the
+    /// The wire form of `test_cdp` in `the AuditProof document builder()` — the
     /// fixed input behind the server's `golden_canonical_hash` test. Only the
     /// fields the canonical view actually reads are present; excluded fields
     /// (residency, final_hash, destruction_trigger, the main attestation, the
@@ -342,7 +341,7 @@ mod tests {
     }
 
     /// BYTE-EXACTNESS LOCK against the signer. The offline recompute must equal
-    /// the server's golden `402f533e…` (`cdp_document.rs::golden_canonical_hash`)
+    /// the server's golden `402f533e…` (`golden_canonical_hash` in the reference implementation)
     /// for the same input. If the server's canonical view ever changes this
     /// digest changes too and BOTH goldens must be updated in lockstep — this
     /// is the cross-crate guard that keeps the independent offline verifier from
@@ -356,7 +355,7 @@ mod tests {
         );
     }
 
-    /// `customer_declared_activity_root` (the specification) is canonical-bound when
+    /// `customer_declared_activity_root` is canonical-bound when
     /// present and invisible when absent. Three facts pinned: (1) the golden
     /// input, which carries no root, still hashes to `402f533e…`; (2) a
     /// document carrying the root hashes differently — so a signature made
@@ -427,6 +426,211 @@ mod tests {
         assert_eq!(
             verify_signature(&golden_input(), "2.1"),
             SignatureCheck::Absent
+        );
+    }
+
+    /// The golden input relabelled as a customer-signed proof. The digest was
+    /// computed independently by the Python verifier's recompute, which also
+    /// reproduces `402f533e…` for the unrelabelled input.
+    const CUSTOMER_ONLY_GOLDEN: &str = "7c44dbde61de1b8aed00683c4cd116ef93a08a93340302ddccc8e8c1c90697d64f2c22014537de74759c9f7ce7cf7960337c50d7bdcd9c84a0156ebe6b9ab44d";
+
+    fn customer_only_input() -> serde_json::Value {
+        let mut input = golden_input();
+        input["signing_mode"] = json!("customer_only");
+        input["authority_id"] = json!("us-customer-kms-acme-v1");
+        // A final_hash distinct from every canonical digest, so a message
+        // built from it can never pass for the canonical view.
+        input["final_hash"] = json!(format!("sha512:{}", "ab".repeat(64)));
+        input
+    }
+
+    #[test]
+    fn customer_only_signs_the_canonical_view_on_2_1_and_2_2() {
+        let input = customer_only_input();
+        assert_eq!(recompute_canonical_hash(&input), CUSTOMER_ONLY_GOLDEN);
+        for version in ["2.1", "2.2"] {
+            let message = signed_message(&input, version).expect("a message");
+            assert_eq!(message, CUSTOMER_ONLY_GOLDEN, "{version}");
+            assert_ne!(message, "ab".repeat(64), "{version}");
+        }
+        // The mode string is bound: the same view under nanorix_only hashes
+        // differently, so a mode edit after signing breaks the signature.
+        let mut relabelled = input.clone();
+        relabelled["signing_mode"] = json!("nanorix_only");
+        assert_ne!(recompute_canonical_hash(&relabelled), CUSTOMER_ONLY_GOLDEN);
+    }
+
+    #[test]
+    fn customer_only_roundtrip_and_mode_edit() {
+        let key = SigningKey::from_bytes(&[9u8; 32]);
+        let mut signed = customer_only_input();
+        let sig = key.sign(CUSTOMER_ONLY_GOLDEN.as_bytes());
+        signed["attestation"] = json!({
+            "algorithm": "Ed25519",
+            "public_key": base64::engine::general_purpose::STANDARD
+                .encode(key.verifying_key().to_bytes()),
+            "signature": base64::engine::general_purpose::STANDARD.encode(sig.to_bytes()),
+        });
+        let pub_b64 =
+            base64::engine::general_purpose::STANDARD.encode(key.verifying_key().to_bytes());
+        for version in ["2.1", "2.2"] {
+            assert_eq!(verify_signature(&signed, version), SignatureCheck::Verified);
+            assert_eq!(
+                verify_signature_against(&signed, version, &pub_b64),
+                SignatureCheck::Verified
+            );
+        }
+        let mut edited = signed.clone();
+        edited["signing_mode"] = json!("nanorix_only");
+        assert_eq!(
+            verify_signature(&edited, "2.1"),
+            SignatureCheck::Failed(SignatureFailureReason::DoesNotVerify)
+        );
+    }
+
+    #[test]
+    fn only_the_two_exact_modes_are_verifiable() {
+        for mode in [
+            "Customer_Only",
+            "CUSTOMER_ONLY",
+            "customer_onlyx",
+            "customer",
+            "customer-only",
+            " customer_only",
+            "dual_signature",
+            "tee_attested",
+        ] {
+            let mut input = customer_only_input();
+            input["signing_mode"] = json!(mode);
+            let message = signed_message(&input, "2.1").expect("a sentinel");
+            assert_eq!(
+                message,
+                format!("{UNSUPPORTED_MODE_SENTINEL}{mode}"),
+                "{mode:?}"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod strict_tests {
+    use super::*;
+
+    fn unhex(s: &str) -> Vec<u8> {
+        (0..s.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+            .collect()
+    }
+
+    struct Vector {
+        name: String,
+        pk: [u8; 32],
+        sig: [u8; 64],
+        msgs: Vec<String>,
+        dalek_permissive: bool,
+    }
+
+    fn fixture() -> serde_json::Value {
+        serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/vectors/ed25519_strict_negative.json"
+        )))
+        .unwrap()
+    }
+
+    fn parse_vector(v: &serde_json::Value) -> Vector {
+        Vector {
+            name: v["name"].as_str().unwrap().to_string(),
+            pk: unhex(v["public_key_hex"].as_str().unwrap())
+                .try_into()
+                .unwrap(),
+            sig: unhex(v["signature_hex"].as_str().unwrap())
+                .try_into()
+                .unwrap(),
+            msgs: v["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|m| m.as_str().unwrap().to_string())
+                .collect(),
+            dalek_permissive: v["permissive_accepts"]["dalek"].as_bool().unwrap_or(false),
+        }
+    }
+
+    /// Vectors every verifier must refuse (`must_reject`).
+    fn strict_vectors() -> Vec<Vector> {
+        let doc = fixture();
+        let all = doc["vectors"].as_array().unwrap();
+        let out: Vec<Vector> = all
+            .iter()
+            .filter(|v| v["must_reject"].as_bool() == Some(true))
+            .map(parse_vector)
+            .collect();
+        assert_eq!(out.len(), all.len(), "every vector must set must_reject");
+        out
+    }
+
+    fn encodings(key: &str) -> Vec<[u8; 32]> {
+        fixture()[key]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|h| unhex(h.as_str().unwrap()).try_into().unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn verify_message_with_key_refuses_every_vector() {
+        let b64 = base64::engine::general_purpose::STANDARD;
+        for v in strict_vectors() {
+            for m in &v.msgs {
+                let r = verify_message_with_key(m, &b64.encode(v.sig), &b64.encode(v.pk));
+                assert!(matches!(r, SignatureCheck::Failed(_)), "{}", v.name);
+            }
+        }
+    }
+
+    #[test]
+    fn verify_message_with_key_refuses_weak_encodings_refusal_only() {
+        let b64 = base64::engine::general_purpose::STANDARD;
+        let mut one = [0u8; 32];
+        one[0] = 1;
+        let mut base = [0x66u8; 32];
+        base[0] = 0x58;
+        let mut all = encodings("small_order_point_encodings_hex");
+        all.extend(encodings("non_canonical_point_encodings_hex"));
+        assert_eq!(all.len(), 34);
+        for enc in all {
+            let as_key = [base, one].concat();
+            let r = verify_message_with_key("m", &b64.encode(as_key), &b64.encode(enc));
+            assert!(matches!(r, SignatureCheck::Failed(_)));
+            let as_r = [enc, one].concat();
+            let r = verify_message_with_key("m", &b64.encode(as_r), &b64.encode(base));
+            assert!(matches!(r, SignatureCheck::Failed(_)));
+        }
+    }
+
+    #[test]
+    fn dalek_permissive_verify_matches_the_fixture_verdict() {
+        use ed25519_dalek::Verifier as _;
+        let mut accepted = 0;
+        for v in strict_vectors() {
+            let vk = ed25519_dalek::VerifyingKey::from_bytes(&v.pk).unwrap();
+            let sig = ed25519_dalek::Signature::from_bytes(&v.sig);
+            for m in &v.msgs {
+                assert_eq!(
+                    vk.verify(m.as_bytes(), &sig).is_ok(),
+                    v.dalek_permissive,
+                    "{}",
+                    v.name
+                );
+                accepted += usize::from(v.dalek_permissive);
+            }
+        }
+        assert!(
+            accepted >= 12,
+            "expected permissive-accepted vectors, got {accepted}"
         );
     }
 }

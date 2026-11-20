@@ -1,0 +1,7 @@
+{
+  "failure_reason": null,
+  "note": "customer_only under us-customer-kms-acme-v1, whose customer-kms- segment is not at the start of the id: customer-classified, so it passes the consistency rule. The signature covers the canonical view, mode included, exactly as for nanorix_only; without a key list it is not_anchored at stage 7.",
+  "stage_reached": 7,
+  "status": "not_anchored",
+  "valid": true
+}

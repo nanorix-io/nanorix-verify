@@ -5,15 +5,18 @@
 //! verifiers are held to. Until this file existed, **no test read it at all** —
 //! which is how the corpus came to ship in a state where every success fixture
 //! failed to verify (the generator signed the v1.0 message, `final_hash`, into
-//! documents stamped `cdp_version: "2.1"`, whose signed message is the specification
+//! documents stamped `cdp_version: "2.1"`, whose signed message is the authority-agnostic signing rules
 //! Part-3 canonical-view hash). The chain integrity checks all passed, so
 //! nothing else noticed.
 //!
 //! Three guarantees are asserted here, and all three are load-bearing:
 //!
 //! 1. **Every fixture verifies to its committed verdict** — `valid`,
-//!    `stage_reached`, and the full `failure_reason` wire object, under the
-//!    policy the fixture itself declares.
+//!    `stage_reached`, the `status` they give, and the full `failure_reason`
+//!    wire object, under the policy the fixture itself declares. A fixture
+//!    serde_json cannot parse never reaches the library: it pins the stage 1
+//!    `json_root` verdict the other verifiers give, and the CLI refuses it with
+//!    exit 1 and no verdict.
 //! 2. **The corpus is exactly what the generator produces** — regenerated into
 //!    a tempdir and compared byte-for-byte. Without this, a hand-edited fixture
 //!    (or a hand-edited `.expected.json` "fixing" a failure) silently becomes
@@ -22,8 +25,11 @@
 //!    file, no expected file without a fixture, and the count agrees with
 //!    `index.json`.
 
+// These tests pin the wire field `valid`, which is deprecated for callers.
+#![allow(deprecated)]
+
 use nanorix_verify::{verify_auditproof, VerifierPolicy};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
 fn corpus_root() -> PathBuf {
@@ -70,10 +76,23 @@ fn read_json(path: &Path) -> Value {
     serde_json::from_slice(&bytes).unwrap_or_else(|e| panic!("parse {}: {e}", path.display()))
 }
 
-/// Build the policy a fixture declares it needs. A `region_mismatch` /
-/// `authority_id_mismatch` verdict is only reachable under the matching pin, so
-/// the pin travels with the fixture rather than living in this harness where
-/// the other language implementations cannot see it.
+/// The verdict a fixture pins when serde_json cannot parse it, as the CLI
+/// parses: `nanorix-verify` refuses the file before verification, and the Go,
+/// Python and TypeScript verifiers report this.
+fn unparseable_verdict() -> (bool, u64, Value, &'static str) {
+    (
+        false,
+        1,
+        json!({ "type": "required_field_missing", "field": "json_root" }),
+        "not_verified",
+    )
+}
+
+/// Build the policy a fixture declares it needs. A `region_mismatch`,
+/// `authority_id_mismatch` or `diagnostic_proof_refused` verdict is only
+/// reachable under the matching setting, so the setting travels with the
+/// fixture rather than living in this harness where the other language
+/// implementations cannot see it.
 fn policy_from_expected(expected: &Value) -> VerifierPolicy {
     let pin = |key: &str| {
         expected
@@ -84,6 +103,10 @@ fn policy_from_expected(expected: &Value) -> VerifierPolicy {
     VerifierPolicy {
         required_region: pin("required_region"),
         required_authority_id: pin("required_authority_id"),
+        reject_diagnostic: expected
+            .pointer("/policy/reject_diagnostic")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
         ..Default::default()
     }
 }
@@ -108,32 +131,49 @@ fn every_corpus_fixture_verifies_to_its_committed_verdict() {
             "fixture {rel} has no .expected.json sibling"
         );
 
-        let proof = read_json(fixture);
         let expected = read_json(&expected_path);
         let policy = policy_from_expected(&expected);
 
-        let result = verify_auditproof(&proof, &[], &policy);
-
-        let actual_reason = result
-            .failure_reason
-            .as_ref()
-            .map(|r| serde_json::to_value(r).expect("serialize failure reason"))
-            .unwrap_or(Value::Null);
+        let bytes = std::fs::read(fixture).expect("read fixture");
+        let (valid, stage_reached, actual_reason, status) =
+            match serde_json::from_slice::<Value>(&bytes) {
+                Ok(proof) => {
+                    let result = verify_auditproof(&proof, &[], &policy);
+                    let reason = result
+                        .failure_reason
+                        .as_ref()
+                        .map(|r| serde_json::to_value(r).expect("serialize failure reason"))
+                        .unwrap_or(Value::Null);
+                    (
+                        result.valid,
+                        u64::from(result.stage_reached),
+                        reason,
+                        result.status(),
+                    )
+                }
+                Err(_) => unparseable_verdict(),
+            };
         let expected_reason = expected
             .get("failure_reason")
             .cloned()
             .unwrap_or(Value::Null);
 
-        if result.valid != expected["valid"].as_bool().expect("expected.valid") {
+        if valid != expected["valid"].as_bool().expect("expected.valid") {
             failures.push(format!(
-                "{rel}: valid — expected {}, got {}",
-                expected["valid"], result.valid
+                "{rel}: valid — expected {}, got {valid}",
+                expected["valid"]
             ));
         }
-        if u64::from(result.stage_reached) != expected["stage_reached"].as_u64().expect("stage") {
+        if stage_reached != expected["stage_reached"].as_u64().expect("stage") {
             failures.push(format!(
-                "{rel}: stage_reached — expected {}, got {}",
-                expected["stage_reached"], result.stage_reached
+                "{rel}: stage_reached — expected {}, got {stage_reached}",
+                expected["stage_reached"]
+            ));
+        }
+        let expected_status = expected["status"].as_str().expect("expected.status");
+        if status != expected_status {
+            failures.push(format!(
+                "{rel}: status — expected {expected_status}, got {status}"
             ));
         }
         if actual_reason != expected_reason {
@@ -149,6 +189,54 @@ fn every_corpus_fixture_verifies_to_its_committed_verdict() {
         failures.len(),
         fixtures.len(),
         failures.join("\n  ")
+    );
+}
+
+/// What the sweep maps a serde_json refusal to stands for the CLI's own
+/// behaviour: it refuses the file with exit 1 and writes no verdict.
+#[test]
+fn unparseable_fixtures_are_refused_by_the_cli() {
+    let mut refused = 0;
+    for fixture in collect_fixtures(&corpus_root()) {
+        let bytes = std::fs::read(&fixture).expect("read fixture");
+        if serde_json::from_slice::<Value>(&bytes).is_ok() {
+            continue;
+        }
+        refused += 1;
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_nanorix-verify"))
+            .arg("--json")
+            .arg(&fixture)
+            .output()
+            .expect("run nanorix-verify");
+        assert_eq!(
+            out.status.code(),
+            Some(1),
+            "{}: expected exit 1",
+            fixture.display()
+        );
+        assert!(
+            out.stdout.is_empty(),
+            "{}: expected no verdict on stdout",
+            fixture.display()
+        );
+    }
+    // The fixtures whose committed verdict is "unparseable" are exactly the
+    // ones serde_json refuses: a CLI that parsed one of them would otherwise
+    // pass this test with a smaller `refused`.
+    let committed = collect_fixtures(&corpus_root())
+        .iter()
+        .filter(|fixture| {
+            let expected = read_json(&expected_path_for(fixture));
+            expected["failure_reason"]["field"] == "json_root"
+        })
+        .count();
+    assert!(
+        refused > 0,
+        "no unparseable fixture: this test checked nothing"
+    );
+    assert_eq!(
+        refused, committed,
+        "the CLI refused {refused} fixtures, the corpus commits {committed} as unparseable"
     );
 }
 

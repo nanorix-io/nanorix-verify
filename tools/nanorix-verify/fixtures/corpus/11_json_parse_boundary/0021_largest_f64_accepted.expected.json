@@ -1,0 +1,7 @@
+{
+  "failure_reason": null,
+  "note": "1.7976931348623158e308, the largest 64-bit float: the in-range side of the boundary 0022 crosses.",
+  "stage_reached": 7,
+  "status": "not_anchored",
+  "valid": true
+}

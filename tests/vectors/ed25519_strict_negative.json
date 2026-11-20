@@ -1,0 +1,410 @@
+{
+  "description": "Ed25519 strict-verification negative vectors. Every entry in `vectors` must be refused by every Nanorix verifier. `permissive_accepts` says which reference verifiers accept the vector without strict checks; vectors a permissive verifier accepts are the ones the strict path exists for. `registration_negative_vectors` verify under strict verification and are refused only when a key is registered.",
+  "vectors": [
+    {
+      "name": "identity_key_identity_R_S0",
+      "public_key_hex": "0100000000000000000000000000000000000000000000000000000000000000",
+      "signature_hex": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "messages": [
+        "nanorix strict-ed25519 negative vector",
+        "a different message, same signature"
+      ],
+      "must_reject": true,
+      "reason": "small-order public key: one signature verifies for every message",
+      "permissive_accepts": {
+        "dalek": true,
+        "tweetnacl": true,
+        "openssl": true,
+        "go": true,
+        "webcrypto": true
+      }
+    },
+    {
+      "name": "honest_key_identity_R",
+      "public_key_hex": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+      "signature_hex": "010000000000000000000000000000000000000000000000000000000000000029357f5a133b2ac1a3e761847cce3690914b3375ad508d991e6c1c0bf0d57a0e",
+      "messages": [
+        "nanorix strict-ed25519 small-order R"
+      ],
+      "must_reject": true,
+      "reason": "honest public key, small-order R",
+      "permissive_accepts": {
+        "dalek": true,
+        "tweetnacl": true,
+        "openssl": true,
+        "go": true,
+        "webcrypto": true
+      }
+    },
+    {
+      "name": "honest_S_plus_L",
+      "public_key_hex": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+      "signature_hex": "d508f31f3518e7f4136c9c43c08e404b6160d5663441bad061fee31b7cbd41cfba889ac23749a9c7044500246da2f5f1acafe45dc682530cdf019f9ceed76a13",
+      "messages": [
+        "nanorix strict-ed25519 genuine signature S variants"
+      ],
+      "must_reject": true,
+      "reason": "genuine signature with S replaced by S+L: only S is non-canonical",
+      "permissive_accepts": {
+        "dalek": false,
+        "tweetnacl": true,
+        "openssl": false,
+        "go": false,
+        "webcrypto": false
+      }
+    },
+    {
+      "name": "honest_S_plus_2L_ge_2pow253",
+      "public_key_hex": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+      "signature_hex": "d508f31f3518e7f4136c9c43c08e404b6160d5663441bad061fee31b7cbd41cfa75c901f52acbb1fdbe1f7c64b9cd406adafe45dc682530cdf019f9ceed76a23",
+      "messages": [
+        "nanorix strict-ed25519 genuine signature S variants"
+      ],
+      "must_reject": true,
+      "reason": "genuine signature with S replaced by S+2L (S >= 2^253)",
+      "permissive_accepts": {
+        "dalek": false,
+        "tweetnacl": true,
+        "openssl": false,
+        "go": false,
+        "webcrypto": false
+      }
+    },
+    {
+      "name": "honest_S_equals_L",
+      "public_key_hex": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+      "signature_hex": "d508f31f3518e7f4136c9c43c08e404b6160d5663441bad061fee31b7cbd41cfedd3f55c1a631258d69cf7a2def9de1400000000000000000000000000000010",
+      "messages": [
+        "nanorix strict-ed25519 genuine signature S variants"
+      ],
+      "must_reject": true,
+      "reason": "genuine R with S = L: the equation does not hold, so this is refused by every verifier, permissive or strict",
+      "permissive_accepts": {
+        "dalek": false,
+        "tweetnacl": false,
+        "openssl": false,
+        "go": false,
+        "webcrypto": false
+      }
+    },
+    {
+      "name": "small_order_key_0000000000000000000000000000000000000000000000000000000000000000",
+      "public_key_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+      "signature_hex": "58666666666666666666666666666666666666666666666666666666666666660100000000000000000000000000000000000000000000000000000000000000",
+      "messages": [
+        "small-order key 00000000 #22"
+      ],
+      "must_reject": true,
+      "reason": "small-order public key encoding with R = B and S = 1; the message is chosen so k*A = O",
+      "permissive_accepts": {
+        "dalek": true,
+        "tweetnacl": true,
+        "openssl": true,
+        "go": true,
+        "webcrypto": true
+      }
+    },
+    {
+      "name": "small_order_key_0000000000000000000000000000000000000000000000000000000000000080",
+      "public_key_hex": "0000000000000000000000000000000000000000000000000000000000000080",
+      "signature_hex": "58666666666666666666666666666666666666666666666666666666666666660100000000000000000000000000000000000000000000000000000000000000",
+      "messages": [
+        "small-order key 00000000 #2"
+      ],
+      "must_reject": true,
+      "reason": "small-order public key encoding with R = B and S = 1; the message is chosen so k*A = O",
+      "permissive_accepts": {
+        "dalek": true,
+        "tweetnacl": true,
+        "openssl": true,
+        "go": true,
+        "webcrypto": true
+      }
+    },
+    {
+      "name": "small_order_key_0100000000000000000000000000000000000000000000000000000000000000",
+      "public_key_hex": "0100000000000000000000000000000000000000000000000000000000000000",
+      "signature_hex": "58666666666666666666666666666666666666666666666666666666666666660100000000000000000000000000000000000000000000000000000000000000",
+      "messages": [
+        "small-order key 01000000 #0"
+      ],
+      "must_reject": true,
+      "reason": "small-order public key encoding with R = B and S = 1; the message is chosen so k*A = O",
+      "permissive_accepts": {
+        "dalek": true,
+        "tweetnacl": true,
+        "openssl": true,
+        "go": true,
+        "webcrypto": true
+      }
+    },
+    {
+      "name": "small_order_key_0100000000000000000000000000000000000000000000000000000000000080",
+      "public_key_hex": "0100000000000000000000000000000000000000000000000000000000000080",
+      "signature_hex": "58666666666666666666666666666666666666666666666666666666666666660100000000000000000000000000000000000000000000000000000000000000",
+      "messages": [
+        "small-order key 01000000 #0"
+      ],
+      "must_reject": true,
+      "reason": "small-order public key encoding with R = B and S = 1; the message is chosen so k*A = O",
+      "permissive_accepts": {
+        "dalek": true,
+        "tweetnacl": true,
+        "openssl": true,
+        "go": true,
+        "webcrypto": true
+      }
+    },
+    {
+      "name": "small_order_key_26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
+      "public_key_hex": "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
+      "signature_hex": "58666666666666666666666666666666666666666666666666666666666666660100000000000000000000000000000000000000000000000000000000000000",
+      "messages": [
+        "small-order key 26e8958f #5"
+      ],
+      "must_reject": true,
+      "reason": "small-order public key encoding with R = B and S = 1; the message is chosen so k*A = O",
+      "permissive_accepts": {
+        "dalek": true,
+        "tweetnacl": true,
+        "openssl": true,
+        "go": true,
+        "webcrypto": true
+      }
+    },
+    {
+      "name": "small_order_key_26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85",
+      "public_key_hex": "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85",
+      "signature_hex": "58666666666666666666666666666666666666666666666666666666666666660100000000000000000000000000000000000000000000000000000000000000",
+      "messages": [
+        "small-order key 26e8958f #37"
+      ],
+      "must_reject": true,
+      "reason": "small-order public key encoding with R = B and S = 1; the message is chosen so k*A = O",
+      "permissive_accepts": {
+        "dalek": true,
+        "tweetnacl": true,
+        "openssl": true,
+        "go": true,
+        "webcrypto": true
+      }
+    },
+    {
+      "name": "small_order_key_c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+      "public_key_hex": "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+      "signature_hex": "58666666666666666666666666666666666666666666666666666666666666660100000000000000000000000000000000000000000000000000000000000000",
+      "messages": [
+        "small-order key c7176a70 #2"
+      ],
+      "must_reject": true,
+      "reason": "small-order public key encoding with R = B and S = 1; the message is chosen so k*A = O",
+      "permissive_accepts": {
+        "dalek": true,
+        "tweetnacl": true,
+        "openssl": true,
+        "go": true,
+        "webcrypto": true
+      }
+    },
+    {
+      "name": "small_order_key_c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa",
+      "public_key_hex": "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa",
+      "signature_hex": "58666666666666666666666666666666666666666666666666666666666666660100000000000000000000000000000000000000000000000000000000000000",
+      "messages": [
+        "small-order key c7176a70 #3"
+      ],
+      "must_reject": true,
+      "reason": "small-order public key encoding with R = B and S = 1; the message is chosen so k*A = O",
+      "permissive_accepts": {
+        "dalek": true,
+        "tweetnacl": true,
+        "openssl": true,
+        "go": true,
+        "webcrypto": true
+      }
+    },
+    {
+      "name": "small_order_key_ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+      "public_key_hex": "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+      "signature_hex": "58666666666666666666666666666666666666666666666666666666666666660100000000000000000000000000000000000000000000000000000000000000",
+      "messages": [
+        "small-order key ecffffff #1"
+      ],
+      "must_reject": true,
+      "reason": "small-order public key encoding with R = B and S = 1; the message is chosen so k*A = O",
+      "permissive_accepts": {
+        "dalek": true,
+        "tweetnacl": true,
+        "openssl": true,
+        "go": true,
+        "webcrypto": true
+      }
+    },
+    {
+      "name": "small_order_key_ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "public_key_hex": "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "signature_hex": "58666666666666666666666666666666666666666666666666666666666666660100000000000000000000000000000000000000000000000000000000000000",
+      "messages": [
+        "small-order key ecffffff #0"
+      ],
+      "must_reject": true,
+      "reason": "small-order public key encoding with R = B and S = 1; the message is chosen so k*A = O",
+      "permissive_accepts": {
+        "dalek": true,
+        "tweetnacl": true,
+        "openssl": true,
+        "go": true,
+        "webcrypto": true
+      }
+    },
+    {
+      "name": "small_order_key_edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+      "public_key_hex": "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+      "signature_hex": "58666666666666666666666666666666666666666666666666666666666666660100000000000000000000000000000000000000000000000000000000000000",
+      "messages": [
+        "small-order key edffffff #0"
+      ],
+      "must_reject": true,
+      "reason": "small-order public key encoding with R = B and S = 1; the message is chosen so k*A = O",
+      "permissive_accepts": {
+        "dalek": true,
+        "tweetnacl": true,
+        "openssl": true,
+        "go": true,
+        "webcrypto": true
+      }
+    },
+    {
+      "name": "small_order_key_edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "public_key_hex": "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "signature_hex": "58666666666666666666666666666666666666666666666666666666666666660100000000000000000000000000000000000000000000000000000000000000",
+      "messages": [
+        "small-order key edffffff #6"
+      ],
+      "must_reject": true,
+      "reason": "small-order public key encoding with R = B and S = 1; the message is chosen so k*A = O",
+      "permissive_accepts": {
+        "dalek": true,
+        "tweetnacl": true,
+        "openssl": true,
+        "go": true,
+        "webcrypto": true
+      }
+    },
+    {
+      "name": "small_order_key_eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+      "public_key_hex": "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+      "signature_hex": "58666666666666666666666666666666666666666666666666666666666666660100000000000000000000000000000000000000000000000000000000000000",
+      "messages": [
+        "small-order key eeffffff #0"
+      ],
+      "must_reject": true,
+      "reason": "small-order public key encoding with R = B and S = 1; the message is chosen so k*A = O",
+      "permissive_accepts": {
+        "dalek": true,
+        "tweetnacl": true,
+        "openssl": true,
+        "go": true,
+        "webcrypto": true
+      }
+    },
+    {
+      "name": "small_order_key_eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "public_key_hex": "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "signature_hex": "58666666666666666666666666666666666666666666666666666666666666660100000000000000000000000000000000000000000000000000000000000000",
+      "messages": [
+        "small-order key eeffffff #0"
+      ],
+      "must_reject": true,
+      "reason": "small-order public key encoding with R = B and S = 1; the message is chosen so k*A = O",
+      "permissive_accepts": {
+        "dalek": true,
+        "tweetnacl": true,
+        "openssl": true,
+        "go": true,
+        "webcrypto": true
+      }
+    },
+    {
+      "name": "identity_key_basepoint_R_S1",
+      "public_key_hex": "0100000000000000000000000000000000000000000000000000000000000000",
+      "signature_hex": "58666666666666666666666666666666666666666666666666666666666666660100000000000000000000000000000000000000000000000000000000000000",
+      "messages": [
+        "nanorix strict-ed25519 negative vector",
+        "a different message, same signature"
+      ],
+      "must_reject": true,
+      "reason": "identity public key with R = B and S = 1: holds for every message, and only the public-key check refuses it",
+      "permissive_accepts": {
+        "dalek": true,
+        "tweetnacl": true,
+        "openssl": true,
+        "go": true,
+        "webcrypto": true
+      }
+    }
+  ],
+  "registration_negative_vectors": [
+    {
+      "name": "mixed_order_key",
+      "public_key_hex": "b502ff3d92e31d8190b4aa4ea0414005167fad089c4de9dac8a2fc850fed4f58",
+      "signature_hex": "b2e06a32553b6dc8451501702a7154ab5150662c227a9e3168caff74506b4192ed48bb89896be8396cf07ceeab904f7c01e31fabea88f624237e012254d6940e",
+      "messages": [
+        "mixed-order key #10"
+      ],
+      "must_reject_at_registration": true,
+      "verifies_under_strict_verify": true,
+      "reason": "honest key plus an order-8 point: not small-order, not torsion-free; a cofactorless verifier accepts the signature (k = 0 mod 8). Refused at registration only; proof verification is unchanged"
+    }
+  ],
+  "ownership_proof_negative_vectors": [
+    {
+      "name": "honest_registered_key_identity_R",
+      "authority_id": "customer-hsm-example-org-v1",
+      "claimed_pubkey_hex": "29acbae141bccaf0b22e1a94d34d0bc7361e526d0bfe12c89794bc9322966dd7",
+      "registered_pubkey_hex": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+      "signature_hex": "0100000000000000000000000000000000000000000000000000000000000000f7c011a3552b0fa4401231c8f7abc825c20404292eaf620b4b2caadc72158505",
+      "reason": "honest registered key, ownership signature with R = identity and S = k*a: a permissive verifier accepts it, only the strict verify refuses it"
+    }
+  ],
+  "small_order_point_encodings_hex": [
+    "0000000000000000000000000000000000000000000000000000000000000000",
+    "0000000000000000000000000000000000000000000000000000000000000080",
+    "0100000000000000000000000000000000000000000000000000000000000000",
+    "0100000000000000000000000000000000000000000000000000000000000080",
+    "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
+    "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85",
+    "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+    "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa",
+    "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+  ],
+  "small_order_note": "Every 32-byte encoding of a point of order dividing 8: y in {0, 1, p-1, y8, p-y8} with either sign bit, plus the non-canonical y+p forms for y in {0, 1}. A strict verifier rejects a public key or signature R that matches any entry.",
+  "non_canonical_point_encodings_hex": [
+    "f0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "f0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "f1ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "f1ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "f2ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "f2ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "f3ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "f3ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "f6ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "f6ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "f7ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "f7ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "fbffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "fbffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "fcffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "fcffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "fdffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "fdffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+  ],
+  "non_canonical_note": "y = p+2..p+18 with either sign bit, restricted to the y values (3,4,5,6,9,10,14,15,16,18 after reduction) that decode to curve points; the other values do not decode. These points are not small-order, so no signature can be built that verifies under them (their discrete logs are unknown). Every verifier must reject a non-canonical (y >= p) public key and a non-canonical R: the public key explicitly, and R because it is compared byte-for-byte against the canonical re-encoding. The cross-implementation check is the predicate and the verdict on these encodings, in both the public-key and R positions."
+}

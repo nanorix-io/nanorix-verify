@@ -1,4 +1,5 @@
 target/
+__pycache__/
 node_modules/
 *.tar.gz
 .DS_Store

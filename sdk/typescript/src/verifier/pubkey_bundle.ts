@@ -1,11 +1,11 @@
 /**
- * Portable Pubkey Bundle (.ppb.json) — Wave B Item 8 surface, TypeScript port.
+ * Portable Pubkey Bundle (.ppb.json) — TypeScript port.
  *
  * Pure TypeScript port of `tools/nanorix-verify/src/pubkey_bundle.rs`.
  * Cross-impl byte-equivalence with Rust/Go/Python on the canonical reference
  * vectors.
  *
- * Per feedback_open_verifier_bounded_manifest.md: the bundle algorithm is open
+ * Per the rule that the verifier algorithm is open and its trust chain is bounded by a manifest: the bundle algorithm is open
  * + portable; the trust root (publisher pubkey) is bounded out-of-band.
  *
  * Forever-Standard discipline: bundles are append-only — key rotation = new
@@ -14,6 +14,7 @@
  */
 
 import { canonicalizeBytes } from "../_jcs.js";
+import { hasSmallOrderKeyOrR } from "./_ed25519_strict.js";
 
 /** Mandatory disclaimer — factual language only. */
 export const PORTABLE_PUBKEY_BUNDLE_DISCLAIMER =
@@ -38,7 +39,7 @@ export interface BundleSignature {
   signature: string;
 }
 
-/** Wave B Item 8 wire shape. */
+/** Wire shape. */
 export interface PortablePubkeyBundle {
   bundle_version: string;
   bundle_type: string;
@@ -300,6 +301,10 @@ export async function verifyPubkeyBundle(
   }
 
   const canonical = canonicalBytesForSigning(bundle);
+
+  if (hasSmallOrderKeyOrR(publisherPubkey, sigBytes)) {
+    throw new PubkeyBundleError("bundle_signature_failed");
+  }
 
   const subtle = getSubtle();
   let pubKey: CryptoKey;

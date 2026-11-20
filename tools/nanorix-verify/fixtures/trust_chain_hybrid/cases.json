@@ -1,0 +1,892 @@
+{
+  "about": "Hybrid key-list vectors. Each case: a kind (key_list, record or two_lists), its files, the pin, the result the Rust reference gives (expected), and the result a verifier without an ML-DSA check gives (expected_without_ml_dsa). Regenerated and compared by tools/nanorix-verify/tests/hybrid_key_list_vectors.rs; see README.md.",
+  "cases": [
+    {
+      "expected": {
+        "loaded": true,
+        "partners": {
+          "us-customer-kms-acme-hybrid1.57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346-v1": {
+            "1": "2"
+          }
+        }
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_v1.json",
+      "kind": "key_list",
+      "name": "hybrid_list_verifies_under_hybrid_pin",
+      "note": "A BYOC list signed by both identity keys, checked under the hybrid pin recomputed from both. It loads, and its one Ed25519 version names its ML-DSA-65 partner.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "expected": {
+        "loaded": true,
+        "partners": {
+          "us-customer-kms-acme-hybrid1.57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346-v1": {
+            "1": "2",
+            "3": "4"
+          }
+        }
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_rotated.json",
+      "kind": "key_list",
+      "name": "hybrid_rotated_list_verifies",
+      "note": "After a rotation the archived Ed25519 version keeps its partner.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "expected": {
+        "refusal": "pqc_signature_missing"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_v1_missing_pqc_signature.json",
+      "kind": "key_list",
+      "name": "missing_pqc_signature",
+      "note": "The ML-DSA-87 list signature was removed.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "expected": {
+        "refusal": "signature_invalid"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_v1_empty_ed25519_signature.json",
+      "kind": "key_list",
+      "name": "empty_ed25519_signature",
+      "note": "The Ed25519 list signature is empty.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "expected": {
+        "refusal": "load_failed"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_v1_missing_ed25519_signature.json",
+      "kind": "key_list",
+      "name": "missing_ed25519_signature",
+      "note": "The Ed25519 list signature member was removed.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "expected": {
+        "refusal": "signature_invalid"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_v1_ed25519_signature_over_other_bytes.json",
+      "kind": "key_list",
+      "name": "ed25519_signature_over_other_bytes",
+      "note": "The Ed25519 list signature is a well-formed signature by the identity key over other bytes; the ML-DSA-87 signature is genuine.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "expected": {
+        "refusal": "malformed"
+      },
+      "expected_by_verifier": {
+        "go": {
+          "refusal": "signature_invalid"
+        },
+        "python": {
+          "refusal": "signature_invalid"
+        },
+        "typescript": {
+          "refusal": "signature_invalid"
+        }
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_v1_ed25519_identity_key_not_a_point.json",
+      "kind": "key_list",
+      "name": "ed25519_identity_key_not_a_point",
+      "note": "The Ed25519 identity key is 32 bytes that are not a curve point; the list's identity_fingerprint and the pin are the hybrid pin over it. Verifiers refuse it with different kinds today (expected_by_verifier).",
+      "pin": "hybrid1-sha256:e7ed05b99ba4590daecb18f2e07f0e79e5475067e9e0d3b253c7a94618a80fda"
+    },
+    {
+      "expected": {
+        "refusal": "pqc_identity_missing"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_v1_missing_pqc_identity_key.json",
+      "kind": "key_list",
+      "name": "missing_pqc_identity_key",
+      "note": "The ML-DSA-87 identity key was removed.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "expected": {
+        "refusal": "pqc_identity_missing"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_v1_missing_pqc_identity_algorithm.json",
+      "kind": "key_list",
+      "name": "missing_pqc_identity_algorithm",
+      "note": "The identity algorithm member was removed.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "expected": {
+        "refusal": "malformed"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_v1_missing_ed25519_identity_key.json",
+      "kind": "key_list",
+      "name": "missing_ed25519_identity_key",
+      "note": "The Ed25519 identity key was removed.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "expected": {
+        "refusal": "fingerprint_mismatch"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_v1_swapped_mldsa_key.json",
+      "kind": "key_list",
+      "name": "swapped_mldsa_key",
+      "note": "The ML-DSA-87 identity key was replaced after signing. The recomputed pin differs.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "expected": {
+        "refusal": "fingerprint_mismatch"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_v1_swapped_mldsa_key_resigned.json",
+      "kind": "key_list",
+      "name": "swapped_mldsa_key_resigned",
+      "note": "A forger holding the Ed25519 identity key put in its own ML-DSA-87 key and signed both halves. The list is self-consistent; its pin is not the given one.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "expected": {
+        "refusal": "pqc_signature_invalid"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_v1_bad_pqc_signature.json",
+      "kind": "key_list",
+      "name": "bad_pqc_signature",
+      "note": "One bit of the ML-DSA-87 signature was flipped.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "expected": {
+        "refusal": "pqc_signature_invalid"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_v1_wrong_tag.json",
+      "kind": "key_list",
+      "name": "wrong_tag",
+      "note": "The ML-DSA-87 signature covers the payload behind another H5 tag.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "expected": {
+        "refusal": "pqc_signature_invalid"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_v1_no_tag.json",
+      "kind": "key_list",
+      "name": "no_tag",
+      "note": "The ML-DSA-87 signature covers the payload with no tag.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "expected": {
+        "refusal": "pqc_signature_invalid"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_v1_tag_as_context.json",
+      "kind": "key_list",
+      "name": "tag_as_context",
+      "note": "The ML-DSA-87 signature covers the payload with the tag given as the FIPS 204 context instead of in the message. foreign_signatures.json holds it.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "expected": {
+        "refusal": "pqc_signature_invalid"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_v1_hash_mldsa_signature.json",
+      "kind": "key_list",
+      "name": "hash_mldsa_signature",
+      "note": "A HashML-DSA (SHA-512) signature over the tagged payload, not pure ML-DSA. foreign_signatures.json holds it.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "expected": {
+        "refusal": "pqc_signature_invalid"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_v1_truncated_pqc_signature.json",
+      "kind": "key_list",
+      "name": "truncated_pqc_signature",
+      "note": "The ML-DSA-87 signature is one byte short.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "expected": {
+        "refusal": "pqc_signature_invalid"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_v1_ed25519_signature_as_pqc.json",
+      "kind": "key_list",
+      "name": "ed25519_signature_as_pqc",
+      "note": "The post-quantum slot holds the Ed25519 signature.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "expected": {
+        "refusal": "pqc_algorithm_unsupported"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_v1_slh_dsa_algorithm.json",
+      "kind": "key_list",
+      "name": "slh_dsa_algorithm",
+      "note": "The list names SLH-DSA-SHA2-256s as its identity algorithm, signed. H2 opens ML-DSA-87 only for a BYOC list.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "expected": {
+        "refusal": "non_canonical_encoding"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_v1_noncanonical_pqc_signature_base64.json",
+      "kind": "key_list",
+      "name": "noncanonical_pqc_signature_base64",
+      "note": "The ML-DSA-87 signature's base64 has its trailing bits set: the same bytes under a lenient decoder.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "expected": {
+        "refusal": "signature_invalid"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_v1_noncanonical_ed25519_signature_base64.json",
+      "kind": "key_list",
+      "name": "noncanonical_ed25519_signature_base64",
+      "note": "The Ed25519 list signature's base64 has its trailing bits set: the same bytes under a lenient decoder.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "expected": {
+        "refusal": "malformed"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_v1_noncanonical_ed25519_identity_key_base64.json",
+      "kind": "key_list",
+      "name": "noncanonical_ed25519_identity_key_base64",
+      "note": "The Ed25519 identity key's base64 has its trailing bits set, and both halves signed that text.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "expected": {
+        "refusal": "non_canonical_encoding"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_v1_noncanonical_ed25519_record_key_base64.json",
+      "kind": "key_list",
+      "name": "noncanonical_ed25519_record_key_base64",
+      "note": "An Ed25519 record key's base64 has its trailing bits set, and both halves signed that text.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "expected": {
+        "refusal": "non_canonical_encoding"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_v1_noncanonical_partner_key_base64.json",
+      "kind": "key_list",
+      "name": "noncanonical_partner_key_base64",
+      "note": "The partner key's base64 has its trailing bits set, and both halves signed that text.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "expected": {
+        "refusal": "load_failed"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_v1_repeated_pqc_identity_key.json",
+      "kind": "key_list",
+      "name": "repeated_pqc_identity_key",
+      "note": "The ML-DSA-87 identity key member is written twice, another key first. A parser keeps one; no signature covers the other.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "expected": {
+        "refusal": "fingerprint_mismatch"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_v1_classical_identity_fingerprint.json",
+      "kind": "key_list",
+      "name": "classical_identity_fingerprint_given_hybrid_pin",
+      "note": "The list's identity_fingerprint is the sha256: value of its Ed25519 key, signed by both halves.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "expected": {
+        "refusal": "fingerprint_mismatch"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "fingerprint_mismatch"
+      },
+      "key_list": "key_lists/hybrid_v1.json",
+      "kind": "key_list",
+      "name": "hybrid_pin_uppercase",
+      "note": "The pin is written in uppercase.",
+      "pin": "HYBRID1-SHA256:57A3FC68AFFEFFC06994B03ABE35E5AADF896A26B39FA8188DF6FC515CF4E346"
+    },
+    {
+      "expected": {
+        "refusal": "fingerprint_mismatch"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_v1.json",
+      "kind": "key_list",
+      "name": "hybrid_pin_uppercase_hex",
+      "note": "The pin's prefix is lowercase, its hex uppercase.",
+      "pin": "hybrid1-sha256:57A3FC68AFFEFFC06994B03ABE35E5AADF896A26B39FA8188DF6FC515CF4E346"
+    },
+    {
+      "expected": {
+        "refusal": "fingerprint_mismatch"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_v1.json",
+      "kind": "key_list",
+      "name": "hybrid_pin_inner_whitespace",
+      "note": "The pin has a space after its prefix.",
+      "pin": "hybrid1-sha256: 57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "expected": {
+        "refusal": "fingerprint_mismatch"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "fingerprint_mismatch"
+      },
+      "key_list": "key_lists/hybrid_v1.json",
+      "kind": "key_list",
+      "name": "hybrid_pin_outer_whitespace",
+      "note": "The pin has surrounding whitespace. The library does not trim; a caller that trims gives it the pin without.",
+      "pin": " hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346\n"
+    },
+    {
+      "expected": {
+        "refusal": "fingerprint_mismatch"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "fingerprint_mismatch"
+      },
+      "key_list": "key_lists/hybrid_v1.json",
+      "kind": "key_list",
+      "name": "hybrid_list_under_classical_pin",
+      "note": "A genuine BYOC list under the sha256: value of its own Ed25519 identity key.",
+      "pin": "sha256:4b735ac174e40636507716ed5c9a8a75fbf6f462357fabb71ac42b7bd502c64a"
+    },
+    {
+      "expected": {
+        "refusal": "pqc_identity_under_classical_pin"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "pqc_identity_under_classical_pin"
+      },
+      "key_list": "key_lists/classical_list_with_pqc_identity_members_signed.json",
+      "kind": "key_list",
+      "name": "classical_list_with_pqc_identity_members_signed",
+      "note": "A classical list whose Ed25519 signature covers post-quantum identity members, under a classical pin.",
+      "pin": "sha256:4b735ac174e40636507716ed5c9a8a75fbf6f462357fabb71ac42b7bd502c64a"
+    },
+    {
+      "expected": {
+        "refusal": "signature_invalid"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "signature_invalid"
+      },
+      "key_list": "key_lists/classical_list_with_pqc_identity_members_appended.json",
+      "kind": "key_list",
+      "name": "classical_list_with_pqc_identity_members_appended",
+      "note": "The same members appended to a classical list after signing. The signed payload now holds them, so the Ed25519 signature fails.",
+      "pin": "sha256:4b735ac174e40636507716ed5c9a8a75fbf6f462357fabb71ac42b7bd502c64a"
+    },
+    {
+      "expected": {
+        "loaded": true,
+        "partners": {
+          "us-customer-kms-acme-v1": {}
+        }
+      },
+      "expected_without_ml_dsa": {
+        "loaded": true,
+        "partners": {
+          "us-customer-kms-acme-v1": {}
+        }
+      },
+      "key_list": "key_lists/classical_list.json",
+      "kind": "key_list",
+      "name": "classical_list_loads",
+      "note": "A classical list with a plain authority id loads under its sha256: pin, as before.",
+      "pin": "sha256:4b735ac174e40636507716ed5c9a8a75fbf6f462357fabb71ac42b7bd502c64a"
+    },
+    {
+      "expected": {
+        "refusal": "byoc_authority_needs_hybrid_pin"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "byoc_authority_needs_hybrid_pin"
+      },
+      "key_list": "key_lists/classical_list_with_byoc_ids.json",
+      "kind": "key_list",
+      "name": "classical_pin_list_with_byoc_ids",
+      "note": "A classical list carrying an authority id of BYOC form, under a classical pin (H4.8).",
+      "pin": "sha256:4b735ac174e40636507716ed5c9a8a75fbf6f462357fabb71ac42b7bd502c64a"
+    },
+    {
+      "expected": {
+        "refusal": "authority_id_malformed"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_list_id_outside_alphabet.json",
+      "kind": "key_list",
+      "name": "list_id_outside_alphabet",
+      "note": "A BYOC list whose authority id holds an uppercase letter, outside the id alphabet (H4.8). Under a classical pin the alphabet is left to population check (f), as before.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "expected": {
+        "refusal": "byoc_authority_pin_mismatch"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_list_with_plain_id.json",
+      "kind": "key_list",
+      "name": "hybrid_pin_list_with_plain_id",
+      "note": "A BYOC list whose authority id is not of BYOC form.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "expected": {
+        "refusal": "byoc_authority_pin_mismatch"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_list_with_other_pin_id.json",
+      "kind": "key_list",
+      "name": "hybrid_pin_list_with_other_pin_id",
+      "note": "A BYOC list whose authority id carries another install's pin.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "expected": {
+        "refusal": "byoc_authority_id_malformed"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_list_with_malformed_byoc_id.json",
+      "kind": "key_list",
+      "name": "hybrid_pin_list_with_malformed_byoc_id",
+      "note": "An authority id of BYOC form whose version has a leading zero (-v01).",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "expected": {
+        "refusal": "byoc_authority_id_malformed"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_list_with_hybrid1_in_base.json",
+      "kind": "key_list",
+      "name": "hybrid_pin_list_with_hybrid1_in_base",
+      "note": "An authority id holding hybrid1 twice, once in its base.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "expected": {
+        "refusal": "key_label_unknown"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_v1_label_ed25519_lowercase.json",
+      "kind": "key_list",
+      "name": "label_ed25519_lowercase",
+      "note": "A record labelled ed25519 in lowercase.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "expected": {
+        "refusal": "key_label_unknown"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_v1_label_ml_dsa_87_record.json",
+      "kind": "key_list",
+      "name": "label_ml_dsa_87_record",
+      "note": "A record labelled ML-DSA-87, which is the identity's algorithm, not a record's.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "expected": {
+        "refusal": "version_repeated"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_v1_version_repeated_text.json",
+      "kind": "key_list",
+      "name": "version_repeated_text",
+      "note": "One authority holds version 2 twice, active and archived.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "expected": {
+        "refusal": "version_repeated"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_v1_version_repeated_integer.json",
+      "kind": "key_list",
+      "name": "version_repeated_integer",
+      "note": "One authority holds versions 2 and 02.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "expected": {
+        "refusal": "fingerprint_not_of_key"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_v1_fingerprint_not_of_key.json",
+      "kind": "key_list",
+      "name": "fingerprint_not_of_key",
+      "note": "The partner record's fingerprint is another key's.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "expected": {
+        "refusal": "key_in_two_roles"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_v1_identity_key_reused_as_record_key.json",
+      "kind": "key_list",
+      "name": "identity_key_reused_as_record_key",
+      "note": "The Ed25519 identity key is also a record key.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "expected": {
+        "refusal": "partner_missing"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_v1_partner_missing.json",
+      "kind": "key_list",
+      "name": "partner_missing",
+      "note": "The Ed25519 version names no partner.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "expected": {
+        "refusal": "partner_missing"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_v1_archived_partner_missing.json",
+      "kind": "key_list",
+      "name": "archived_partner_missing",
+      "note": "An archived Ed25519 version names no partner.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "expected": {
+        "refusal": "partner_invalid"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_v1_partner_not_mldsa65.json",
+      "kind": "key_list",
+      "name": "partner_not_mldsa65",
+      "note": "The Ed25519 version names an Ed25519 version as its partner.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "expected": {
+        "refusal": "partner_invalid"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_v1_partner_not_on_list.json",
+      "kind": "key_list",
+      "name": "partner_not_on_list",
+      "note": "The Ed25519 version names a version the authority does not hold.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "expected": {
+        "refusal": "partner_invalid"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_v1_partner_other_authority.json",
+      "kind": "key_list",
+      "name": "partner_other_authority",
+      "note": "The named partner is a record of another authority.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "expected": {
+        "refusal": "partner_shared"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_v1_partner_shared_by_two_versions.json",
+      "kind": "key_list",
+      "name": "partner_shared_by_two_versions",
+      "note": "Two Ed25519 versions name one partner.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "expected": {
+        "refusal": "partner_invalid"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_v1_partner_version_on_mldsa_record.json",
+      "kind": "key_list",
+      "name": "partner_version_on_mldsa_record",
+      "note": "An ML-DSA-65 record names a partner of its own.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "expected": {
+        "refusal": "key_in_two_roles"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_v1_key_in_two_roles.json",
+      "kind": "key_list",
+      "name": "key_in_two_roles",
+      "note": "One Ed25519 key under two versions.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "expected": {
+        "refusal": "record_key_length"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_v1_record_key_wrong_length.json",
+      "kind": "key_list",
+      "name": "record_key_wrong_length",
+      "note": "The partner's key is one byte short of ML-DSA-65's 1952.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "earlier": "key_lists/hybrid_v1.json",
+      "expected": {
+        "same_partners": true
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "kind": "two_lists",
+      "later": "key_lists/hybrid_rotated.json",
+      "name": "two_lists_same_partners",
+      "note": "An earlier list and a later rotated one that keeps version 1 and its partner in the archive.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "earlier": "key_lists/hybrid_v1.json",
+      "expected": {
+        "refusal": "partner_changed"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "kind": "two_lists",
+      "later": "key_lists/hybrid_v1_partner_key_changed.json",
+      "name": "two_lists_partner_changed_same_version_string",
+      "note": "The later list keeps version 2 but with another ML-DSA-65 key.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "earlier": "key_lists/hybrid_v1.json",
+      "expected": {
+        "refusal": "partner_changed"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "kind": "two_lists",
+      "later": "key_lists/hybrid_v1_ed25519_key_changed.json",
+      "name": "two_lists_ed25519_key_changed",
+      "note": "The later list keeps version 1 but with another Ed25519 key.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "earlier": "key_lists/hybrid_v1.json",
+      "expected": {
+        "refusal": "partner_changed"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "kind": "two_lists",
+      "later": "key_lists/hybrid_v1_partner_repointed.json",
+      "name": "two_lists_partner_repointed",
+      "note": "The later list keeps every record of the earlier one, unchanged, but points version 1 at another ML-DSA-65 version.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "earlier": "key_lists/hybrid_v1.json",
+      "expected": {
+        "refusal": "partner_changed"
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "kind": "two_lists",
+      "later": "key_lists/hybrid_v3_only.json",
+      "name": "two_lists_version_dropped",
+      "note": "The later list drops versions 1 and 2.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346"
+    },
+    {
+      "expected": {
+        "failure_reason": {
+          "found": "ML-DSA-65 record check (hybrid pin)",
+          "type": "algorithm_unsupported"
+        },
+        "stage_reached": 8,
+        "status": "not_verified",
+        "valid": false
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_v1.json",
+      "kind": "record",
+      "name": "ed25519_only_record_under_hybrid_pin",
+      "note": "An Ed25519-only record under the BYOC authority, whose key and version resolve in the list. Under a hybrid pin this build refuses it at stage 8: it does not check the record's ML-DSA-65 half yet.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346",
+      "proof": "proofs/ed25519_only_v1.json"
+    },
+    {
+      "expected": {
+        "failure_reason": {
+          "found": "ML-DSA-65 record check (hybrid pin)",
+          "type": "algorithm_unsupported"
+        },
+        "stage_reached": 7,
+        "status": "not_verified",
+        "valid": false
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_v1.json",
+      "kind": "record",
+      "name": "v1_0_record_under_hybrid_pin",
+      "note": "A genuine 1.0 record labelled with the BYOC authority and version 1, its final_hash signed by that version's Ed25519 key. It runs the key lookup, the re-verify against the listed key and the revocation check, and is refused at stage 7, where a 1.0 record ends: under a hybrid pin no record is anchored on its Ed25519 half alone.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346",
+      "proof": "proofs/v1_0_ed25519_v1.json"
+    },
+    {
+      "expected": {
+        "failure_reason": {
+          "found": "ML-DSA-65 record check (hybrid pin)",
+          "type": "algorithm_unsupported"
+        },
+        "stage_reached": 4,
+        "status": "not_verified",
+        "valid": false
+      },
+      "expected_without_ml_dsa": {
+        "refusal": "hybrid_check_unavailable"
+      },
+      "key_list": "key_lists/hybrid_v1.json",
+      "kind": "record",
+      "name": "unsigned_record_under_hybrid_pin",
+      "note": "The same record with its signature and public key removed. Without a pin it ends valid at stage 4, signature not checked; under a hybrid pin it is refused there.",
+      "pin": "hybrid1-sha256:57a3fc68affeffc06994b03abe35e5aadf896a26b39fa8188df6fc515cf4e346",
+      "proof": "proofs/ed25519_only_v1_unsigned.json"
+    }
+  ],
+  "key_list_pqc_tag": "nanorix-key-list-pqc-v1"
+}

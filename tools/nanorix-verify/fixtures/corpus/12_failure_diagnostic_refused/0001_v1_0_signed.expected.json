@@ -1,0 +1,12 @@
+{
+  "failure_reason": {
+    "type": "diagnostic_proof_refused"
+  },
+  "note": "cdp_version 1.0 signs only final_hash, so its activity is unsigned and cannot show that the proof was not run in diagnostic mode: reject_diagnostic refuses every 1.0 proof at stage 2. Without the setting it verifies.",
+  "policy": {
+    "reject_diagnostic": true
+  },
+  "stage_reached": 2,
+  "status": "not_verified",
+  "valid": false
+}

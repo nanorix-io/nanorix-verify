@@ -1,0 +1,101 @@
+{
+  "activity": [
+    {
+      "encryption": "aes-256-gcm",
+      "event": "capsule_started",
+      "network": "sealed",
+      "region": "us-east1"
+    },
+    {
+      "at": "2026-08-21T17:42:19Z",
+      "by_reason": [
+        {
+          "count": 4,
+          "reason": "egress_profile_denied"
+        },
+        {
+          "count": 1,
+          "reason": "proxy_request_denied"
+        }
+      ],
+      "event": "policy_denial_summary"
+    }
+  ],
+  "attestation": {
+    "algorithm": "Ed25519",
+    "key_id": "nrx-verify-2026-08-21T17-42-19Z-cap_6002",
+    "public_key": "base64:Q7cu8aXWKBHW9xQLtvBmBOG4s+NxD0wvltVTeAvyOqo=",
+    "signature": "base64:5rBUhelbsOTGTssIBPqfmNo8deQafsgAQeSkiUPXcYLVTtGkJ+gcfyfFuBZG8Qlg6mkKnUxiGUb5vyRcN6oGDw=="
+  },
+  "authority_id": "customer-kms-example-health-v1",
+  "capsule_id": "cap_6002095f1bfac89ea666863a23888fcb",
+  "cdp_version": "2.2",
+  "chain": [
+    {
+      "chain_hash": "sha512:1a10efe23dd6a52915c92893af22734452f4a79fb6bb125003c4c15fa564d2e618172d111371062583bc271f6566a9b17413c7beefd94bf9502f0b50694d6517",
+      "evidence_hash": "sha512:00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "operation": "eee_namespace_op",
+      "step": 1,
+      "subsystem": "eee_namespace"
+    },
+    {
+      "chain_hash": "sha512:38d40e99e7584db75bbaf0887162a389da77af11821575acc12c9ebd023fa00e159ad61e293b51e1b50fffbdcc9bff4478fc7b0b804f975bcd39bfe0a491fb1c",
+      "evidence_hash": "sha512:00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "operation": "eee_tmpfs_op",
+      "step": 2,
+      "subsystem": "eee_tmpfs"
+    },
+    {
+      "chain_hash": "sha512:713faed84eb7b8266ac3f86189a08d19ceb3ea059abf3c0f3ebd1001179a7fa528799def41b059312f11651df91762cf392321834d943b92eda89cc829df06e9",
+      "evidence_hash": "sha512:00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "operation": "eee_memory_op",
+      "step": 3,
+      "subsystem": "eee_memory"
+    },
+    {
+      "chain_hash": "sha512:de377d2c3d006a8a981125909e8ebdc8729eb1847c3cf5fe3a7d6e2457515a90c4196ef9d1ad8a6e2d2dbffad6978d48b640582f538ca669686bec760c0a6136",
+      "evidence_hash": "sha512:00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "operation": "dire_keys_op",
+      "step": 4,
+      "subsystem": "dire_keys"
+    },
+    {
+      "chain_hash": "sha512:20beedad939ff05bda177cbfd64dc5c329aae6cf7eca09c44f2311eb4be6117cddaab1caa4e198d0e59f3c7c4e5892b2a424d34a3e85bf706dfefd8dd768132f",
+      "evidence_hash": "sha512:00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "operation": "dire_identity_op",
+      "step": 5,
+      "subsystem": "dire_identity"
+    },
+    {
+      "chain_hash": "sha512:da9f6e8f2fff29ccdd818eba72abe8c55762190acc562252d4e5fbd9181473eaeda6e653de892f6a760456df918be5afe1a6206d242c5bead11f661b507a611a",
+      "evidence_hash": "sha512:00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "operation": "fgx_forensic_op",
+      "step": 6,
+      "subsystem": "fgx_forensic"
+    },
+    {
+      "chain_hash": "sha512:b207b5aaff2f7a70cea367fa512d1e1f0fd975dbcd4b2b0f67cc7ce30070d8c6b066e6ed0da5df31f26a11d4c245c7542891d73ff6fbc1b013d8741860558216",
+      "evidence_hash": "sha512:00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "operation": "rzl_audit_op",
+      "step": 7,
+      "subsystem": "rzl_audit"
+    },
+    {
+      "chain_hash": "sha512:b5b4ac09286dc7c3846afe6c5d68ca5355975edd6b8e4e28583fdb03ad91421c4d4c26c606994a45ea2545a07bc71005b2d80a3a4d49949bd8b3204ee1479483",
+      "evidence_hash": "sha512:00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "operation": "capsule_destroy_op",
+      "step": 8,
+      "subsystem": "capsule_destroy"
+    }
+  ],
+  "customer_declared_activity_root": "sha512:c3351a1672bb6bc9e75f8d92eff4772d24454009637227a12dd86c18d1179dbf9676a5a38112fda73a3e99b7a39e242777194fce228f24e6c3f43cf9ae2dc5de",
+  "destroyed_at": "2026-08-21T17:42:19Z",
+  "destruction_state": "complete",
+  "final_hash": "sha512:b5b4ac09286dc7c3846afe6c5d68ca5355975edd6b8e4e28583fdb03ad91421c4d4c26c606994a45ea2545a07bc71005b2d80a3a4d49949bd8b3204ee1479483",
+  "hash_algorithm": "SHA-512",
+  "jurisdiction": "us",
+  "org_id": "95e5a227-a8c6-5a20-a8af-1c93ad37ad17",
+  "signature_algorithm": "Ed25519",
+  "signing_key_version": "1",
+  "signing_mode": "nanorix_only"
+}

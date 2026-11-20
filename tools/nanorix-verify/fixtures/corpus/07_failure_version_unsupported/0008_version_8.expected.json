@@ -4,5 +4,6 @@
     "type": "cdp_version_unsupported"
   },
   "stage_reached": 2,
+  "status": "not_verified",
   "valid": false
 }

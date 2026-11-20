@@ -1,0 +1,14 @@
+{
+  "failure_reason": {
+    "claimed_authority_id": "us-kms-nanorix-v1",
+    "expected_authority_id": "customer-hsm-example-org-v1",
+    "reason": "verifier_policy_authority_id_mismatch",
+    "type": "authority_id_mismatch"
+  },
+  "policy": {
+    "required_authority_id": "customer-hsm-example-org-v1"
+  },
+  "stage_reached": 2,
+  "status": "not_verified",
+  "valid": false
+}

@@ -3,7 +3,7 @@
 //! **Purpose:** Single source of truth for the `FailureReason` wire-form
 //! enum used by:
 //!
-//! 1. `services/api` — at `POST /v1/verify` (server-side typed-failure
+//! 1. the reference server implementation — at `POST /v1/verify` (server-side typed-failure
 //!    response per the specification)
 //! 2. `tools/nanorix-verify` — offline auditor CLI (per the verifier specification)
 //!
@@ -12,7 +12,7 @@
 //! breaking byte-identical typed-failure JSON. Extracting here closes
 //! that drift surface forever.
 //!
-//! **Forever-Standard discipline (the Forever-Standard wire discipline):** every variant shipped
+//! **Forever-Standard discipline:** every variant shipped
 //! here is permanent. New failure modes ship as ADDITIVE variants.
 //! Existing variants NEVER renamed, NEVER removed, NEVER repurposed.
 //! The wire form (serde tag = "type", rename_all = "snake_case") is the
@@ -26,11 +26,14 @@
 
 pub mod chain;
 pub mod output_bundle;
+pub mod population_head;
+pub mod population_tick;
+pub mod signed_tags;
 
 use serde::{Deserialize, Serialize};
 
 /// Closed-enum verification failure reason emitted by AuditProof
-/// verification paths. **Forever-stable per the Forever-Standard wire discipline** — additive only.
+/// verification paths. **Forever-stable** — additive only.
 ///
 /// Wire form: `{"type": "<snake_case>", ...payload}` via serde tag dispatch.
 ///
@@ -39,29 +42,30 @@ use serde::{Deserialize, Serialize};
 /// | Wire tag | When emitted |
 /// |---|---|
 /// | `algorithm_unsupported` | V1 only supports Ed25519; unknown algorithm string |
-/// | `authority_id_mismatch` | Verifier policy demanded a specific `signing_authority.authority_id` and the AuditProof either omitted `signing_authority` (Nanorix-default) or named a different authority (the customer-authority specification G7) |
-/// | `authority_mode_mismatch` | Customer-attested authority signature failed against registered Ed25519 key (the customer-authority specification) |
+/// | `authority_id_mismatch` | Verifier policy demanded a specific authority and the AuditProof's top-level `authority_id` (default `us-kms-nanorix-v1` when absent; signed only on cdp_version 2.1 and 2.2) differs, or an unsigned `signing_authority.authority_id` disagrees with it |
+/// | `authority_mode_mismatch` | Customer-attested authority signature failed against registered Ed25519 key |
 /// | `authority_revoked` | Trust-chain manifest marks the signing authority as revoked |
-/// | `cdp_version_unsupported` | CDP version not in {1.0, 2.0, 2.1, 2.2} |
-/// | `chain_step_identity_mismatch` | A chain entry's `subsystem` is not the canonical subsystem for its position in the Forever-Standard 8-step order (INVARIANTS #1 / the Forever-Standard wire discipline) |
-/// | `customer_declared_activity_root_mismatch` | The proof's `customer_declared_activity_root` disagreed with the root recomputed from the customer's activity record supplied beside it (the specification) |
-/// | `diagnostic_proof_refused` | Verifier policy refused diagnostic-mode proof (the diagnostic-proof policy) |
+/// | `cdp_version_unsupported` | CDP version not in the verifier's supported set ({1.0, 2.1, 2.2} for the offline verifiers) |
+/// | `chain_step_identity_mismatch` | A chain entry's `subsystem` is not the canonical subsystem for its position in the Forever-Standard 8-step order |
+/// | `customer_declared_activity_root_mismatch` | The proof's `customer_declared_activity_root` disagreed with the root recomputed from the customer's activity record supplied beside it |
+/// | `diagnostic_proof_refused` | Verifier policy refused diagnostic-mode proof |
 /// | `field_malformed` | A field is present but its JSON type or shape is not the one the document format defines for it; rejected before any recompute that would consume it |
 /// | `final_hash_mismatch` | `final_hash` doesn't match last step's `chain_hash` |
 /// | `genesis_hash_mismatch` | First step's `prev_hash` != SHA-512(empty) |
-/// | `region_mismatch` | AuditProof region differs from policy required (the region policy) |
+/// | `region_mismatch` | AuditProof region differs from policy required |
 /// | `required_field_missing` | Structural field absent from AuditProof JSON |
 /// | `reserved` | V2+ wire-surface reservation; never populated in V1 |
 /// | `signature_mismatch` | Ed25519 signature verification failed (Nanorix-authority-signed proof) |
 /// | `signing_key_version_unknown` | Signing key version not in trust-chain manifest |
+/// | `signing_mode_authority_mismatch` | The signed `signing_mode` is `customer_only` while the signed `authority_id` is Nanorix-classified: it contains none of `customer-hsm-`, `customer-kms-`, `customer-tee-`, `customer-byo-`, or it is absent, null or not a string (cdp_version 2.1 and 2.2; section 4) |
 /// | `step_count_invalid` | Chain has != 8 steps |
 /// | `step_hash_mismatch` | Step at given index didn't reproduce when recomputed |
 /// | `streaming_merkle_root_mismatch` | A `streaming_egress_completed.streaming_merkle_root` in the activity trail disagreed with the RFC 6962 root recomputed from the `streaming_egress_chunk` leaves disclosed beside it |
-/// | `unsigned_field_populated` | A field the signature does not cover carries a value no Nanorix signer emits (the specification/D3 reserved attestation slots) |
+/// | `unsigned_field_populated` | A field the signature does not cover carries a value no Nanorix signer emits (the attestation topology reserved attestation slots) |
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum FailureReason {
-    /// CDP version not recognized (1.0 / 2.0 / 2.1 / 2.2).
+    /// CDP version not in the verifier's supported set (offline: 1.0 / 2.1 / 2.2).
     CdpVersionUnsupported { found: String },
 
     /// Required field absent from the AuditProof structure.
@@ -75,7 +79,7 @@ pub enum FailureReason {
 
     /// A chain entry declares a `subsystem` that is not the canonical
     /// subsystem for its position in the Forever-Standard 8-step order
-    /// (INVARIANTS #1 / the Forever-Standard wire discipline):
+    /// :
     ///
     /// `eee_namespace, eee_tmpfs, eee_memory, dire_keys, dire_identity,
     /// fgx_forensic, rzl_audit, capsule_destroy`
@@ -120,13 +124,18 @@ pub enum FailureReason {
     AuthorityRevoked,
 
     /// AuditProof asserts a region that doesn't match the policy-required
-    /// region (the specification G1 / the region policy). Customer setting
-    /// `VerifierPolicy.required_region` rejects proofs from a different region.
+    /// region. Customer setting `VerifierPolicy.required_region` rejects proofs
+    /// from a different region, and, with an empty `actual`, every proof whose
+    /// region is unsigned: cdp_version 1.0, or 2.1 or 2.2 without a signature.
     RegionMismatch { required: String, actual: String },
 
-    /// Verifier policy refuses diagnostic-mode proofs (the specification / the diagnostic-proof policy).
-    /// Customer setting `VerifierPolicy.reject_diagnostic = true` rejects
-    /// proofs that carry a `DiagnosticModeEnabled` activity event.
+    /// Verifier policy refuses diagnostic-mode proofs. With the customer
+    /// setting `VerifierPolicy.reject_diagnostic = true`, the offline verifiers
+    /// refuse at stage 2 a proof whose signed activity trail carries a
+    /// `diagnostic_mode_enabled` event, and every proof whose activity is
+    /// unsigned and so cannot show the event is absent: cdp_version 1.0, or 2.1
+    /// or 2.2 without a signature. Only a stage 8 (`verified`) result ties the
+    /// trail to a Nanorix key.
     DiagnosticProofRefused,
 
     /// Algorithm not supported by this verifier version (e.g., V1 supports
@@ -134,15 +143,14 @@ pub enum FailureReason {
     AlgorithmUnsupported { found: String },
 
     /// Customer-attested authority signature did not verify against the
-    /// registered customer authority's published Ed25519 public key
-    /// (the customer-authority specification / Amendment 1).
+    /// registered customer authority's published Ed25519 public key.
     ///
     /// Distinct from `SignatureMismatch`, which covers Nanorix-authority-
     /// signed AuditProof failures. This variant disambiguates customer-
     /// authority failure from Nanorix-authority failure so verifier
     /// consumers can route the failure correctly.
     ///
-    /// Per the customer-authority specification, customer authority signatures are
+    /// Customer authority signatures are
     /// Ed25519-only; algorithm mismatch (e.g., AuditProof claims Ed25519
     /// but the registered authority public key is not curve-25519) ALSO
     /// produces this variant — the resolution is identical (re-publish
@@ -165,11 +173,17 @@ pub enum FailureReason {
     },
 
     /// Verifier policy demanded a specific signing-authority-id pin, and the
-    /// AuditProof's `signing_authority.authority_id` either is absent (the
-    /// AuditProof was signed under Nanorix's default signing authority — i.e.
-    /// `signing_authority` field is `None` / omitted) or names a different
-    /// authority than the one demanded. Per the customer-authority specification G7 + VP Security extended
-    /// review F4.3.
+    /// AuditProof's top-level `authority_id` (`us-kms-nanorix-v1` when absent)
+    /// differs from it, or an unsigned `signing_authority.authority_id`
+    /// disagrees with the top-level value. Per VP Security
+    /// extended review F4.3. The signature covers the top-level
+    /// `authority_id` only on cdp_version 2.1 and 2.2; on 1.0 nothing signed
+    /// covers it, so there a string other than `us-kms-nanorix-v1` is refused
+    /// and a pin accepts only the Nanorix default authority. cdp_version 2.0
+    /// is refused with `CdpVersionUnsupported` before the pin is read. Without
+    /// a trust-chain manifest the authority is only as trustworthy as the
+    /// embedded key, so a pin is a full authority check only when the result
+    /// reaches stage 8.
     ///
     /// This variant is **distinct from `AuthorityModeMismatch`**:
     ///
@@ -181,18 +195,39 @@ pub enum FailureReason {
     ///   does not match the verifier's `required_authority_id` policy pin).
     ///
     /// Routing the policy-pin failure through its own variant lets verifier
-    /// consumers (auditor CLI, customer SDK, browser verifier) distinguish
-    /// "customer's policy demands a specific authority and this AuditProof is
-    /// signed by a different one" (operational misconfiguration; refresh
-    /// policy or accept the proof under different terms) from "the registered
-    /// authority's algorithm is wrong" (cryptographic concern; re-publish the
-    /// key).
+    /// consumers (auditor CLI, customer SDK, browser verifier) distinguish it
+    /// from "the registered authority's algorithm is wrong" (cryptographic
+    /// concern; re-publish the key). The variant itself carries two different
+    /// situations:
+    ///
+    /// - a policy mismatch: the proof's authority is genuine and is not the
+    ///   one the pin names (operational misconfiguration; refresh the policy
+    ///   or accept the proof under different terms);
+    /// - an unsigned or contradicting label: the top-level `authority_id` on
+    ///   a cdp_version whose signature does not cover it, or a
+    ///   `signing_authority.authority_id` that contradicts the proof's
+    ///   authority (the document was altered after signing or is malformed;
+    ///   do not accept it).
+    ///
+    /// `claimed_authority_id` below says how a consumer tells them apart.
     ///
     /// Field semantics:
-    /// - `claimed_authority_id`: the `signing_authority.authority_id` value
-    ///   present in the AuditProof, if any. `None` when the AuditProof omits
-    ///   `signing_authority` entirely (Nanorix-default signing path; the customer-authority specification
-    ///   Forever-Standard pre-amendment shape).
+    /// - `claimed_authority_id`: the offending authority id in the
+    ///   AuditProof, chosen in the order the checks run. First, on a
+    ///   cdp_version whose signature does not cover the top-level
+    ///   `authority_id` (1.0), a top-level string other than
+    ///   `us-kms-nanorix-v1` is refused and this is that top-level value.
+    ///   Next, a `signing_authority.authority_id` that disagrees with the
+    ///   proof's authority is refused and this is that unsigned value.
+    ///   Otherwise it is the top-level `authority_id` that differs from the
+    ///   pin. It is unsigned in the first two cases. `None` when the
+    ///   top-level `authority_id` is absent or not a string (Nanorix-default
+    ///   signing path; Forever-Standard pre-amendment shape). When it
+    ///   equals `expected_authority_id`, the value was unsigned: one of the
+    ///   first two checks refused it. A first-check refusal where it differs
+    ///   from `expected_authority_id` is wire-identical to a plain mismatch of
+    ///   the top-level value, so a consumer reads the proof's `cdp_version`
+    ///   to tell them apart (only 2.1 and 2.2 sign the top-level field).
     /// - `expected_authority_id`: the value of
     ///   `VerificationPolicy.required_authority_id` that the verifier was
     ///   initialized with. Always populated in this variant — if it were
@@ -200,7 +235,7 @@ pub enum FailureReason {
     ///   emitted.
     /// - `reason`: closed enum classifying which of the two failure shapes
     ///   produced this rejection (none-vs-policy or wrong-id-vs-policy).
-    ///   Forever-stable per the Forever-Standard wire discipline; future additions are additive.
+    ///   Forever-stable; future additions are additive.
     AuthorityIdMismatch {
         claimed_authority_id: Option<String>,
         expected_authority_id: String,
@@ -215,7 +250,7 @@ pub enum FailureReason {
     /// `streaming_egress_chunk` events that precede it (leaf
     /// `SHA-512(0x00 || chunk_hash)`, inner `SHA-512(0x01 || l || r)`, odd tail
     /// promoted). Reference implementation:
-    /// `runtime/eee/src/daemon/streaming.rs::merkle_root_from_leaves`.
+    /// `merkle_root_from_leaves` in the capsule runtime.
     ///
     /// Emitted only when the leaves are actually present and complete — a
     /// document that discloses the root alone is a valid future shape (the
@@ -235,7 +270,7 @@ pub enum FailureReason {
     StreamingMerkleRootMismatch { claimed: String, computed: String },
 
     /// The proof's `customer_declared_activity_root` does not equal the root
-    /// recomputed from the customer's own activity record (the specification).
+    /// recomputed from the customer's own activity record.
     ///
     /// The root is a SHA-512 Merkle commitment over the raw bytes of the
     /// activity buffer the workload wrote — split on `0x0A`, one leaf per
@@ -273,7 +308,7 @@ pub enum FailureReason {
     /// wrong-length digest — is named as the defect rather than surfacing as
     /// a signature or root mismatch that blames the wrong thing.
     ///
-    /// First use (the specification): `customer_declared_activity_root`, which must be
+    /// First use: `customer_declared_activity_root`, which must be
     /// a JSON string of `sha512:` + 128 lowercase hex characters (a bare
     /// 128-hex digest is also accepted). The empty string is malformed, not
     /// absent: the canonical view binds `""` as a value, so every verifier
@@ -289,8 +324,8 @@ pub enum FailureReason {
     /// A field that the signature does NOT cover carries a value that no
     /// Nanorix signer emits.
     ///
-    /// The eight reserved attestation slots (the specification-I21, I24-I25 +
-    /// the specification/D3) sit outside `CanonicalCdpView`, so their contents are
+    /// The eight reserved attestation slots
+    /// sit outside `CanonicalCdpView`, so their contents are
     /// unsigned. Seven of them are hard-coded `None` at every emit site, and
     /// no verifier reads any of them. A document carrying one is therefore
     /// either from a schema this build does not know or was altered after
@@ -301,12 +336,41 @@ pub enum FailureReason {
     ///
     /// `per_event_attestations` is deliberately NOT in the rejected set. It is
     /// the one reserved slot the server genuinely populates (drained from
-    /// `capsule_event_attestations` at destroy), and each entry carries its own
-    /// customer signature, so it is self-authenticating rather than injectable
-    /// unverifiably.
+    /// `capsule_event_attestations` at destroy). The slot sits outside the
+    /// signed hash and is accepted unchecked: its entries prove nothing about
+    /// who signed, and verifying or binding them is separate work.
     ///
     /// Field semantics: `field` is the JSON key that was populated, verbatim.
     UnsignedFieldPopulated { field: String },
+
+    /// The proof's signed `signing_mode` is `customer_only` while its signed
+    /// `authority_id` is Nanorix-classified (section 4).
+    ///
+    /// Both fields are inside the canonical view on cdp_version 2.1 and 2.2,
+    /// so a signed proof refused here was signed with the contradiction in it.
+    /// The refusal is a statement about the two labels only: it does not say
+    /// which key signed or who holds it. Any key, Nanorix's included, is
+    /// refused the same way, and the check also runs on a proof that carries
+    /// no signature.
+    ///
+    /// "Customer-classified" is the issuer's test
+    /// (`AuthorityKind::from_authority_id`): the id contains one of the byte
+    /// strings `customer-hsm-`, `customer-kms-`, `customer-tee-` or
+    /// `customer-byo-` anywhere, compared byte for byte and case-sensitively,
+    /// with no normalization. Every other id is Nanorix-classified, and so is
+    /// an absent, null or non-string `authority_id`. A `nanorix_only` proof
+    /// under a customer-classified authority is not refused; the amendment's
+    /// "Legacy proofs" section rules it.
+    ///
+    /// This variant is distinct from `AuthorityModeMismatch`, which reports a
+    /// customer authority's signature that failed against its registered key.
+    ///
+    /// Field semantics: `claimed_authority_id` is the top-level
+    /// `authority_id` the proof carries, verbatim, or `None` (serialized as
+    /// `null`) when that field is absent, null or not a string.
+    SigningModeAuthorityMismatch {
+        claimed_authority_id: Option<String>,
+    },
 
     /// Reserved for V2+; never populated in V1. Existence reserves the wire
     /// surface for future extension without breaking serde tag dispatch.
@@ -314,23 +378,28 @@ pub enum FailureReason {
 }
 
 /// Sub-reason for `FailureReason::AuthorityIdMismatch`. Closed enum;
-/// forever-stable per the Forever-Standard wire discipline. Additive only.
+/// forever-stable. Additive only.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum AuthorityIdMismatchReason {
     /// Verifier policy pinned a specific `required_authority_id` and the
-    /// AuditProof omitted `signing_authority` entirely (Nanorix-default
-    /// signing path). Customer's policy demanded customer-HSM; AuditProof
-    /// has no customer-HSM attestation.
+    /// proof names no top-level `authority_id`, so the Nanorix default
+    /// (`us-kms-nanorix-v1`) applies, and the pin names another authority.
+    /// Customer's policy demanded customer-HSM; AuditProof has no
+    /// customer-HSM attestation.
     VerifierPolicyDemandsCustomerHsmAuditProofHasNone,
     /// Verifier policy pinned a specific `required_authority_id` and the
-    /// AuditProof carries a `signing_authority.authority_id` that does not
-    /// match. Both sides intend customer-HSM; the IDs disagree.
+    /// AuditProof's top-level `authority_id` does not match it, or an
+    /// unsigned `signing_authority.authority_id` disagrees with the top-level
+    /// value, or the top-level `authority_id` is a string other than
+    /// `us-kms-nanorix-v1` on a cdp_version (1.0) whose signature does not
+    /// cover it. In the last two cases the claimed id may equal the pin; what
+    /// is refused is the unsigned value, not a disagreement with the pin.
     VerifierPolicyAuthorityIdMismatch,
 }
 
 /// Sub-reason for `FailureReason::SignatureMismatch`. Closed enum;
-/// forever-stable per the Forever-Standard wire discipline.
+/// forever-stable.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum SignatureFailureReason {
@@ -479,6 +548,12 @@ mod tests {
                 },
                 "unsigned_field_populated",
             ),
+            (
+                FailureReason::SigningModeAuthorityMismatch {
+                    claimed_authority_id: Some("us-kms-nanorix-v1".into()),
+                },
+                "signing_mode_authority_mismatch",
+            ),
             (FailureReason::Reserved, "reserved"),
         ];
         for (reason, expected) in cases {
@@ -589,6 +664,12 @@ mod tests {
             },
             FailureReason::UnsignedFieldPopulated {
                 field: "witness_signatures".into(),
+            },
+            FailureReason::SigningModeAuthorityMismatch {
+                claimed_authority_id: Some("us-kms-nanorix-v1".into()),
+            },
+            FailureReason::SigningModeAuthorityMismatch {
+                claimed_authority_id: None,
             },
             FailureReason::Reserved,
         ];

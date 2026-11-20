@@ -1,0 +1,10 @@
+{
+  "failure_reason": {
+    "reason": "does_not_verify",
+    "type": "signature_mismatch"
+  },
+  "note": "0000 with signing_mode edited to nanorix_only after signing. The mode is inside the canonical view, so the edit breaks the signature.",
+  "stage_reached": 7,
+  "status": "not_verified",
+  "valid": false
+}

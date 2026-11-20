@@ -1,0 +1,4 @@
+{
+  "description": "Carried canonical hash differs from the signed one.",
+  "outcome": "signature_failed"
+}

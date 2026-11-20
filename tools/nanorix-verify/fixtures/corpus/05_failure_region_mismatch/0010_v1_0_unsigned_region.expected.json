@@ -1,0 +1,14 @@
+{
+  "failure_reason": {
+    "actual": "",
+    "required": "europe-west1",
+    "type": "region_mismatch"
+  },
+  "note": "cdp_version 1.0 signs only final_hash, so a region in its activity is unsigned: the residency pin reads no region on 1.0 and refuses the proof, even with a capsule_started region equal to the pin added after signing. Without the pin it verifies.",
+  "policy": {
+    "required_region": "europe-west1"
+  },
+  "stage_reached": 2,
+  "status": "not_verified",
+  "valid": false
+}

@@ -1,0 +1,7 @@
+{
+  "failure_reason": null,
+  "note": "A complete surrogate pair escape, one character: the control for 0005-0007.",
+  "stage_reached": 7,
+  "status": "not_anchored",
+  "valid": true
+}

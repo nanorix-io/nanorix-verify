@@ -1,0 +1,7 @@
+{
+  "failure_reason": null,
+  "note": "126 nested arrays inside the top-level object: 127 containers deep, the deepest serde_json parses.",
+  "stage_reached": 7,
+  "status": "not_anchored",
+  "valid": true
+}

@@ -1,0 +1,25 @@
+{
+  "bundle_version": "1.0",
+  "bundle_type": "receipt",
+  "generated_at": "2026-10-01T00:00:01Z",
+  "receipt": {
+    "record_index": 0,
+    "record_id": "rec_0",
+    "record_input_hash": "sha512:0313027bc3bc088fd55308678e7f677c37ac9bdf1385b1394dbf51e28263c1ff5cd2be2c58d9eabad4d6019eb45d1d2da4a81a0d8ece969dbbcd5a77bcd2108d",
+    "record_output_hash": "sha512:884dea672e811e000f4b70e4f034670ccf57c76ce18b011be3611cd1dfc5511de3322b86f9041602ce7eb1536f468ccef850f344bf34efd29d0c934e4159b110",
+    "record_chain_hash": "sha512:02562035fa0650321d12375149f1a16d59dcff5d432dd306d43b3048281a6c5091abbceb385593b126be84cb12c55cd3bb78989dbe0bef0e7279c4861f254e63",
+    "merkle_inclusion_proof": [
+      "3f871c3acac4c4b35ed882c1c13c63110be1f240ddf5f466b0ce28918905033a01c79f6a2e5063ef48ad6f15f7ab4ab1d7f3c629e8571d61d178b6bccf7f7817"
+    ]
+  },
+  "audit_proof_anchors": {
+    "capsule_id": "cap_fixture_bundle_n2",
+    "key_id": "nrx-verify-fixture-test-only",
+    "verification_key": "UaMb7s4rCJwxgWqYmNN5WTbBwQZ9wd4mJwHhrazFZus=",
+    "step_8_chain_hash": "2891b3788ef1fcfa78f1769b2fd7207c69b74847c770571237dcb6d937c5205bfd1fd469280b96de864d2d42cd788f863590a52caae8b87ffa17ab06075ac1f5",
+    "signature": "M1sSSs+oMGYhVSRHwtW1OvRcqJRB7mxX4Te194zF+B3umyoXGy0dzkUFctR8WXXZFVURxClPYxyLy6MlefkZBA==",
+    "record_receipts_merkle_root": "sha512:8c30f2a408d401a2a113844c84f150bee2bd4d976a07fa76b07fb47de26c2b5ee7bbba0f5f4ead9ed0cdf42b5c155e7e3c187005be7d626d3c818219890c6fb0",
+    "timestamp": "2026-10-01T00:00:00Z"
+  },
+  "disclaimer": "This Portable Receipt Bundle carries cryptographic evidence of one record's structural execution. Verifying party uses the audit_proof_anchors to verify the receipt's merkle inclusion + outer Ed25519 signature. Control framework references are NOT included in this bundle; consult the mapping artifact at https://nanorix.io/v1/control-map?framework_version={framework_version} to apply current control mappings at consumption time."
+}

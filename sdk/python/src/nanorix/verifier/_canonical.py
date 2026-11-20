@@ -4,22 +4,21 @@ Canonical-view recompute + Ed25519 signature verification.
 Python mirror of `tools/nanorix-verify/src/canonical_recompute.rs`, which is
 the reference implementation. Byte-identity with the signer is locked by
 `test_canonical_recompute_matches_server_golden` — the same fixed input the
-server's `cdp_document.rs::golden_canonical_hash` test pins.
+server's `golden_canonical_hash` in the reference implementation test pins.
 
 ## The signed message is version-dependent
 
 A v2.1 `nanorix_only` AuditProof is **not** signed over `final_hash` — that is
-the v1.0 message. It is signed over the specification Part-3 canonical-view hash,
+the v1.0 message. It is signed over the canonical-view hash,
 `hex(sha512(jcs(canonical_view)))`.
 
 | `cdp_version` | Signed message |
 |---|---|
 | `1.0` | `final_hash` (hex, prefix stripped) |
-| `2.0` | `document_hash` |
-| `2.1` / `2.2` + `nanorix_only` | recomputed canonical-view hash |
-| `2.1` / `2.2` + `dual_signature` / `tee_attested` | not verifiable by this build |
+| `2.1` / `2.2` + `nanorix_only` or `customer_only` | recomputed canonical-view hash |
+| `2.1` / `2.2` + any other mode (`dual_signature`, `tee_attested`, a value with different case or extra characters) | not verifiable by this build: refused as `algorithm_unsupported` |
 
-`2.2` (the specification + the specification) signs the same canonical view as `2.1`; the only
+`2.2` signs the same canonical view as `2.1`; the only
 difference a verifier can see is the optional `customer_declared_activity_root`
 field, which the recompute inserts when present (like the two Merkle roots).
 
@@ -38,12 +37,13 @@ from typing import Any, Dict, Mapping, Optional, Tuple
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+from ._ed25519_strict import verify_strict
 
 from nanorix._jcs import canonicalize
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Wire-form signature failure sub-reasons (`SignatureFailureReason` in
-# governance/verify-types). Forever-Standard per the Forever-Standard wire discipline.
+# governance/verify-types). Forever-Standard.
 # ─────────────────────────────────────────────────────────────────────────────
 
 SIG_MALFORMED = "malformed"
@@ -54,9 +54,9 @@ SIG_MESSAGE_FORMAT_MISMATCH = "message_format_mismatch"
 _ED25519_SIGNATURE_LEN = 64
 _ED25519_PUBLIC_KEY_LEN = 32
 
-SUPPORTED_CDP_VERSIONS = frozenset({"1.0", "2.0", "2.1", "2.2"})
+SUPPORTED_CDP_VERSIONS = frozenset({"1.0", "2.1", "2.2"})
 
-# Versions whose signature covers the specification Part-3 canonical-view hash.
+# Versions whose signature covers the canonical-view hash.
 # `cdp_version` is itself inside that view, so a 2.1 document re-labelled 2.2
 # (or vice versa) is accepted by the allowlist and then fails the signature.
 CANONICAL_VIEW_SIGNED_VERSIONS = frozenset({"2.1", "2.2"})
@@ -116,12 +116,12 @@ def _failed(reason: str) -> SignatureCheck:
 
 
 def strip_hash_prefix(value: str) -> str:
-    """Strip the `sha512:` wire prefix. the specification forever-stable."""
+    """Strip the `sha512:` wire prefix. Forever-stable."""
     return value[len("sha512:") :] if value.startswith("sha512:") else value
 
 
 def strip_base64_prefix(value: str) -> str:
-    """Strip the `base64:` wire prefix. the specification forever-stable."""
+    """Strip the `base64:` wire prefix. Forever-stable."""
     return value[len("base64:") :] if value.startswith("base64:") else value
 
 
@@ -138,7 +138,7 @@ def _insert_if_present(view: Dict[str, Any], key: str, proof: Mapping[str, Any])
 
 
 def recompute_canonical_hash(proof: Mapping[str, Any]) -> str:
-    """Rebuild the specification Part-3 canonical view and return its JCS SHA-512 hex.
+    """Rebuild the canonical view and return its JCS SHA-512 hex.
 
     Byte-identical to the server's `FullCdp::canonical_hash()`. The AuditProof
     JSON already carries every value in its exact serialized shape, so only the
@@ -186,7 +186,7 @@ def recompute_canonical_hash(proof: Mapping[str, Any]) -> str:
 
     _insert_if_present(view, "parent_proofs_merkle_root", proof)
     _insert_if_present(view, "record_receipts_merkle_root", proof)
-    # the specification: a root over bytes the customer wrote and Nanorix never parsed.
+    # A root over bytes the customer wrote and Nanorix never parsed.
     # Same skip-when-absent mechanic as the two Merkle roots, so a proof that
     # did not opt in hashes to exactly what it did before the field existed.
     _insert_if_present(view, "customer_declared_activity_root", proof)
@@ -214,13 +214,19 @@ def recompute_canonical_hash(proof: Mapping[str, Any]) -> str:
 # occur in a hex digest. Mirrors UNSUPPORTED_MODE_SENTINEL in the Rust verifier.
 UNSUPPORTED_MODE_SENTINEL = "\x00unsupported-signing-mode:"
 
+#: The signing_mode a proof carries when the install's customer authority
+#: signed it.
+SIGNING_MODE_CUSTOMER_ONLY = "customer_only"
+
 
 def signed_message(proof: Mapping[str, Any], cdp_version: str) -> Optional[str]:
     """The message this proof's signature covers, or None if unverifiable here.
 
-    None means "this build cannot check it" (unrecognised version, or a v2.1 /
-    v2.2 signing mode whose second signature this build has no key for) —
-    never "the signature is bad".
+    For v2.1 and v2.2 with any mode other than `nanorix_only` and
+    `customer_only` it returns `UNSUPPORTED_MODE_SENTINEL` followed by the
+    mode, which the caller reports as `algorithm_unsupported`. None only for
+    an unrecognised version, meaning "this build cannot check it", never "the
+    signature is bad".
     """
     signing_mode = proof.get("signing_mode")
     if not isinstance(signing_mode, str):
@@ -229,11 +235,10 @@ def signed_message(proof: Mapping[str, Any], cdp_version: str) -> Optional[str]:
     if cdp_version == "1.0":
         raw = proof.get("final_hash")
         return strip_hash_prefix(raw if isinstance(raw, str) else "")
-    if cdp_version == "2.0":
-        raw = proof.get("document_hash")
-        return strip_hash_prefix(raw if isinstance(raw, str) else "")
     if cdp_version in CANONICAL_VIEW_SIGNED_VERSIONS:
-        if signing_mode == "nanorix_only":
+        # customer_only signs the same canonical view; only the mode string the
+        # view carries differs. Compared byte for byte.
+        if signing_mode in ("nanorix_only", SIGNING_MODE_CUSTOMER_ONLY):
             return recompute_canonical_hash(proof)
         # Any other declared mode is one this build cannot verify. NOT the same
         # as "no signature": signing_mode is inside the canonical hash and is
@@ -260,7 +265,7 @@ def _decode_exact(value: str, expected_len: int) -> Optional[bytes]:
 def verify_message_with_key(message: str, sig_b64: str, pub_b64: str) -> SignatureCheck:
     """Decode a base64 Ed25519 signature + public key and verify `message`.
 
-    Shared by the embedded-key (sub-A) and manifest-key (sub-B) paths. The
+    Shared by the embedded-key and manifest-key paths. The
     signature is checked first so a proof with both fields malformed reports
     `malformed`, matching the reference verifier.
     """
@@ -277,7 +282,7 @@ def verify_message_with_key(message: str, sig_b64: str, pub_b64: str) -> Signatu
         return _failed(SIG_PUBLIC_KEY_MALFORMED)
 
     try:
-        public_key.verify(sig_bytes, message.encode("ascii"))
+        verify_strict(public_key, sig_bytes, message.encode("ascii"))
     except InvalidSignature:
         return _failed(SIG_DOES_NOT_VERIFY)
     return _VERIFIED
@@ -304,9 +309,9 @@ def _embedded_public_key(proof: Mapping[str, Any]) -> Optional[str]:
 
 
 def verify_signature(proof: Mapping[str, Any], cdp_version: str) -> SignatureCheck:
-    """sub-A — verify against the public key EMBEDDED in the proof.
+    """Verify against the public key EMBEDDED in the proof.
 
-    Proves integrity (not tampered since signing), NOT authenticity: a forger
+    Proves integrity (no signed byte changed since signing), NOT authenticity: a forger
     who signs their own document with their own key passes this. Binding the
     key to a Nanorix-rooted trust anchor is `verify_signature_against`.
     """
@@ -328,10 +333,10 @@ def verify_signature(proof: Mapping[str, Any], cdp_version: str) -> SignatureChe
 def verify_signature_against(
     proof: Mapping[str, Any], cdp_version: str, pub_b64: str
 ) -> SignatureCheck:
-    """sub-B — verify against a trust-chain-RESOLVED key, not the embedded one.
+    """Verify against a trust-chain-RESOLVED key, not the embedded one.
 
     This is what establishes authenticity: a forged proof carrying its own
-    embedded key passes sub-A but fails here.
+    embedded key passes the embedded-key check but fails here.
     """
     sig_b64 = _embedded_signature(proof)
     if sig_b64 is None:
@@ -348,7 +353,7 @@ def verify_signature_against(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# the chain-timestamp recovery rule — chain-timestamp recovery from the attestation key_id
+# Chain-timestamp recovery from the attestation key_id
 # ─────────────────────────────────────────────────────────────────────────────
 
 

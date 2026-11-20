@@ -1,6 +1,6 @@
 [package]
 name = "nanorix-verify"
-description = "Standalone AuditProof verifier — auditor moment-of-truth artifact (the verifier specification)"
+description = "Standalone AuditProof verifier — auditor moment-of-truth artifact"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -36,8 +36,14 @@ anyhow = { workspace = true }
 thiserror = { workspace = true }
 chrono = { workspace = true }
 base64 = "0.22"
+zeroize = { workspace = true }
+# ML-DSA (FIPS 204) primitive verification for `src/mldsa.rs`. Default features
+# stay off: `aws-lc-sys` and `prebuilt-nasm` are exactly the aws-lc-rs features
+# rustls 0.23's `aws_lc_rs` feature already enables in this workspace, so the
+# feature set does not grow and Cargo.lock gains only this edge.
+aws-lc-rs = { version = "1.18.1", default-features = false, features = ["aws-lc-sys", "prebuilt-nasm"] }
 # Shared verification result types (trust-chain anchoring); single source of truth
-# for FailureReason wire-form between services/api + tools/nanorix-verify.
+# for FailureReason wire-form between the reference server implementation + tools/nanorix-verify.
 nanorix-verify-types = { path = "../../governance/verify-types" }
 
 [dev-dependencies]

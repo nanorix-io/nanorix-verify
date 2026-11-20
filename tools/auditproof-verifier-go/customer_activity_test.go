@@ -1,4 +1,4 @@
-// Tests for the specification customer-declared activity root — the Go peer of the
+// Tests for the customer-declared activity root — the Go peer of the
 // test module in `tools/nanorix-verify/src/customer_activity.rs`. Every vector
 // in the shared JSON file is exercised; the file is read, not copied, so Go
 // cannot drift from what Rust, Python and TypeScript test against.

@@ -2,7 +2,7 @@
 //! `FailureReason::ChainStepIdentityMismatch` (B1.4 — the verifier enforces the
 //! canonical identity of the eight chain entries, not merely their count).
 //!
-//! **Forever-Standard discipline (the Forever-Standard wire discipline).** These tests pin the exact wire
+//! **Forever-Standard discipline.** These tests pin the exact wire
 //! form (variant tag + field names + serialization shape) so that:
 //!
 //! - any future rename of the variant or its fields fails CI immediately,
@@ -13,8 +13,8 @@
 //!   parse it correctly.
 //!
 //! The variant reports that a chain entry names a subsystem that is not the
-//! canonical subsystem for its position in the fixed 8-step order
-//! (INVARIANTS #1). It is deliberately NOT `StepHashMismatch`: that variant
+//! canonical subsystem for its position in the fixed 8-step order.
+//! It is deliberately NOT `StepHashMismatch`: that variant
 //! says the recompute disagreed, and it is emitted only when it did. This one
 //! is emitted when every hash reproduced and the label beside them is wrong —
 //! reporting it as a hash mismatch would tell an auditor the chain arithmetic

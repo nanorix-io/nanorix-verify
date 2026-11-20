@@ -1,0 +1,10 @@
+{
+  "failure_reason": {
+    "reason": "does_not_verify",
+    "type": "signature_mismatch"
+  },
+  "note": "0010 with one hex character of the declared Capsulefile hash changed after signing. The activity trail is inside the canonical view, so a record that claims a different environment from the one signed fails at the signature.",
+  "stage_reached": 7,
+  "status": "not_verified",
+  "valid": false
+}

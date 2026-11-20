@@ -1,0 +1,7 @@
+{
+  "failure_reason": null,
+  "note": "cdp_version twice, the unsupported \"9.9\" first and the real version last. serde_json keeps the last copy, so every verifier reads the real one.",
+  "stage_reached": 7,
+  "status": "not_anchored",
+  "valid": true
+}

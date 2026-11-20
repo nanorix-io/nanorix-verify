@@ -1,21 +1,21 @@
 """
-the receipt pipeline (the per-record receipt specification + the receipt-batching specification) per-record receipt + parent-proof verification.
+Per-record receipt + parent-proof verification.
 
 Pure Python port of the reference chain implementation plus the verifier-side
 extension in `tools/nanorix-verify/src/lib.rs`. Cross-impl byte-equivalent
-with Rust + Go ports on the 110-fixture extended corpus.
+with Rust + Go ports on the 115-fixture extended corpus.
 
-**Forever-Standard discipline (the Forever-Standard wire discipline):** every primitive here is part
+**Forever-Standard discipline:** every primitive here is part
 of the cryptographic-attestation contract. Cross-impl divergence from the
 canonical Rust output is a P0 finding.
 
 **Distinct from `nanorix._merkle`**: that module implements RFC 6962 binary
 Merkle (leaf prefix 0x00 + inner prefix 0x01) used by `Capsule.batch()`.
-the receipt pipeline uses the per-record receipt specification canonical pair-hash form:
+The receipt verifier uses the canonical pair-hash form:
 `SHA-512(left_hex_bytes || \\x00 || right_hex_bytes)` with NO domain prefix,
 because the children are themselves already SHA-512 outputs serialized as hex.
 
-Cross-impl reference vectors (locked in `test_verifier_wave_n.py`):
+Cross-impl reference vectors:
 
   GENESIS_SHA512_HEX = cf83e1...da3e
   merkle_pair_hash("aaa", "bbb") = 04ed285c...bf9bd264
@@ -31,27 +31,30 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+from nanorix._jcs import _serialize_number
+
+from ._ed25519_strict import verify_strict
 
 # Genesis SHA-512 hash of the empty string. Re-exported here so this module is
-# self-contained — mirrors Rust the reference chain implementation512_HEX`.
+# self-contained — mirrors Rust `GENESIS_SHA512_HEX` in the reference chain implementation.
 GENESIS_SHA512_HEX = (
     "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce"
     "47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e"
 )
 
-# Pre-the receipt pipeline legacy formula constants — must remain in lockstep with
-# the chain specification::compute_step_hash` Step 8 arguments.
+# Legacy formula constants — must remain in lockstep with
+# `compute_step_hash` in the chain specification Step 8 arguments.
 _STEP_8_SUBSYSTEM = "capsule_destroy"
 _STEP_8_ACTION = "destroy"
 _STEP_8_METHOD = "capsule_lifecycle_verification"
 
-# Maximum supported parent-proof chain depth per the receipt-batching specification §"Depth limit".
+# Maximum supported parent-proof chain depth.
 PARENT_PROOF_MAX_DEPTH = 32
 
 # Closed-enum pattern tag wire values (mirror Rust
-# the reference chain implementation and `nanorix.capsule_record.PATTERN_TAGS`).
+# `PatternTag` in the reference chain implementation and `nanorix.capsule_record.PATTERN_TAGS`).
 # Used by downstream consumers; the verifier itself does NOT reject unknown
-# pattern_tag values (forward-compatibility per the Forever-Standard wire discipline).
+# pattern_tag values (forward-compatibility).
 PATTERN_TAGS_WIRE = frozenset(
     [
         "pa",
@@ -74,7 +77,7 @@ PATTERN_TAGS_WIRE = frozenset(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# the receipt pipeline types — mirror the reference chain implementation{RecordReceipt, ParentProofLink}`.
+# Receipt types — mirror `RecordReceipt` and `ParentProofLink` in the reference chain implementation.
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -82,13 +85,13 @@ PATTERN_TAGS_WIRE = frozenset(
 class RecordReceipt:
     """Per-record receipt mirroring Rust `RecordReceipt`.
 
-    Forever-Standard discipline (the Forever-Standard wire discipline): field shape is permanent.
+    Forever-Standard discipline: field shape is permanent.
     New fields land as additive Optional — existing fields NEVER renamed,
     NEVER removed, NEVER repurposed.
 
-    **No `control_tags` field by design.** Per the per-record receipt specification §"Receipt as direct
-    evidence primitive" + the specification RE-SCOPED: control IDs are NEVER stamped
-    into the signed receipt; adapters apply the specification mapping artifact at
+    **No `control_tags` field by design.**
+    Control IDs are NEVER stamped
+    into the signed receipt; adapters apply the mapping artifact at
     ingestion time.
     """
 
@@ -106,7 +109,7 @@ class RecordReceipt:
 class ParentProofLink:
     """Cross-org parent-proof link mirroring Rust `ParentProofLink`.
 
-    Forever-Standard (the Forever-Standard wire discipline): optional fields skip-serialize when None.
+    Forever-Standard: optional fields skip-serialize when None.
     """
 
     parent_chain_hash: str
@@ -137,14 +140,14 @@ def _strip_base64_prefix(s: str) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Merkle pair-hash + root construction (the per-record receipt specification)
+# Merkle pair-hash + root construction
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 def merkle_pair_hash(left: str, right: str) -> str:
     """Compute `SHA-512(left_hex_bytes || \\x00 || right_hex_bytes)`.
 
-    Per the per-record receipt specification §"Sibling pair hashing rule": both inputs are interpreted as
+    Both inputs are interpreted as
     their hex-string byte values (UTF-8 of the hex chars). Either MAY carry
     a `sha512:` prefix; stripped before hashing.
 
@@ -157,8 +160,7 @@ def merkle_pair_hash(left: str, right: str) -> str:
 
 
 def merkle_root_sha512_null_separated(leaves: Sequence[str]) -> Optional[str]:
-    """Build the canonical Merkle root over `leaves` per the per-record receipt specification §"Merkle tree
-    construction".
+    """Build the canonical Merkle root over `leaves`.
 
     - N=0 → None
     - N=1 → leaves[0] with `sha512:` prefix stripped
@@ -180,7 +182,7 @@ def merkle_root_sha512_null_separated(leaves: Sequence[str]) -> Optional[str]:
                 nxt.append(merkle_pair_hash(level[i], level[i + 1]))
                 i += 2
             else:
-                # Odd-level last node: duplicate per the per-record receipt specification.
+                # Odd-level last node: duplicate.
                 nxt.append(merkle_pair_hash(level[i], level[i]))
                 i += 1
         level = nxt
@@ -190,10 +192,10 @@ def merkle_root_sha512_null_separated(leaves: Sequence[str]) -> Optional[str]:
 def compute_record_receipts_merkle_root(
     receipts: Sequence[RecordReceipt],
 ) -> Optional[str]:
-    """Public the per-record receipt specification surface for the receipt Merkle root.
+    """Public surface for the receipt Merkle root.
 
     Returns `None` for empty input (field skip-serializes in canonical JSON);
-    otherwise returns `sha512:{hex}` matching the per-record receipt specification wire form.
+    otherwise returns `sha512:{hex}` matching the wire form.
     """
     if not receipts:
         return None
@@ -205,7 +207,7 @@ def compute_record_receipts_merkle_root(
 def compute_parent_proofs_merkle_root(
     parents: Sequence[ParentProofLink],
 ) -> Optional[str]:
-    """Public the receipt-batching specification surface for the parent-proof Merkle root."""
+    """Public surface for the parent-proof Merkle root."""
     if not parents:
         return None
     leaves = [p.parent_chain_hash for p in parents]
@@ -216,7 +218,7 @@ def compute_parent_proofs_merkle_root(
 def build_merkle_inclusion_proof(
     leaves: Sequence[str], leaf_index: int
 ) -> Optional[List[str]]:
-    """Build a Merkle inclusion proof for `leaf_index` per the per-record receipt specification.
+    """Build a Merkle inclusion proof for `leaf_index`.
 
     Returns siblings on the path from leaf → root in bottom-up order (each
     as bare hex). Empty list when N=1. None when out of range or empty.
@@ -280,20 +282,21 @@ def _jcs_canonicalize(value: Any) -> bytes:
     """Minimal RFC 8785 JSON canonicalization.
 
     Cross-impl byte-equivalent with `serde_jcs::to_vec` for the activity-event
-    canonical forms emitted by the reference chain implementation.
+    canonical forms emitted by `compute_activity_root` in the reference chain implementation.
     Mirror of the Go port's `JCSCanonicalize` minus stream-decoding overhead;
     Python's `json.dumps(sort_keys=True, separators=(',',':'), ensure_ascii=False)`
-    matches JCS for the value types the receipt pipeline receipts emit (objects of scalar /
+    matches JCS for the value types per-record receipts emit (objects of scalar /
     array members).
 
     For non-trivial JCS edge cases (string control-char escaping, number
     canonicalization), this implementation follows the JCS spec exactly via
     the recursive emitter below.
     """
-    # `sort_keys=True` + UTF-16 code-unit sort: for ASCII-only keys these
-    # match, which is the case for every wave-N activity event in production.
-    # Numeric handling uses Python's shortest-round-trip via `repr` of float;
-    # integer values keep their integer form.
+    # Keys sort by UTF-16 code unit (RFC 8785 §3.2.3), strings emit literal
+    # UTF-8 for every character outside the escape set — both hold for
+    # astral-plane characters, not just the ASCII keys production events carry.
+    # Numbers are written as ECMAScript Number::toString writes them
+    # (RFC 8785 §3.2.2.3), by the same writer as `nanorix._jcs`.
     return _jcs_emit(value).encode("utf-8")
 
 
@@ -302,25 +305,20 @@ def _jcs_emit(value: Any) -> str:
         return "null"
     if isinstance(value, bool):
         return "true" if value else "false"
-    if isinstance(value, int):
-        return str(value)
-    if isinstance(value, float):
-        if value != value:  # NaN
-            raise ValueError("JCS: NaN not allowed")
-        if value == 0.0:
-            return "0"
-        s = repr(value)
-        # Python's repr uses 'e+' / 'e-'; JCS strips the '+' on positive exponents.
-        if "e+" in s:
-            s = s.replace("e+", "e")
-        return s
+    if isinstance(value, (int, float)):
+        try:
+            return _serialize_number(value).decode("ascii")
+        except ValueError as exc:
+            raise ValueError(f"JCS: {exc}") from None
     if isinstance(value, str):
         return _jcs_emit_string(value)
     if isinstance(value, (list, tuple)):
         return "[" + ",".join(_jcs_emit(e) for e in value) + "]"
     if isinstance(value, Mapping):
-        # Sort by UTF-16 code units — for ASCII keys this matches str sort.
-        items = sorted(value.items(), key=lambda kv: kv[0])
+        # RFC 8785 §3.2.3: sort by UTF-16 code unit. Plain str order is code
+        # point order, which places an astral key after every BMP key; UTF-16
+        # order interleaves it among U+D800–U+DFFF.
+        items = sorted(value.items(), key=lambda kv: kv[0].encode("utf-16-be", "surrogatepass"))
         return (
             "{"
             + ",".join(
@@ -352,14 +350,16 @@ def _jcs_emit_string(s: str) -> str:
             out.append("\\t")
         elif cp < 0x20:
             out.append(f"\\u{cp:04x}")
-        elif cp < 0x10000:
-            out.append(ch)
+        elif 0xD800 <= cp <= 0xDFFF:
+            # Lone surrogate (surrogateescape / invalid input): no UTF-8 form,
+            # escape rather than fail on the final encode.
+            out.append(f"\\u{cp:04x}")
         else:
-            # Surrogate pair encoding for code points > U+FFFF.
-            cp_adj = cp - 0x10000
-            high = 0xD800 + (cp_adj >> 10)
-            low = 0xDC00 + (cp_adj & 0x3FF)
-            out.append(f"\\u{high:04x}\\u{low:04x}")
+            # RFC 8785 §3.2.2.2: everything outside the escape set is emitted
+            # literally — astral-plane characters (U+10000+) included, as 4
+            # UTF-8 bytes. Escaping them as a \uXXXX\uXXXX surrogate pair
+            # diverged from serde_jcs and broke byte-equivalence.
+            out.append(ch)
     out.append('"')
     return "".join(out)
 
@@ -388,7 +388,7 @@ def compute_activity_root(trail: Optional[Sequence[Any]]) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Record chain hash (the per-record receipt specification per-record chain hash formula)
+# Record chain hash (per-record chain hash formula)
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -405,7 +405,7 @@ def compute_record_chain_hash(
 
     `pattern_tag_wire` is the snake_case wire string exactly as serialized in
     the receipt JSON `pattern_tag` field; the trailing `\\x00 || pattern_tag_wire`
-    segment is appended ONLY when the receipt declares a tag (the per-record receipt specification — the
+    segment is appended ONLY when the receipt declares a tag (the
     tag is a signed primitive, so it must bind into the chain hash). Domain
     separation is sound because `activity_root_or_genesis` is always exactly
     128 stripped hex chars: a tagged preimage is strictly longer than every
@@ -449,7 +449,7 @@ def compute_record_chain_hash(
 def _compute_step_hash(
     prev_hash: str, subsystem: str, action: str, method: str, timestamp: str
 ) -> str:
-    """Pre-the receipt pipeline legacy chain-step formula. Mirrors Rust `compute_step_hash`."""
+    """Legacy chain-step formula. Mirrors Rust `compute_step_hash`."""
     parts = [
         prev_hash.encode("utf-8"),
         b"\x00",
@@ -465,7 +465,7 @@ def _compute_step_hash(
 
 
 def compute_step_8_base(prev_hash: str, timestamp: str) -> str:
-    """Pre-the receipt pipeline legacy Step 8 hash (no amendment). Mirrors Rust
+    """Legacy Step 8 hash (no amendment). Mirrors Rust
     `compute_step_8_base`."""
     return _compute_step_hash(
         prev_hash, _STEP_8_SUBSYSTEM, _STEP_8_ACTION, _STEP_8_METHOD, timestamp
@@ -478,13 +478,13 @@ def compute_step_8_amended(
     record_receipts_merkle_root: Optional[str],
     parent_proofs_merkle_root: Optional[str],
 ) -> str:
-    """The presence-conditional Step 8 amendment formula (the per-record receipt specification + the receipt-batching specification).
+    """The presence-conditional Step 8 amendment formula.
 
     Mirrors Rust `compute_step_8_amended`. Output: bare lowercase hex.
 
-    **Forever-Standard (the Forever-Standard wire discipline):** the (None, None) branch returns
+    **Forever-Standard:** the (None, None) branch returns
     `compute_step_8_base(...)` UNMODIFIED — byte-identical to every
-    pre-the receipt pipeline production AuditProof.
+    legacy production AuditProof.
     """
     base = compute_step_8_base(prev_hash, timestamp)
     rr = record_receipts_merkle_root
@@ -522,7 +522,7 @@ def compute_step_8_amended(
 def detect_parent_proof_cycle(
     parents: Sequence[ParentProofLink], self_chain_hash: str
 ) -> Optional[int]:
-    """Reject cycles per the receipt-batching specification §"Cycle prevention".
+    """Reject cycles.
 
     Returns the index of the cyclic parent if any `parent_chain_hash` equals
     `self_chain_hash`; returns None otherwise. Both inputs prefix-tolerant.
@@ -539,7 +539,7 @@ def enforce_depth_cap(parents: Sequence[ParentProofLink]) -> None:
     if len(parents) > PARENT_PROOF_MAX_DEPTH:
         raise ValueError(
             f"parent chain depth {len(parents)} exceeds "
-            f"PARENT_PROOF_MAX_DEPTH={PARENT_PROOF_MAX_DEPTH} (the receipt-batching specification)"
+            f"PARENT_PROOF_MAX_DEPTH={PARENT_PROOF_MAX_DEPTH}"
         )
 
 
@@ -550,7 +550,7 @@ def enforce_depth_cap(parents: Sequence[ParentProofLink]) -> None:
 
 @dataclass
 class WaveNVerifyError(Exception):
-    """Raised when a the receipt pipeline verification step fails. Carries a stage hint and
+    """Raised when a per-record receipt verification step fails. Carries a stage hint and
     a short reason string for diagnostics."""
 
     reason: str
@@ -569,7 +569,7 @@ def verify_record_receipt(
     outer_signature_b64: str,
     outer_public_key: Ed25519PublicKey,
 ) -> None:
-    """Mode B (standalone) verification per the per-record receipt specification.
+    """Mode B (standalone) verification.
 
     1. Recompute `record_chain_hash` from receipt fields + capsule_id.
     2. Verify Merkle inclusion proof binds receipt → outer_merkle_root.
@@ -617,7 +617,7 @@ def verify_record_receipt(
         ) from e
     chain_hash_ascii = _strip_sha512_prefix(outer_chain_hash).encode("ascii")
     try:
-        outer_public_key.verify(sig_bytes, chain_hash_ascii)
+        verify_strict(outer_public_key, sig_bytes, chain_hash_ascii)
     except InvalidSignature as e:
         raise WaveNVerifyError(
             reason="outer Ed25519 signature does NOT verify against outer chain_hash",
@@ -626,7 +626,7 @@ def verify_record_receipt(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Mode A — Full the receipt pipeline AuditProof verification (extends V1 chain pipeline)
+# Mode A — Full per-record-receipt AuditProof verification (extends V1 chain pipeline)
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Canonical 8-step subsystem order (mirrors `nanorix.verifier._verify`).
@@ -660,8 +660,8 @@ class WaveNVerifyResult:
 
     For full V1 8-stage result detail (closed-set FailureReason), callers
     should use `nanorix.verifier.verify` (`_verify.py`) which doesn't yet
-    surface the receipt pipeline fields. This module's `verify_full_audit_proof` extends
-    V1 to handle the receipt pipeline fields with the same `valid: bool` contract.
+    surface the per-record receipt fields. This module's `verify_full_audit_proof` extends
+    V1 to handle the per-record receipt fields with the same `valid: bool` contract.
     """
 
     valid: bool
@@ -739,16 +739,16 @@ def _verify_parent_proofs_array(
 
 
 def verify_full_audit_proof(proof: Mapping[str, Any]) -> WaveNVerifyResult:
-    """Mode A — full the receipt pipeline AuditProof verification.
+    """Mode A — full per-record-receipt AuditProof verification.
 
     Extends the V1 8-stage pipeline with:
-    - Step 8 amended chain walk (the per-record receipt specification + the receipt-batching specification 4-arm formula)
+    - Step 8 amended chain walk (4-arm formula)
     - Per-receipt chain hash roundtrip
     - record_receipts_merkle_root binding
     - parent_proofs_merkle_root binding
     - parent depth-cap-32 enforcement
 
-    Forever-Standard: pre-the receipt pipeline AuditProofs (no record_receipts, no
+    Forever-Standard: legacy AuditProofs (no record_receipts, no
     parent_proof_hashes) verify byte-identically via the (None, None) Step 8
     branch collapsing to the legacy formula.
     """
@@ -756,7 +756,7 @@ def verify_full_audit_proof(proof: Mapping[str, Any]) -> WaveNVerifyResult:
     cdp_version = proof.get("cdp_version")
     if not isinstance(cdp_version, str):
         return WaveNVerifyResult(valid=False, failure_reason="cdp_version missing", stage_reached=1)
-    if cdp_version not in {"1.0", "2.0", "2.1", "2.2"}:
+    if cdp_version not in {"1.0", "2.1", "2.2"}:
         return WaveNVerifyResult(
             valid=False, failure_reason=f"cdp_version unsupported: {cdp_version}", stage_reached=2
         )
@@ -773,7 +773,7 @@ def verify_full_audit_proof(proof: Mapping[str, Any]) -> WaveNVerifyResult:
     if not isinstance(timestamp, str):
         timestamp = ""
 
-    # the receipt pipeline — optional Merkle roots.
+    # Receipt Merkle roots — optional.
     rrmr = proof.get("record_receipts_merkle_root")
     ppmr = proof.get("parent_proofs_merkle_root")
     rrmr_str: Optional[str] = rrmr if isinstance(rrmr, str) else None
@@ -781,6 +781,8 @@ def verify_full_audit_proof(proof: Mapping[str, Any]) -> WaveNVerifyResult:
 
     # Canonical-identity walk: hash inputs come from _CANONICAL_SUBSYSTEMS by
     # INDEX, never from the document.
+    # The failure label below is 1-based (idx + 1); idx itself stays the
+    # 0-based wire index the FailureReason enum carries.
     prev_hash = GENESIS_SHA512_HEX
     for idx, step in enumerate(chain):
         canonical_subsystem = _CANONICAL_SUBSYSTEMS[idx]
@@ -796,28 +798,28 @@ def verify_full_audit_proof(proof: Mapping[str, Any]) -> WaveNVerifyResult:
         if recomputed != _strip_sha512_prefix(claimed_chain_hash):
             return WaveNVerifyResult(
                 valid=False,
-                failure_reason=f"chain step {idx} ({declared_subsystem}) hash mismatch",
+                failure_reason=f"chain step {idx + 1} ({declared_subsystem}) hash mismatch",
                 stage_reached=3,
             )
         if declared_subsystem != canonical_subsystem:
             return WaveNVerifyResult(
                 valid=False,
                 failure_reason=(
-                    f"chain step {idx} names subsystem {declared_subsystem!r}; "
+                    f"chain step {idx + 1} names subsystem {declared_subsystem!r}; "
                     f"canonical is {canonical_subsystem!r}"
                 ),
                 stage_reached=3,
             )
         prev_hash = recomputed
 
-    # the per-record receipt specification receipt-set verification.
+    # Receipt-set verification.
     capsule_id = str(proof.get("capsule_id", ""))
     if isinstance(proof.get("record_receipts"), list):
         err = _verify_record_receipts_array(proof["record_receipts"], capsule_id, rrmr_str)
         if err is not None:
             return WaveNVerifyResult(valid=False, failure_reason=err, stage_reached=3)
 
-    # the receipt-batching specification parent-proof set verification.
+    # Parent-proof set verification.
     parents = proof.get("parent_proof_hashes")
     if isinstance(parents, list):
         err = _verify_parent_proofs_array(parents, ppmr_str)

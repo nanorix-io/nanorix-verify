@@ -5,5 +5,6 @@
   },
   "note": "customer_declared_activity_root is inside the canonical view, so a root altered after signing is detected as a signature failure without the customer's record. customer_declared_activity_root_mismatch is reserved for a genuine root whose supplied record does not reproduce it.",
   "stage_reached": 7,
+  "status": "not_verified",
   "valid": false
 }

@@ -1,0 +1,4 @@
+{
+  "description": "Receipt output hash altered.",
+  "outcome": "record_chain_hash_mismatch"
+}

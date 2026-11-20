@@ -1,9 +1,9 @@
 {
   "failure_reason": {
-    "reason": "does_not_verify",
-    "type": "signature_mismatch"
+    "found": "2.0",
+    "type": "cdp_version_unsupported"
   },
-  "note": "Supported version, so the version gate passes; the downgrade is caught at the signature stage because the signed message differs per version.",
-  "stage_reached": 7,
+  "stage_reached": 2,
+  "status": "not_verified",
   "valid": false
 }

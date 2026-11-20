@@ -1,0 +1,7 @@
+{
+  "failure_reason": null,
+  "note": "A run of a declared Capsulefile under an egress allowlist: upload, execution, two denied lookups, download and destruction. The Capsulefile content hash in capsule_started is inside the canonical view, so the declared environment is bound into the signature. The authority is an example customer authority; the key is the corpus test key, so no trust-chain manifest vouches for it.",
+  "stage_reached": 7,
+  "status": "not_anchored",
+  "valid": true
+}

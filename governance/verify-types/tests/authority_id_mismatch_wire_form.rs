@@ -1,7 +1,7 @@
 //! Wire-format-locked round-trip tests for `FailureReason::AuthorityIdMismatch`
-//! (the customer-authority specification G7 / VP Security extended-review F4.3).
+//! (the customer-authority specification / VP Security extended-review F4.3).
 //!
-//! **Forever-Standard discipline (the Forever-Standard wire discipline).** These tests pin the
+//! **Forever-Standard discipline.** These tests pin the
 //! exact wire form (variant tag + field names + `Option<String>`
 //! serialization shape + `AuthorityIdMismatchReason` sub-enum tags) so
 //! that:
@@ -13,8 +13,8 @@
 //!   metadata (auditors who persisted a `failure_reason` JSON field
 //!   years from now must still parse it correctly).
 //!
-//! The variant disambiguates verifier-policy-pin failures (per the customer-authority specification G7
-//! customer-side `required_authority_id` policy) from `AuthorityModeMismatch`
+//! The variant disambiguates verifier-policy-pin failures (customer-side
+//! `required_authority_id` policy) from `AuthorityModeMismatch`
 //! (which covers algorithm-level rejection per Amendment 1) and from
 //! `SignatureMismatch` (which covers Nanorix-authority-signed proof failures).
 //!
@@ -102,7 +102,7 @@ fn authority_id_mismatch_roundtrip_none_claimed() {
 #[test]
 fn authority_id_mismatch_roundtrip_some_claimed() {
     let original = FailureReason::AuthorityIdMismatch {
-        claimed_authority_id: Some("customer-hsm-mayo-v1".into()),
+        claimed_authority_id: Some("customer-hsm-other-v1".into()),
         expected_authority_id: "customer-hsm-acme-v1".into(),
         reason: AuthorityIdMismatchReason::VerifierPolicyAuthorityIdMismatch,
     };
@@ -134,7 +134,7 @@ fn authority_id_mismatch_missing_required_fields_fails() {
     );
 
     // Missing `reason`.
-    let bad_b = r#"{"type":"authority_id_mismatch","claimed_authority_id":null,"expected_authority_id":"customer-hsm-mayo-v1"}"#;
+    let bad_b = r#"{"type":"authority_id_mismatch","claimed_authority_id":null,"expected_authority_id":"customer-hsm-acme-v1"}"#;
     let result_b: Result<FailureReason, _> = serde_json::from_str(bad_b);
     assert!(
         result_b.is_err(),
@@ -145,7 +145,7 @@ fn authority_id_mismatch_missing_required_fields_fails() {
     // Missing `claimed_authority_id` is ALLOWED — `Option<String>` defaults
     // to None. This is the common case when AuditProofs omit
     // `signing_authority` entirely (Nanorix-default path).
-    let lenient = r#"{"type":"authority_id_mismatch","expected_authority_id":"customer-hsm-mayo-v1","reason":"verifier_policy_demands_customer_hsm_audit_proof_has_none"}"#;
+    let lenient = r#"{"type":"authority_id_mismatch","expected_authority_id":"customer-hsm-acme-v1","reason":"verifier_policy_demands_customer_hsm_audit_proof_has_none"}"#;
     let result_lenient: Result<FailureReason, _> = serde_json::from_str(lenient);
     match result_lenient {
         Ok(FailureReason::AuthorityIdMismatch {
@@ -157,7 +157,7 @@ fn authority_id_mismatch_missing_required_fields_fails() {
                 claimed_authority_id, None,
                 "missing claimed_authority_id must default to None"
             );
-            assert_eq!(expected_authority_id, "customer-hsm-mayo-v1");
+            assert_eq!(expected_authority_id, "customer-hsm-acme-v1");
             assert_eq!(
                 reason,
                 AuthorityIdMismatchReason::VerifierPolicyDemandsCustomerHsmAuditProofHasNone
@@ -180,7 +180,7 @@ fn authority_id_mismatch_missing_required_fields_fails() {
 /// surface against drift.
 #[test]
 fn authority_id_mismatch_unknown_reason_subtag_fails() {
-    let unknown_reason = r#"{"type":"authority_id_mismatch","claimed_authority_id":null,"expected_authority_id":"customer-hsm-mayo-v1","reason":"future_unrecognized_subreason"}"#;
+    let unknown_reason = r#"{"type":"authority_id_mismatch","claimed_authority_id":null,"expected_authority_id":"customer-hsm-acme-v1","reason":"future_unrecognized_subreason"}"#;
     let result: Result<FailureReason, _> = serde_json::from_str(unknown_reason);
     assert!(
         result.is_err(),
@@ -259,7 +259,7 @@ fn pre_g7_deserializer_rejects_new_variant_cleanly() {
         Reserved,
     }
 
-    let new_variant_json = r#"{"type":"authority_id_mismatch","claimed_authority_id":null,"expected_authority_id":"customer-hsm-mayo-v1","reason":"verifier_policy_demands_customer_hsm_audit_proof_has_none"}"#;
+    let new_variant_json = r#"{"type":"authority_id_mismatch","claimed_authority_id":null,"expected_authority_id":"customer-hsm-acme-v1","reason":"verifier_policy_demands_customer_hsm_audit_proof_has_none"}"#;
 
     let result: Result<PreG7FailureReason, _> = serde_json::from_str(new_variant_json);
     assert!(
@@ -275,8 +275,7 @@ fn pre_g7_deserializer_rejects_new_variant_cleanly() {
     );
 }
 
-/// Test 8 — fault-injection ≥10k iterations on the round-trip surface
-/// (per `feedback_canonical_hash_under_fault.md`).
+/// Test 8 — fault-injection ≥10k iterations on the round-trip surface.
 ///
 /// Property: for any (claimed_authority_id, expected_authority_id, reason)
 /// triple drawn from the variant's domain, serialize → deserialize →

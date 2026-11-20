@@ -1,4 +1,4 @@
-//! Portable Receipt Bundle (`.prb.json`) — Wave B Item 7 surface.
+//! Portable Receipt Bundle (`.prb.json`) surface.
 //!
 //! A self-contained JSON document allowing a single `RecordReceipt` to be
 //! verified independently of the parent AuditProof, at an adapter / auditor /
@@ -6,17 +6,17 @@
 //! Go / Python / TypeScript ports MUST produce byte-identical bundle JSON
 //! against the canonical reference vectors.
 //!
-//! Per `feedback_narrowness_is_the_moat_resist_receipt_enrichment.md`: this
+//! This
 //! is a JSON convention + JSON Schema + SDK helper — NOT a new file format
 //! with MIME registration / OS-level associations. Years of standards work
 //! were explicitly OUT OF SCOPE for this batch.
 //!
-//! Per `feedback_signed_primitive_vs_derived_value.md`: the bundle is a
+//! The bundle is a
 //! layer-2 transport artifact. The signed primitive (the receipt + outer
 //! AuditProof Ed25519 signature) stays narrow; the bundle merely re-packages
 //! them for portability.
 //!
-//! Per `feedback_narrow_signed_claim_auditor_certifies.md`: bundle disclaimer
+//! Bundle disclaimer
 //! cites; never asserts compliance. Vocabulary discipline forbids
 //! COMPLIANT/SATISFIED/PASSED/MEETS in the disclaimer text.
 //!
@@ -28,29 +28,40 @@
 //! 3. Consumer verifies bundle via `verify_receipt_bundle`:
 //!    - Recompute receipt's `record_chain_hash` from its fields.
 //!    - Verify Merkle inclusion proof binds receipt to outer `record_receipts_merkle_root`.
-//!    - Recompute Step 8 amended hash from outer anchors + Merkle root.
-//!    - Compare to `step_8_chain_hash`.
+//!    - Recompute Steps 1-7 from genesis at the bundle timestamp over the
+//!      canonical (subsystem, method) table, then the amended Step 8 with the
+//!      bundled `record_receipts_merkle_root` (and `parent_proofs_merkle_root`
+//!      when present). It must equal `step_8_chain_hash`, for every
+//!      `signature_target`.
 //!    - Verify the outer Ed25519 signature over the ASCII-hex bytes of the
 //!      anchor named by `signature_target`: `step8_chain_hash` (legacy
 //!      default — CDP v1.0/v2.0 signing model) or `document_canonical_hash`
 //!      (CDP v2.1 — the producer signs the FullCdp canonical hash, so the
 //!      bundle carries that hash as the signed message).
 //!
-//! ## v2.1 commitment semantics (never overclaim)
+//! ## Binding semantics (never overclaim)
+//!
+//! With the legacy target the signed value is `step_8_chain_hash`, which the
+//! verifier recomputes from the bundled Merkle root, so a successful verify
+//! means the receipt is bound to the signed value.
 //!
 //! When `signature_target = document_canonical_hash`, the signature proves
 //! the producer attested to the exact document whose canonical hash the
 //! bundle carries. The bundle cannot re-derive that hash (it does not carry
 //! the full document), so binding the bundled `record_receipts_merkle_root`
-//! to the SIGNED document requires the source AuditProof. See
-//! [`bundle_verdict_text`] for the verdict wording that states this plainly.
+//! to the SIGNED document requires the source AuditProof. Such a bundle
+//! reports `signature_authentic = true` and `receipt_bound = false` from
+//! [`verify_receipt_bundle_detailed`]; the strict [`verify_receipt_bundle`]
+//! returns [`BundleError::ReceiptNotBound`]. See [`bundle_verdict_text`] for
+//! the verdict wording.
 //!
-//! Cross-impl byte-equivalence: see `tests/bundle_cross_impl.rs` for the
-//! reference vectors that anchor Rust/Go/Python/TypeScript bundle JSON
-//! identity.
+//! Cross-impl identity: `tests/bundle_cross_impl.rs` reads the shared fixture
+//! corpus in `fixtures/bundles/` (the same files the Go, Python and TypeScript
+//! suites read) and asserts one outcome kind per fixture.
 
+use crate::ed25519_strict::VerifyCanonicalStrict;
 use base64::Engine;
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha512};
 
@@ -58,9 +69,9 @@ use crate::{strip_base64_prefix, strip_hash_prefix};
 
 /// Mandatory bundle disclaimer — factual language only, no compliance verdicts.
 ///
-/// Vocabulary discipline per `regulatory_context` rules + CONVENTIONS.md:
+/// Vocabulary discipline per `regulatory_context` rules + the project vocabulary:
 /// forbidden words include `COMPLIANT`, `SATISFIED`, `PASSED`, `MEETS`.
-pub const PORTABLE_RECEIPT_BUNDLE_DISCLAIMER: &str = "This Portable Receipt Bundle carries cryptographic evidence of one record's structural execution. Verifying party uses the audit_proof_anchors to verify the receipt's merkle inclusion + outer Ed25519 signature. Control framework references are NOT included in this bundle; consult the specification mapping artifact at schema.nanorix.com/control-map/{framework_version}.json to apply current control mappings at consumption time.";
+pub const PORTABLE_RECEIPT_BUNDLE_DISCLAIMER: &str = "This Portable Receipt Bundle carries cryptographic evidence of one record's structural execution. Verifying party uses the audit_proof_anchors to verify the receipt's merkle inclusion + outer Ed25519 signature. Control framework references are NOT included in this bundle; consult the mapping artifact at https://nanorix.io/v1/control-map?framework_version={framework_version} to apply current control mappings at consumption time.";
 
 /// `signature_target` value for the legacy CDP v1.0/v2.0 signing model:
 /// the outer Ed25519 signature covers the ASCII-hex bytes of
@@ -73,9 +84,9 @@ pub const SIGNATURE_TARGET_STEP8_CHAIN_HASH: &str = "step8_chain_hash";
 /// `document_canonical_hash`.
 pub const SIGNATURE_TARGET_DOCUMENT_CANONICAL_HASH: &str = "document_canonical_hash";
 
-/// Wave B Item 7 — Portable Receipt Bundle wire shape.
+/// Portable Receipt Bundle wire shape.
 ///
-/// Forever-Standard the Forever-Standard wire discipline: `bundle_version` is append-only; the V1.0
+/// Forever-Standard: `bundle_version` is append-only; the V1.0
 /// shape remains valid forever. Future bundle types land as new wire-format
 /// versions, NEVER as breaking-shape changes to V1.0.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -102,7 +113,7 @@ pub struct AuditProofAnchors {
     pub framework_version_at_emit: Option<String>,
     /// Which anchor the outer Ed25519 signature covers. Absent = legacy
     /// [`SIGNATURE_TARGET_STEP8_CHAIN_HASH`] (v1.0/v2.0 bundles predate this
-    /// field). Additive per the Forever-Standard wire discipline — legacy bundle JSON is byte-unchanged.
+    /// field). Additive — legacy bundle JSON is byte-unchanged.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub signature_target: Option<String>,
     /// FullCdp document canonical hash (bare lowercase 128-char hex) — the
@@ -110,12 +121,18 @@ pub struct AuditProofAnchors {
     /// [`SIGNATURE_TARGET_DOCUMENT_CANONICAL_HASH`]. Absent on legacy bundles.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub document_canonical_hash: Option<String>,
+    /// Parent-proofs Merkle root (`sha512:`-prefixed). Present only when the
+    /// source proof has parent links; the Step 8 amendment commits to it.
+    /// Omitted when absent, so bundle JSON from proofs without parent links
+    /// is byte-unchanged.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_proofs_merkle_root: Option<String>,
 }
 
 /// Bundle-extraction / verification errors.
 #[derive(Debug, thiserror::Error)]
 pub enum BundleError {
-    #[error("AuditProof has no record_receipts field; cannot extract receipt bundle from pre-the receipt pipeline AuditProof")]
+    #[error("AuditProof has no record_receipts field; cannot extract a receipt bundle from an AuditProof issued before record receipts")]
     NoReceipts,
     #[error("record index {0} out of bounds; AuditProof has {1} receipts")]
     IndexOutOfBounds(u32, usize),
@@ -129,14 +146,79 @@ pub enum BundleError {
     Step8Mismatch { claimed: String, recomputed: String },
     #[error("outer Ed25519 signature failed verification")]
     SignatureFailed,
+    #[error("signature is authentic over the document canonical hash, but the bundle alone cannot bind the receipt to that signed document; verify the source AuditProof")]
+    ReceiptNotBound,
     #[error("bundle declares signature_target=document_canonical_hash (CDP v2.1 signing model) but carries no document_canonical_hash value; re-extract the bundle from the source AuditProof with a v2.1-aware extractor")]
     MissingCanonicalHashAnchor,
+    #[error("document_canonical_hash is not exactly 128 lowercase hex characters after its sha512: prefix")]
+    MalformedCanonicalHashAnchor,
     #[error("unknown signature_target {0:?}; this verifier understands step8_chain_hash and document_canonical_hash")]
     UnknownSignatureTarget(String),
     #[error("base64 decode error in field {field}: {reason}")]
     Base64Decode { field: &'static str, reason: String },
     #[error("bundle JSON shape error: {0}")]
     Shape(String),
+}
+
+impl BundleError {
+    /// Stable snake_case discriminator shared with the Go, Python and
+    /// TypeScript verifiers (used by the CLI JSON output and the shared
+    /// fixture corpus).
+    pub fn kind(&self) -> &'static str {
+        match self {
+            BundleError::NoReceipts => "no_receipts",
+            BundleError::IndexOutOfBounds(..) => "index_out_of_bounds",
+            BundleError::MissingField(_) => "missing_field",
+            BundleError::RecordChainHashMismatch { .. } => "record_chain_hash_mismatch",
+            BundleError::MerkleInclusionFailed(_) => "merkle_inclusion_failed",
+            BundleError::Step8Mismatch { .. } => "step_8_mismatch",
+            BundleError::SignatureFailed => "signature_failed",
+            BundleError::ReceiptNotBound => "receipt_not_bound",
+            BundleError::MissingCanonicalHashAnchor => "missing_canonical_hash_anchor",
+            BundleError::MalformedCanonicalHashAnchor => "malformed_canonical_hash_anchor",
+            BundleError::UnknownSignatureTarget(_) => "unknown_signature_target",
+            BundleError::Base64Decode { .. } => "base64_decode",
+            BundleError::Shape(_) => "shape",
+        }
+    }
+}
+
+/// Detailed outcome of [`verify_receipt_bundle_detailed`].
+///
+/// `signature_authentic`: the outer Ed25519 signature verifies over the anchor
+/// named by `signature_target`. `receipt_bound`: the bundle alone ties the
+/// receipt to the signed value. It is true for the legacy target (Step 8 was
+/// recomputed from the bundled root) and false for `document_canonical_hash`,
+/// whose signed value commits to a document the bundle does not carry.
+/// `signature_target`: the effective target the verifier checked, either
+/// [`SIGNATURE_TARGET_STEP8_CHAIN_HASH`] (also the value for a bundle that
+/// declares no target) or [`SIGNATURE_TARGET_DOCUMENT_CANONICAL_HASH`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BundleVerification {
+    pub signature_authentic: bool,
+    pub receipt_bound: bool,
+    pub signature_target: String,
+}
+
+impl BundleVerification {
+    /// True only when the signature is authentic and the receipt is bound.
+    ///
+    /// Integrity only: the signature is checked against the key the bundle
+    /// carries, so `true` never says who signed. [`Self::status`] says so.
+    pub fn is_valid(&self) -> bool {
+        self.signature_authentic && self.receipt_bound
+    }
+
+    /// `"not_anchored"` when [`Self::is_valid`] holds, otherwise
+    /// `"not_verified"`. Never `"verified"`: no key list is read, so the
+    /// signing key is only the one the bundle carries.
+    pub fn status(&self) -> &'static str {
+        if self.is_valid() {
+            "not_anchored"
+        } else {
+            "not_verified"
+        }
+    }
 }
 
 /// Extract a single receipt + outer anchors into a Portable Receipt Bundle.
@@ -210,6 +292,11 @@ pub fn extract_receipt_bundle(
         .ok_or(BundleError::MissingField("chain[7].chain_hash"))?
         .to_string();
 
+    let parent_proofs_merkle_root = audit_proof
+        .get("parent_proofs_merkle_root")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
     let framework_version_at_emit = audit_proof
         .get("regulatory_context")
         .and_then(|v| v.get("framework_version"))
@@ -263,26 +350,63 @@ pub fn extract_receipt_bundle(
             framework_version_at_emit,
             signature_target,
             document_canonical_hash,
+            parent_proofs_merkle_root,
         },
         disclaimer: PORTABLE_RECEIPT_BUNDLE_DISCLAIMER.to_string(),
     })
 }
 
-/// Verify a Portable Receipt Bundle standalone — Mode B per the per-record receipt specification.
+/// Rebuild the amended Step 8 hash from genesis: Steps 1-7 over the canonical
+/// (subsystem, method) table at `timestamp`, then the Step 8 amendment with the
+/// receipts root and the optional parent-proofs root. Returns bare lowercase hex.
+fn recompute_step_8(
+    timestamp: &str,
+    record_receipts_merkle_root: &str,
+    parent_proofs_merkle_root: Option<&str>,
+) -> String {
+    let mut prev = crate::NANORIX_GENESIS_HASH.to_string();
+    for (subsystem, method) in crate::CANONICAL_CHAIN
+        .iter()
+        .take(crate::NANORIX_CHAIN_STEPS - 1)
+    {
+        prev = crate::compute_step_hash(&prev, subsystem, "destroy", method, timestamp);
+    }
+    crate::compute_step_8_amended_verifier(
+        &prev,
+        timestamp,
+        Some(record_receipts_merkle_root),
+        parent_proofs_merkle_root,
+    )
+}
+
+fn is_sha512_lowercase_hex(s: &str) -> bool {
+    s.len() == 128 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// Verify a Portable Receipt Bundle standalone — Mode B — and
+/// report both whether the signature is authentic and whether the receipt is
+/// bound.
 ///
 /// Steps (mirrors `extract_receipt_bundle` inverse semantics):
 /// 1. Recompute the receipt's `record_chain_hash` from its fields.
 /// 2. Verify Merkle inclusion proof binds receipt to `record_receipts_merkle_root`.
-/// 3. Verify the outer Ed25519 signature using `verification_key` over the
+/// 3. Recompute Steps 1-7 from genesis at the bundle timestamp, then the
+///    amended Step 8 with `record_receipts_merkle_root` (and
+///    `parent_proofs_merkle_root` when present); require equality with
+///    `step_8_chain_hash`. Runs for every `signature_target`.
+/// 4. Verify the outer Ed25519 signature using `verification_key` over the
 ///    ASCII-hex bytes of the anchor named by `signature_target`:
 ///    absent / `step8_chain_hash` → `step_8_chain_hash` (legacy v1.0/v2.0);
 ///    `document_canonical_hash` → the carried FullCdp canonical hash (v2.1).
 ///
-/// On success returns `Ok(())`. On failure returns a typed `BundleError`.
-/// Use [`bundle_verdict_text`] for the human verdict — for v2.1 bundles it
-/// states the commitment semantics (binding the bundled Merkle root to the
-/// signed document requires the source AuditProof).
-pub fn verify_receipt_bundle(bundle: &PortableReceiptBundle) -> Result<(), BundleError> {
+/// For the legacy target `receipt_bound` is true: the signed Step 8 hash was
+/// recomputed from the bundled root. For `document_canonical_hash` it is
+/// false: the signed value commits to a document the bundle does not carry,
+/// so binding the receipt requires the source AuditProof. Use
+/// [`bundle_verdict_text`] for the human verdict.
+pub fn verify_receipt_bundle_detailed(
+    bundle: &PortableReceiptBundle,
+) -> Result<BundleVerification, BundleError> {
     if bundle.bundle_version != "1.0" {
         return Err(BundleError::Shape(format!(
             "unsupported bundle_version: {}",
@@ -299,12 +423,16 @@ pub fn verify_receipt_bundle(bundle: &PortableReceiptBundle) -> Result<(), Bundl
     let anchors = &bundle.audit_proof_anchors;
 
     // (1) Recompute record_chain_hash from receipt fields.
-    let record_index = bundle
+    let record_index_value = bundle
         .receipt
         .get("record_index")
-        .and_then(|v| v.as_u64())
-        .ok_or_else(|| BundleError::Shape("receipt.record_index missing".to_string()))?
-        as u32;
+        .ok_or_else(|| BundleError::Shape("receipt.record_index missing".to_string()))?;
+    let record_index = record_index_value
+        .as_u64()
+        .and_then(|n| u32::try_from(n).ok())
+        .ok_or_else(|| {
+            BundleError::Shape("receipt.record_index is not an integer in range".to_string())
+        })?;
     let record_id = bundle
         .receipt
         .get("record_id")
@@ -335,8 +463,8 @@ pub fn verify_receipt_bundle(bundle: &PortableReceiptBundle) -> Result<(), Bundl
         _ => crate::NANORIX_GENESIS_HASH.to_string(),
     };
 
-    // the per-record receipt specification: a declared pattern_tag is a signed primitive — bind its wire
-    // form into the recompute (mirrors the server's `wave_n.rs` and the
+    // A declared pattern_tag is a signed primitive — bind its wire
+    // form into the recompute (mirrors the server's the reference implementation and the
     // Go/Python/TypeScript bundle ports).
     let pattern_tag = bundle.receipt.get("pattern_tag").and_then(|v| v.as_str());
 
@@ -380,41 +508,60 @@ pub fn verify_receipt_bundle(bundle: &PortableReceiptBundle) -> Result<(), Bundl
         ));
     }
 
-    // (3) Verify Ed25519 signature over the target named by signature_target.
+    // (3) Step 8 recompute. The bundle does not carry the 8-step chain, but
+    // every step hashes the same timestamp over the canonical (subsystem,
+    // method) table, so Steps 1-7 are derivable. Requiring the amended Step 8
+    // to equal step_8_chain_hash ties the bundled Merkle root (and the
+    // parent-proofs root, when present) to the Step 8 value. Runs for every
+    // signature_target.
+    let recomputed_step_8 = recompute_step_8(
+        &anchors.timestamp,
+        &anchors.record_receipts_merkle_root,
+        anchors.parent_proofs_merkle_root.as_deref(),
+    );
+    if recomputed_step_8 != strip_hash_prefix(&anchors.step_8_chain_hash) {
+        return Err(BundleError::Step8Mismatch {
+            claimed: anchors.step_8_chain_hash.clone(),
+            recomputed: recomputed_step_8,
+        });
+    }
+
+    // (4) Verify Ed25519 signature over the target named by signature_target.
     //
-    // The bundle does NOT carry the full 8-step chain or the full signed
-    // document (would defeat the portability purpose).
-    //
-    // Legacy target (step8_chain_hash — v1.0/v2.0 signing model):
-    //   - Step 8's chain_hash transitively depends on Steps 1-7 (chain).
-    //   - Step 8 amended ALSO incorporates record_receipts_merkle_root (which
-    //     we verify against via Merkle inclusion in step (2) above).
-    //   - The Ed25519 signature over step_8_chain_hash binds the producer's
-    //     authority to the precise (chain + receipt set + timestamp).
+    // Legacy target (step8_chain_hash — v1.0/v2.0 signing model): the signed
+    // value is the Step 8 hash recomputed above, so the receipt is bound.
     //
     // v2.1 target (document_canonical_hash): the producer signs the FullCdp
-    // canonical hash. The bundle carries that hash as the signed message;
-    // the signature proves authority over that exact document commitment.
-    // Binding the bundled record_receipts_merkle_root to the SIGNED document
-    // cannot be established from the bundle alone — the canonical hash is a
-    // commitment over the whole document, which the bundle does not carry.
-    // `bundle_verdict_text` states this plainly; for the full binding the
-    // consumer verifies the source AuditProof (out of bundle scope).
-    let signed_message: &str = match anchors.signature_target.as_deref() {
-        None | Some(SIGNATURE_TARGET_STEP8_CHAIN_HASH) => {
-            strip_hash_prefix(&anchors.step_8_chain_hash)
-        }
-        Some(SIGNATURE_TARGET_DOCUMENT_CANONICAL_HASH) => {
-            let canonical = anchors
-                .document_canonical_hash
-                .as_deref()
-                .ok_or(BundleError::MissingCanonicalHashAnchor)?;
-            strip_hash_prefix(canonical)
-        }
-        Some(other) => {
-            return Err(BundleError::UnknownSignatureTarget(other.to_string()));
-        }
-    };
+    // canonical hash. The bundle carries that hash as the signed message; the
+    // signature proves authority over that exact document commitment, but the
+    // canonical hash is a commitment over the document's signed view, which the bundle
+    // does not carry. The receipt is therefore reported as not bound; the
+    // consumer verifies the source AuditProof for the full binding.
+    let (signed_message, receipt_bound, effective_target): (&str, bool, &str) =
+        match anchors.signature_target.as_deref() {
+            None | Some(SIGNATURE_TARGET_STEP8_CHAIN_HASH) => (
+                strip_hash_prefix(&anchors.step_8_chain_hash),
+                true,
+                SIGNATURE_TARGET_STEP8_CHAIN_HASH,
+            ),
+            Some(SIGNATURE_TARGET_DOCUMENT_CANONICAL_HASH) => {
+                let canonical = anchors
+                    .document_canonical_hash
+                    .as_deref()
+                    .filter(|s| !s.is_empty())
+                    .ok_or(BundleError::MissingCanonicalHashAnchor)?;
+                let canonical = strip_hash_prefix(canonical);
+                // The same key signs other message shapes, such as a population
+                // head, so a signature over anything but a bare hash proves nothing here.
+                if !is_sha512_lowercase_hex(canonical) {
+                    return Err(BundleError::MalformedCanonicalHashAnchor);
+                }
+                (canonical, false, SIGNATURE_TARGET_DOCUMENT_CANONICAL_HASH)
+            }
+            Some(other) => {
+                return Err(BundleError::UnknownSignatureTarget(other.to_string()));
+            }
+        };
 
     let sig_bytes = base64::engine::general_purpose::STANDARD
         .decode(strip_base64_prefix(&anchors.signature))
@@ -450,13 +597,37 @@ pub fn verify_receipt_bundle(bundle: &PortableReceiptBundle) -> Result<(), Bundl
         VerifyingKey::from_bytes(&pub_array).map_err(|_| BundleError::SignatureFailed)?;
 
     verifying_key
-        .verify(signed_message.as_bytes(), &signature)
+        .verify_canonical_strict(signed_message.as_bytes(), &signature)
         .map_err(|_| BundleError::SignatureFailed)?;
 
-    Ok(())
+    Ok(BundleVerification {
+        signature_authentic: true,
+        receipt_bound,
+        signature_target: effective_target.to_string(),
+    })
 }
 
-/// Human-readable verdict for a bundle that [`verify_receipt_bundle`]
+/// Verify a Portable Receipt Bundle; succeeds only when the receipt is bound.
+///
+/// Runs [`verify_receipt_bundle_detailed`]. A bundle whose signature is
+/// authentic but whose receipt the bundle alone cannot bind (the
+/// `document_canonical_hash` target) returns [`BundleError::ReceiptNotBound`]
+/// instead of `Ok(())`, so a caller that treats `Ok` as "verified" is never
+/// told so for an unbound receipt. Use [`verify_receipt_bundle_detailed`] to
+/// read the distinction.
+///
+/// `Ok(())` is integrity only: the signature is checked against the key the
+/// bundle carries, so it never says who signed
+/// ([`BundleVerification::status`] is `"not_anchored"` for the same bundle).
+pub fn verify_receipt_bundle(bundle: &PortableReceiptBundle) -> Result<(), BundleError> {
+    if verify_receipt_bundle_detailed(bundle)?.receipt_bound {
+        Ok(())
+    } else {
+        Err(BundleError::ReceiptNotBound)
+    }
+}
+
+/// Human-readable verdict for a bundle that [`verify_receipt_bundle_detailed`]
 /// accepted. Never overclaims: the v2.1 wording states the commitment
 /// semantics — the signature covers the document canonical hash, and binding
 /// the bundled Merkle root to that signed document requires the source
@@ -470,12 +641,16 @@ pub fn bundle_verdict_text(bundle: &PortableReceiptBundle) -> String {
              the entire source AuditProof document, which this bundle does not carry — so this \
              verification establishes (a) the signature is authentic over the carried canonical \
              hash and (b) the receipt is consistent with the bundled Merkle root. Binding that \
-             Merkle root to the SIGNED document requires verifying the source AuditProof."
+             Merkle root to the SIGNED document requires verifying the source AuditProof; this \
+             bundle alone therefore reports the receipt as not bound."
                 .to_string()
         }
         _ => "Ed25519 signature verified over step_8_chain_hash. The receipt chain hash was \
              recomputed and its Merkle inclusion checked against the bundled \
-             record_receipts_merkle_root, which the Step 8 amended hash incorporates."
+             record_receipts_merkle_root, and Step 8 was recomputed from the canonical chain at \
+             the bundle timestamp with that root and found equal to the signed \
+             step_8_chain_hash. The signature is checked against the key carried in the \
+             bundle; signer identity needs the published trust chain."
             .to_string(),
     }
 }
@@ -487,8 +662,8 @@ pub fn bundle_verdict_text(bundle: &PortableReceiptBundle) -> String {
 
 /// `pattern_tag_wire` follows the server's conditional-append rule
 /// (the reference chain implementation): the trailing `\x00 ‖ pattern_tag_wire`
-/// segment is appended ONLY when the receipt declares a tag (the per-record receipt specification
-/// signed-primitive binding).
+/// segment is appended ONLY when the receipt declares a tag (signed-primitive
+/// binding).
 fn compute_record_chain_hash_local(
     capsule_id: &str,
     record_index: u32,
@@ -795,9 +970,10 @@ mod tests {
     }
 
     #[test]
-    fn bundle_disclaimer_cites_adr_040_mapping() {
-        assert!(PORTABLE_RECEIPT_BUNDLE_DISCLAIMER.contains("the specification"));
-        assert!(PORTABLE_RECEIPT_BUNDLE_DISCLAIMER.contains("control-map"));
+    fn bundle_disclaimer_points_at_the_served_control_map() {
+        assert!(PORTABLE_RECEIPT_BUNDLE_DISCLAIMER.contains("nanorix.io/v1/control-map"));
+        assert!(!PORTABLE_RECEIPT_BUNDLE_DISCLAIMER.contains("ADR-"));
+        assert!(!PORTABLE_RECEIPT_BUNDLE_DISCLAIMER.contains("nanorix.com"));
     }
 
     #[test]
@@ -1156,7 +1332,19 @@ mod tests {
     fn verify_v21_bundle_roundtrip_succeeds() {
         let (proof, _key) = make_v21_proof();
         let bundle = extract_receipt_bundle(&proof, 0).unwrap();
-        verify_receipt_bundle(&bundle).expect("v2.1 bundle verifies");
+        let result = verify_receipt_bundle_detailed(&bundle).expect("v2.1 bundle verifies");
+        assert!(result.signature_authentic);
+        assert_eq!(
+            result.signature_target,
+            SIGNATURE_TARGET_DOCUMENT_CANONICAL_HASH
+        );
+        assert!(
+            !result.receipt_bound && !result.is_valid(),
+            "a v2.1 bundle alone must not report the receipt as bound"
+        );
+        // The strict entry point refuses to call an unbound receipt verified.
+        let err = verify_receipt_bundle(&bundle).unwrap_err();
+        assert!(matches!(err, BundleError::ReceiptNotBound), "got {err:?}");
     }
 
     #[test]
@@ -1165,6 +1353,18 @@ mod tests {
         let mut bundle = extract_receipt_bundle(&proof, 0).unwrap();
         bundle.audit_proof_anchors.document_canonical_hash = None;
         let err = verify_receipt_bundle(&bundle).unwrap_err();
+        assert!(
+            matches!(err, BundleError::MissingCanonicalHashAnchor),
+            "expected MissingCanonicalHashAnchor, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn v21_bundle_empty_canonical_hash_is_treated_as_missing() {
+        let (proof, _key) = make_v21_proof();
+        let mut bundle = extract_receipt_bundle(&proof, 0).unwrap();
+        bundle.audit_proof_anchors.document_canonical_hash = Some(String::new());
+        let err = verify_receipt_bundle_detailed(&bundle).unwrap_err();
         assert!(
             matches!(err, BundleError::MissingCanonicalHashAnchor),
             "expected MissingCanonicalHashAnchor, got {err:?}"
@@ -1200,7 +1400,9 @@ mod tests {
         let json = serde_json::to_string(&bundle).unwrap();
         let roundtripped: PortableReceiptBundle = serde_json::from_str(&json).unwrap();
         assert_eq!(bundle, roundtripped);
-        verify_receipt_bundle(&roundtripped).expect("roundtripped v2.1 bundle verifies");
+        let result = verify_receipt_bundle_detailed(&roundtripped)
+            .expect("roundtripped v2.1 bundle verifies");
+        assert!(result.signature_authentic && !result.receipt_bound);
     }
 
     #[test]
@@ -1215,6 +1417,7 @@ mod tests {
         let legacy_bundle = extract_receipt_bundle(&legacy_proof, 0).unwrap();
         let legacy_verdict = bundle_verdict_text(&legacy_bundle);
         assert!(legacy_verdict.contains("step_8_chain_hash"));
+        assert!(legacy_verdict.contains("recomputed"));
 
         for verdict in [&v21_verdict, &legacy_verdict] {
             for forbidden in ["COMPLIANT", "SATISFIED", "PASSED", "MEETS"] {
@@ -1226,7 +1429,7 @@ mod tests {
         }
     }
 
-    // ── the per-record receipt specification pattern_tag signed-primitive binding (regression) ───────────
+    // ── pattern_tag signed-primitive binding (regression) ───────────
 
     /// A tagged receipt's record_chain_hash binds the pattern_tag wire form —
     /// the bundle verify path must recompute WITH the tag (mirrors the server
@@ -1317,5 +1520,113 @@ mod tests {
         tampered.receipt["pattern_tag"] = serde_json::Value::String("annotation".to_string());
         let err = verify_receipt_bundle(&tampered).unwrap_err();
         assert!(matches!(err, BundleError::RecordChainHashMismatch { .. }));
+    }
+
+    // ── Step 8 binding ──────────────────────────────────────────────────────
+
+    #[test]
+    fn legacy_bundle_reports_bound_on_success() {
+        let (proof, _) = make_wave_n_proof_n2();
+        let bundle = extract_receipt_bundle(&proof, 0).unwrap();
+        let result = verify_receipt_bundle_detailed(&bundle).expect("legacy bundle verifies");
+        assert!(result.signature_authentic && result.receipt_bound && result.is_valid());
+        assert_eq!(result.signature_target, SIGNATURE_TARGET_STEP8_CHAIN_HASH);
+        verify_receipt_bundle(&bundle).expect("strict verify succeeds for a bound receipt");
+    }
+
+    #[test]
+    fn root_not_committed_by_step_8_is_rejected() {
+        let (proof, _) = make_wave_n_proof_n2();
+        let mut bundle = extract_receipt_bundle(&proof, 0).unwrap();
+        // A self-consistent single-leaf tree that the signed Step 8 hash does
+        // not commit to.
+        let leaf = bundle.receipt["record_chain_hash"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        bundle.audit_proof_anchors.record_receipts_merkle_root = leaf;
+        bundle.receipt["merkle_inclusion_proof"] = serde_json::json!([]);
+        let err = verify_receipt_bundle(&bundle).unwrap_err();
+        assert!(
+            matches!(err, BundleError::Step8Mismatch { .. }),
+            "got {err:?}"
+        );
+        let err = verify_receipt_bundle_detailed(&bundle).unwrap_err();
+        assert_eq!(err.kind(), "step_8_mismatch");
+    }
+
+    #[test]
+    fn altered_timestamp_is_rejected() {
+        let (proof, _) = make_wave_n_proof_n2();
+        let mut bundle = extract_receipt_bundle(&proof, 0).unwrap();
+        bundle.audit_proof_anchors.timestamp = "2026-05-13T00:00:00Z".to_string();
+        let err = verify_receipt_bundle_detailed(&bundle).unwrap_err();
+        assert!(
+            matches!(err, BundleError::Step8Mismatch { .. }),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn signature_target_does_not_skip_step_8() {
+        let (proof, _) = make_v21_proof();
+        let mut bundle = extract_receipt_bundle(&proof, 0).unwrap();
+        bundle.audit_proof_anchors.timestamp = "2026-06-02T00:00:00Z".to_string();
+        let err = verify_receipt_bundle_detailed(&bundle).unwrap_err();
+        assert!(
+            matches!(err, BundleError::Step8Mismatch { .. }),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn extract_carries_parent_proofs_root_and_omits_when_absent() {
+        let (mut proof, _) = make_wave_n_proof_n2();
+        let plain = extract_receipt_bundle(&proof, 0).unwrap();
+        assert!(plain
+            .audit_proof_anchors
+            .parent_proofs_merkle_root
+            .is_none());
+        assert!(!serde_json::to_string(&plain)
+            .unwrap()
+            .contains("parent_proofs_merkle_root"));
+
+        let root = format!("sha512:{}", "ab".repeat(64));
+        proof["parent_proofs_merkle_root"] = serde_json::Value::String(root.clone());
+        let bundle = extract_receipt_bundle(&proof, 0).unwrap();
+        assert_eq!(
+            bundle
+                .audit_proof_anchors
+                .parent_proofs_merkle_root
+                .as_deref(),
+            Some(root.as_str())
+        );
+        // The signed Step 8 value in this fixture was built without a parent
+        // root, so a bundle that declares one fails closed.
+        let err = verify_receipt_bundle_detailed(&bundle).unwrap_err();
+        assert!(
+            matches!(err, BundleError::Step8Mismatch { .. }),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn non_integer_record_index_is_rejected() {
+        let (proof, _) = make_wave_n_proof_n2();
+        for bad in [
+            serde_json::json!(1.5),
+            serde_json::json!(-1),
+            serde_json::json!(1u64 << 33),
+            serde_json::json!("1"),
+            serde_json::json!(true),
+        ] {
+            let mut bundle = extract_receipt_bundle(&proof, 0).unwrap();
+            bundle.receipt["record_index"] = bad.clone();
+            let err = verify_receipt_bundle_detailed(&bundle).unwrap_err();
+            assert!(
+                matches!(err, BundleError::Shape(_)),
+                "record_index {bad} must be a shape error, got {err:?}"
+            );
+        }
     }
 }

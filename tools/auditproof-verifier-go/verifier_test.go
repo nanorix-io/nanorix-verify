@@ -3,10 +3,10 @@
 // **Cross-impl byte-equivalence (binding contract):** every fixture in
 // `tools/nanorix-verify/fixtures/corpus/` must produce a Go-side verification
 // output that is byte-identical to the Rust verifier output. Divergence on
-// even one fixture is a P0 finding per the Forever-Standard wire discipline + the specification release framing
-// + `feedback_canonical_hash_under_fault.md`.
+// even one fixture is a P0 finding release framing
+// + an internal design rule.
 //
-// Property-test fault injection (per `feedback_canonical_hash_under_fault.md`):
+// Property-test fault injection:
 // 10k iterations of random AuditProof bytes — malformed JSON, wrong field
 // types, off-by-one chain values, tampered signatures — every fault path must
 // produce a deterministic FailureReason from the closed-set enum.
@@ -14,10 +14,12 @@
 package auditproof
 
 import (
+	"bytes"
 	"crypto/sha512"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"math/rand"
 	"os"
 	"os/exec"
@@ -167,6 +169,29 @@ func TestVerifyUnsupportedCdpVersionFailsAtStage2(t *testing.T) {
 	}
 }
 
+// TestVerifyRefusesCdpVersion2_0AtStage2 mirrors the Rust library test of the
+// same refusal: a 2.0-labelled document is refused at the version gate with
+// the found value, with or without a declared activity root.
+func TestVerifyRefusesCdpVersion2_0AtStage2(t *testing.T) {
+	cases := []map[string]interface{}{
+		{"cdp_version": "2.0"},
+		{"cdp_version": "2.0", "document_hash": "sha512:" + strings.Repeat("ab", 64)},
+		{"cdp_version": "2.0", CustomerDeclaredActivityRootField: "sha512:" + strings.Repeat("ab", 64)},
+	}
+	for _, proof := range cases {
+		r := VerifyValue(proof, VerifierPolicy{})
+		if r.Valid {
+			t.Fatalf("expected invalid for %v", proof)
+		}
+		if r.StageReached != 2 {
+			t.Errorf("stage_reached = %d, want 2", r.StageReached)
+		}
+		if r.FailureReason == nil || r.FailureReason.Type != ReasonCdpVersionUnsupported || r.FailureReason.Found != "2.0" {
+			t.Errorf("failure_reason = %+v", r.FailureReason)
+		}
+	}
+}
+
 // TestVerifyTamperedStepHashFailsAtStage3 mirrors Rust
 // `verify_tampered_step_hash_fails_at_stage_3`.
 func TestVerifyTamperedStepHashFailsAtStage3(t *testing.T) {
@@ -257,63 +282,206 @@ func TestVerifyMismatchedFinalHashFailsAtStage4(t *testing.T) {
 	}
 }
 
-// TestPolicyPinCustomerHsmAuditProofNoneRejected mirrors Rust
-// `policy_pin_customer_hsm_audit_proof_none_rejected`.
-func TestPolicyPinCustomerHsmAuditProofNoneRejected(t *testing.T) {
-	proof := makeMinimalV1Proof("2026-05-06T12:00:00Z")
-	policy := VerifierPolicy{RequiredAuthorityID: "customer-hsm-example-org-v1"}
-	r := VerifyValue(proof, policy)
+const (
+	testPin     = "customer-hsm-example-org-v1"
+	testNanorix = "us-kms-nanorix-v1"
+)
+
+// assertAuthorityReject checks a stage-2 pin rejection down to the wire
+// fields. claimed == nil means the claimed authority must be null.
+func assertAuthorityReject(t *testing.T, label string, r AuditProofVerificationResult, claimed *string, reason AuthorityIDMismatchReason) {
+	t.Helper()
 	if r.Valid {
-		t.Fatalf("expected reject; got %+v", r)
+		t.Fatalf("%s: expected reject; got %+v", label, r)
 	}
 	if r.StageReached != 2 {
-		t.Errorf("stage_reached = %d, want 2", r.StageReached)
+		t.Errorf("%s: stage_reached = %d, want 2", label, r.StageReached)
 	}
 	if r.FailureReason == nil || r.FailureReason.Type != ReasonAuthorityIDMismatch {
-		t.Errorf("failure_reason = %+v", r.FailureReason)
+		t.Fatalf("%s: failure_reason = %+v", label, r.FailureReason)
 	}
-	if r.FailureReason.ClaimedAuthorityID != nil {
-		t.Errorf("expected nil claimed; got %v", r.FailureReason.ClaimedAuthorityID)
+	got := r.FailureReason.ClaimedAuthorityID
+	switch {
+	case claimed == nil && got != nil:
+		t.Errorf("%s: claimed = %q, want null", label, *got)
+	case claimed != nil && (got == nil || *got != *claimed):
+		t.Errorf("%s: claimed = %v, want %q", label, got, *claimed)
 	}
-	if r.FailureReason.ExpectedAuthorityID != "customer-hsm-example-org-v1" {
-		t.Errorf("expected_authority_id = %q", r.FailureReason.ExpectedAuthorityID)
+	if r.FailureReason.ExpectedAuthorityID != testPin {
+		t.Errorf("%s: expected_authority_id = %q", label, r.FailureReason.ExpectedAuthorityID)
 	}
-	if r.FailureReason.AuthIDReason != AuthIDPolicyDemandsCustomerHSMHasNone {
-		t.Errorf("reason = %q", r.FailureReason.AuthIDReason)
+	if r.FailureReason.AuthIDReason != reason {
+		t.Errorf("%s: reason = %q, want %q", label, r.FailureReason.AuthIDReason, reason)
 	}
 }
 
-// TestPolicyPinCustomerHsmAuditProofWrongAuthorityRejected mirrors Rust
-// `policy_pin_customer_hsm_audit_proof_wrong_authority_rejected`.
-func TestPolicyPinCustomerHsmAuditProofWrongAuthorityRejected(t *testing.T) {
+// pinProof builds an unsigned minimal proof on cdp_version 2.1, a version that
+// signs the top-level authority_id. pinProofVersion picks the version.
+func pinProof(top string, signingAuthority interface{}, withSA bool) map[string]interface{} {
+	return pinProofVersion("2.1", top, signingAuthority, withSA)
+}
+
+func pinProofVersion(version, top string, signingAuthority interface{}, withSA bool) map[string]interface{} {
 	proof := makeMinimalV1Proof("2026-05-06T12:00:00Z")
-	proof["signing_authority"] = map[string]interface{}{
-		"authority_id": "customer-hsm-other-v1",
+	proof["cdp_version"] = version
+	if top != "" {
+		proof["authority_id"] = top
 	}
-	policy := VerifierPolicy{RequiredAuthorityID: "customer-hsm-example-org-v1"}
-	r := VerifyValue(proof, policy)
-	if r.Valid {
-		t.Fatalf("expected reject; got %+v", r)
+	if withSA {
+		proof["signing_authority"] = signingAuthority
 	}
-	if r.FailureReason == nil || r.FailureReason.Type != ReasonAuthorityIDMismatch {
-		t.Errorf("failure_reason = %+v", r.FailureReason)
+	return proof
+}
+
+// TestPolicyPinBindsTopLevelAuthority mirrors the Rust pin tests: the
+// pin compares the signed top-level authority_id, absent means the default.
+func TestPolicyPinBindsTopLevelAuthority(t *testing.T) {
+	policy := VerifierPolicy{RequiredAuthorityID: testPin}
+
+	// pin equals top-level, no signing_authority: gate passes.
+	if r := VerifyValue(pinProof(testPin, nil, false), policy); !r.Valid || r.StageReached != 4 {
+		t.Errorf("equal pin: expected valid at stage 4; got %+v", r)
 	}
-	if r.FailureReason.AuthIDReason != AuthIDPolicyAuthorityIDMismatch {
-		t.Errorf("reason = %q", r.FailureReason.AuthIDReason)
+	// pin differs from top-level: mismatch, claimed = top-level.
+	nanorix := testNanorix
+	assertAuthorityReject(t, "differs", VerifyValue(pinProof(testNanorix, nil, false), policy),
+		&nanorix, AuthIDPolicyAuthorityIDMismatch)
+	// top-level absent: pin on the default passes, any other pin is has_none.
+	if r := VerifyValue(pinProof("", nil, false), VerifierPolicy{RequiredAuthorityID: testNanorix}); !r.Valid {
+		t.Errorf("default pin: expected valid; got %+v", r)
+	}
+	assertAuthorityReject(t, "absent", VerifyValue(pinProof("", nil, false), policy),
+		nil, AuthIDPolicyDemandsCustomerHSMHasNone)
+	// non-string top-level resolves to the default too.
+	p := pinProof("", nil, false)
+	p["authority_id"] = float64(7)
+	if r := VerifyValue(p, VerifierPolicy{RequiredAuthorityID: testNanorix}); !r.Valid {
+		t.Errorf("non-string default pin: expected valid; got %+v", r)
+	}
+	assertAuthorityReject(t, "non-string", VerifyValue(p, policy), nil, AuthIDPolicyDemandsCustomerHSMHasNone)
+}
+
+// TestPolicyPinUnsignedSigningAuthorityCannotMatch is the attack: a genuine
+// proof under the Nanorix authority plus an unsigned signing_authority naming
+// the pin is refused, whether or not the top-level field is present.
+func TestPolicyPinUnsignedSigningAuthorityCannotMatch(t *testing.T) {
+	policy := VerifierPolicy{RequiredAuthorityID: testPin}
+	pin := testPin
+	for _, top := range []string{testNanorix, ""} {
+		proof := pinProof(top, map[string]interface{}{"authority_id": testPin}, true)
+		assertAuthorityReject(t, "attack top="+top, VerifyValue(proof, policy), &pin, AuthIDPolicyAuthorityIDMismatch)
 	}
 }
 
-// TestPolicyPinCustomerHsmAuditProofMatchesAuthorityAccepted mirrors Rust
-// `policy_pin_customer_hsm_audit_proof_matches_authority_accepted`.
-func TestPolicyPinCustomerHsmAuditProofMatchesAuthorityAccepted(t *testing.T) {
-	proof := makeMinimalV1Proof("2026-05-06T12:00:00Z")
-	proof["signing_authority"] = map[string]interface{}{
-		"authority_id": "customer-hsm-example-org-v1",
+// TestPolicyPinUnsignedAuthorityOnV1RefusesV2_0First covers cdp_version 1.0,
+// whose signature covers no authority_id: an added top-level string other than
+// the default is refused at stage 2 whatever the pin, and a pin accepts only
+// the default there. The same cases relabelled 2.0 are refused at the version
+// gate before the pin is read, so no pin or label can reopen 2.0.
+func TestPolicyPinUnsignedAuthorityOnV1RefusesV2_0First(t *testing.T) {
+	pin := testPin
+	empty := ""
+	type pinCase struct {
+		name   string
+		top    string
+		empty  bool
+		policy VerifierPolicy
 	}
-	policy := VerifierPolicy{RequiredAuthorityID: "customer-hsm-example-org-v1"}
-	r := VerifyValue(proof, policy)
-	if !r.Valid {
-		t.Fatalf("expected valid; got %+v", r)
+	cases := []pinCase{
+		{"relabel", testPin, false, VerifierPolicy{RequiredAuthorityID: testPin}},
+		{"empty", "", true, VerifierPolicy{RequiredAuthorityID: testPin}},
+		{"default pin", "", false, VerifierPolicy{RequiredAuthorityID: testNanorix}},
+		{"default label and pin", testNanorix, false, VerifierPolicy{RequiredAuthorityID: testNanorix}},
+		{"absent", "", false, VerifierPolicy{RequiredAuthorityID: testPin}},
+		{"no pin", testPin, false, VerifierPolicy{}},
+	}
+	build := func(version string, c pinCase) map[string]interface{} {
+		p := pinProofVersion(version, c.top, nil, false)
+		if c.empty {
+			p["authority_id"] = ""
+		}
+		return p
+	}
+	for _, c := range cases {
+		r := VerifyValue(build("1.0", c), c.policy)
+		label := "1.0 " + c.name
+		switch c.name {
+		case "relabel":
+			// top-level equal to the pin is still refused.
+			assertAuthorityReject(t, label, r, &pin, AuthIDPolicyAuthorityIDMismatch)
+		case "empty":
+			// the empty string is a string other than the default.
+			assertAuthorityReject(t, label, r, &empty, AuthIDPolicyAuthorityIDMismatch)
+		case "absent":
+			// any other pin on an unlabelled proof is has_none.
+			assertAuthorityReject(t, label, r, nil, AuthIDPolicyDemandsCustomerHSMHasNone)
+		default:
+			// default pin, default label, and no pin are accepted.
+			if !r.Valid || r.StageReached != 4 {
+				t.Errorf("%s: expected valid at stage 4; got %+v", label, r)
+			}
+		}
+	}
+	for _, c := range cases {
+		r := VerifyValue(build("2.0", c), c.policy)
+		if r.Valid || r.StageReached != 2 || r.FailureReason == nil ||
+			r.FailureReason.Type != ReasonCdpVersionUnsupported || r.FailureReason.Found != "2.0" {
+			t.Errorf("2.0 %s: expected cdp_version_unsupported at stage 2; got %+v", c.name, r)
+		}
+	}
+}
+
+// TestPolicyPinDecisionTable runs every (top-level, signing_authority) row.
+func TestPolicyPinDecisionTable(t *testing.T) {
+	const other = "customer-hsm-other-v1"
+	const diff = "customer-hsm-forged-v1"
+	policy := VerifierPolicy{RequiredAuthorityID: testPin}
+	for _, top := range []string{"", testPin, other} {
+		effective := top
+		if effective == "" {
+			effective = testNanorix
+		}
+		shapes := map[string]struct {
+			sa   interface{}
+			with bool
+		}{
+			"absent":    {nil, false},
+			"null":      {nil, true},
+			"no_id":     {map[string]interface{}{"x": float64(1)}, true},
+			"equal_top": {map[string]interface{}{"authority_id": effective}, true},
+			"different": {map[string]interface{}{"authority_id": diff}, true},
+		}
+		for name, sh := range shapes {
+			label := "top=" + top + " sa=" + name
+			r := VerifyValue(pinProof(top, sh.sa, sh.with), policy)
+			d, tp := diff, top
+			switch {
+			case name == "different":
+				assertAuthorityReject(t, label, r, &d, AuthIDPolicyAuthorityIDMismatch)
+			case effective == testPin:
+				if !r.Valid || r.StageReached != 4 {
+					t.Errorf("%s: expected valid at stage 4; got %+v", label, r)
+				}
+			case top == "":
+				assertAuthorityReject(t, label, r, nil, AuthIDPolicyDemandsCustomerHSMHasNone)
+			default:
+				assertAuthorityReject(t, label, r, &tp, AuthIDPolicyAuthorityIDMismatch)
+			}
+		}
+	}
+}
+
+// TestPolicyNoPinAcceptsAnySigningAuthority keeps the no-pin behaviour.
+func TestPolicyNoPinAcceptsAnySigningAuthority(t *testing.T) {
+	for _, sa := range []interface{}{
+		nil,
+		map[string]interface{}{"authority_id": testPin},
+		map[string]interface{}{"x": float64(1)},
+	} {
+		r := VerifyValue(pinProof("", sa, true), VerifierPolicy{})
+		if !r.Valid {
+			t.Errorf("no pin, sa=%v: expected valid; got %+v", sa, r)
+		}
 	}
 }
 
@@ -323,8 +491,8 @@ func TestPolicyPinCustomerHsmAuditProofMatchesAuthorityAccepted(t *testing.T) {
 // `target/debug/nanorix-verify` if present), and asserts byte-identical JSON
 // output.
 //
-// **This is the primary cross-impl byte-equivalence assertion.** Per
-// the Forever-Standard wire discipline + the specification release framing + `feedback_canonical_hash_under_fault.md`,
+// **This is the primary cross-impl byte-equivalence assertion.**
+// Release framing +
 // divergence on even ONE fixture is a P0 finding.
 //
 // If the Rust binary is unavailable (`go test` running in an environment
@@ -368,7 +536,8 @@ func TestFixtureCorpusByteEquivalentWithRust(t *testing.T) {
 	}
 
 	verifiedCount := 0
-	failedCount := 0
+	notAnchoredCount := 0
+	notVerifiedCount := 0
 	divergent := []string{}
 
 	for _, fx := range fixtures {
@@ -377,10 +546,13 @@ func TestFixtureCorpusByteEquivalentWithRust(t *testing.T) {
 			t.Fatalf("read %s: %v", fx, err)
 		}
 		goResult := Verify(bytes, VerifierPolicy{})
-		if goResult.Valid {
+		switch goResult.Status() {
+		case "verified":
 			verifiedCount++
-		} else {
-			failedCount++
+		case "not_anchored":
+			notAnchoredCount++
+		default:
+			notVerifiedCount++
 		}
 
 		if !rustAvailable {
@@ -388,7 +560,7 @@ func TestFixtureCorpusByteEquivalentWithRust(t *testing.T) {
 		}
 
 		// Run the Rust verifier on the same fixture and compare JSON output.
-		rustOut, err := runRustVerifier(rustBin, fx)
+		rustOut, rustExit, err := runRustVerifier(rustBin, fx)
 		if err != nil {
 			// Once the Rust binary is available, a fixture it cannot produce a
 			// verdict for is a finding, not something to log past. A skip here
@@ -403,8 +575,32 @@ func TestFixtureCorpusByteEquivalentWithRust(t *testing.T) {
 		// Rust uses serde_json::to_string_pretty which uses 2-space indent
 		// and emits one final newline. main.go prints with println which adds
 		// one newline. Strip trailing whitespace from both before compare.
-		rustNorm := strings.TrimRight(string(rustOut), "\n")
+		rustRaw := strings.TrimRight(string(rustOut), "\n")
 		goNorm := strings.TrimRight(string(goJSON), "\n")
+		if rustRaw == "" {
+			// Nothing on stdout: the Rust CLI refused bytes its JSON parser
+			// cannot read, before verification, so there is no verdict and no
+			// status to pair with the exit. That refusal is exit 1, and Go must
+			// refuse the bytes too, in the form the corpus pins for them.
+			r := goResult.FailureReason
+			if rustExit != 1 || goResult.Valid || goResult.StageReached != 1 || r == nil ||
+				r.Type != ReasonRequiredFieldMissing || r.Field != "json_root" {
+				divergent = append(divergent, fx)
+				t.Errorf("DIVERGENT: %s\n--- Rust ---\nno verdict, exit %d (a refusal exits 1)\n--- Go ---\n%s", fx, rustExit, goNorm)
+			}
+			continue
+		}
+		rustNorm, rustStatus, ok := splitRustStatus(rustRaw)
+		if !ok {
+			t.Errorf("rust --json output for %s ends without its status member:\n%s", fx, rustOut)
+			continue
+		}
+		if want := goResult.Status(); rustStatus != want {
+			t.Errorf("rust status for %s is %q; the Go result gives %q", fx, rustStatus, want)
+		}
+		if !rustExitMatchesStatus(rustExit, rustStatus) {
+			t.Errorf("rust exit for %s is %d with status %q; verified exits 0, not_anchored 4, not_verified 1 or 3", fx, rustExit, rustStatus)
+		}
 		if rustNorm != goNorm {
 			divergent = append(divergent, fx)
 			if len(divergent) <= 3 {
@@ -413,8 +609,8 @@ func TestFixtureCorpusByteEquivalentWithRust(t *testing.T) {
 		}
 	}
 
-	t.Logf("Fixture corpus: %d total · %d verified · %d failed · %d divergent",
-		len(fixtures), verifiedCount, failedCount, len(divergent))
+	t.Logf("Fixture corpus under the empty policy: %d total · %d verified · %d not_anchored · %d not_verified · %d divergent",
+		len(fixtures), verifiedCount, notAnchoredCount, notVerifiedCount, len(divergent))
 
 	if rustAvailable && len(divergent) > 0 {
 		t.Fatalf("Cross-impl byte-equivalence FAILED: %d/%d fixtures diverge between Rust and Go verifiers",
@@ -428,7 +624,7 @@ func TestFixtureCorpusByteEquivalentWithRust(t *testing.T) {
 }
 
 // TestPropertyFault10kIterations runs the 10k-iteration property-test fault
-// injection mandated by `feedback_canonical_hash_under_fault.md`. Random
+// injection. Random
 // AuditProof bytes — malformed JSON, wrong field types, off-by-one chain
 // values, tampered signatures — every fault path must produce a
 // deterministic FailureReason from the closed-set enum (or `valid: true`
@@ -588,7 +784,7 @@ func TestPropertyFault10kIterations(t *testing.T) {
 
 // TestComputeStepHashCrossImplAnchor pins the byte-output of ComputeStepHash
 // against a hand-computed anchor. If this drifts, the chain algorithm has
-// been tampered with — Forever-Standard the Forever-Standard wire discipline violation.
+// been tampered with — Forever-Standard violation.
 func TestComputeStepHashCrossImplAnchor(t *testing.T) {
 	// Compute step 1 from genesis: subsystem=eee_namespace, action=destroy,
 	// method=procfs_verification, timestamp=2026-05-08T00:00:00Z.
@@ -707,6 +903,20 @@ func TestJCSCanonicalizeNumbers(t *testing.T) {
 		{`{"n":0.30000000000000004}`, `{"n":0.30000000000000004}`},
 		{`{"n":123456789012345680.0}`, `{"n":123456789012345680}`},
 		{`{"n":-0.0001}`, `{"n":-0.0001}`},
+		// a mantissa with several digits in exponential form, both signs.
+		{`{"n":1.5e300}`, `{"n":1.5e+300}`},
+		{`{"n":-1.25e-7}`, `{"n":-1.25e-7}`},
+		{`{"n":1.5}`, `{"n":1.5}`},
+		// the largest double, and the last positional value below 1e21.
+		{`{"n":1.7976931348623157e308}`, `{"n":1.7976931348623157e+308}`},
+		{`{"n":999999999999999900000}`, `{"n":999999999999999900000}`},
+		// integers: exact up to 2^53, rounded to the nearest double beyond it,
+		// as serde_jcs writes every integer through f64.
+		{`{"n":9007199254740992}`, `{"n":9007199254740992}`},
+		{`{"n":9007199254740993}`, `{"n":9007199254740992}`},
+		{`{"n":-9007199254740993}`, `{"n":-9007199254740992}`},
+		{`{"n":9223372036854775807}`, `{"n":9223372036854776000}`},
+		{`{"n":-9223372036854775808}`, `{"n":-9223372036854776000}`},
 	}
 	for _, c := range cases {
 		got, err := JCSCanonicalize([]byte(c.in))
@@ -717,6 +927,21 @@ func TestJCSCanonicalizeNumbers(t *testing.T) {
 		if string(got) != c.want {
 			t.Errorf("JCSCanonicalize(%q) = %q, want %q", c.in, got, c.want)
 		}
+	}
+}
+
+// TestJCSRefusesNonFiniteNumbers covers the float64 branch of jcsEmit, which
+// JCSCanonicalize never reaches (it decodes with UseNumber), and number text
+// too large for a double.
+func TestJCSRefusesNonFiniteNumbers(t *testing.T) {
+	for _, f := range []float64{math.Inf(1), math.Inf(-1), math.NaN()} {
+		var buf bytes.Buffer
+		if err := jcsEmit(&buf, f); err == nil {
+			t.Errorf("jcsEmit(%v) wrote %q, want an error", f, buf.String())
+		}
+	}
+	if got, err := JCSCanonicalize([]byte(`{"n":1e999}`)); err == nil {
+		t.Errorf("JCSCanonicalize(1e999) = %q, want an error", got)
 	}
 }
 
@@ -771,8 +996,6 @@ func findRustVerifier() (string, bool) {
 	candidates := []string{
 		"../../target/debug/nanorix-verify",
 		"../../target/release/nanorix-verify",
-		"/home/dr/nanorix/target/debug/nanorix-verify",
-		"/home/dr/nanorix/target/release/nanorix-verify",
 	}
 	for _, c := range candidates {
 		abs, err := filepath.Abs(c)
@@ -787,29 +1010,63 @@ func findRustVerifier() (string, bool) {
 }
 
 // runRustVerifier invokes the Rust verifier binary on a fixture path and
-// returns its --json output bytes.
-func runRustVerifier(bin, fixture string) ([]byte, error) {
+// returns its --json output bytes and exit code.
+func runRustVerifier(bin, fixture string) ([]byte, int, error) {
 	cmd := exec.Command(bin, "--json", fixture)
 	stdout, err := cmd.Output()
 	if err != nil {
 		// Every exit code in the verdict-producing set still writes the full
-		// JSON result to stdout; only exit 2 (malformed input) has no verdict
-		// to compare. Tolerating exit 1 alone is what silently disabled this
+		// JSON result to stdout, except exit 1 for a file that is not JSON,
+		// which writes nothing; exit 2 (a usage or setup error) has no verdict to
+		// compare. Tolerating exit 1 alone is what silently disabled this
 		// entire cross-impl check: the first `dual_signature` fixture exits 3
 		// ("chain verified, signature NOT checked"), which read as a harness
 		// error and skipped the comparison for the rest of the corpus.
+		// Exit 4 is a stage 7 result: valid against the embedded key only.
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			switch exitErr.ExitCode() {
-			case 1, 3:
-				return stdout, nil
+			case 1, 3, 4:
+				return stdout, exitErr.ExitCode(), nil
 			}
 		}
-		return nil, err
+		return nil, 0, err
 	}
-	return stdout, nil
+	return stdout, 0, nil
 }
 
-// ── the specification C.1-2 — algorithm dispatch + additive-evolution tolerance ──
+// rustExitMatchesStatus reports whether a Rust single-file exit code is the
+// one its status carries: 0 for verified, 4 for not_anchored, 1 or 3 for
+// not_verified.
+func rustExitMatchesStatus(code int, status string) bool {
+	switch status {
+	case "verified":
+		return code == 0
+	case "not_anchored":
+		return code == 4
+	case "not_verified":
+		return code == 1 || code == 3
+	}
+	return false
+}
+
+// splitRustStatus removes the `status` member the Rust single-file --json
+// output appends after the verification result, and returns both. The rest
+// is the result itself, compared byte for byte with the Go output.
+func splitRustStatus(out string) (string, string, bool) {
+	const prefix = ",\n  \"status\": \""
+	const suffix = "\"\n}"
+	i := strings.LastIndex(out, prefix)
+	if i < 0 || !strings.HasSuffix(out, suffix) {
+		return "", "", false
+	}
+	status := out[i+len(prefix) : len(out)-len(suffix)]
+	if strings.ContainsAny(status, "\"\n") {
+		return "", "", false
+	}
+	return out[:i] + "\n}", status, true
+}
+
+// ── the EU signing profile — algorithm dispatch + additive-evolution tolerance ──
 
 // TestNonEd25519AlgorithmFailsTypedAtStage4: a declared non-Ed25519 algorithm
 // must fail typed as algorithm_unsupported, never fall through to the byte
@@ -842,7 +1099,7 @@ func TestNonEd25519TopLevelSignatureAlgorithmFailsTyped(t *testing.T) {
 }
 
 // TestUnknownFieldsDoNotDisturbVerification: additive-evolution insurance
-// (the specification C.2) — unknown fields must be ignored by the ladder.
+// — unknown fields must be ignored by the ladder.
 func TestUnknownFieldsDoNotDisturbVerification(t *testing.T) {
 	proof := makeMinimalV1Proof("2026-05-06T12:00:00Z")
 	proof["future_sibling_artifact"] = map[string]interface{}{"anything": []int{1, 2, 3}}

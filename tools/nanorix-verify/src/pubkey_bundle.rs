@@ -1,15 +1,15 @@
-//! Portable Pubkey Bundle (`.ppb.json`) — Wave B Item 8 surface.
+//! Portable Pubkey Bundle (`.ppb.json`) surface.
 //!
 //! A JSON document carrying N cross-org Ed25519 verification pubkeys, used
-//! when an receipt-batching specification cross-org chain references a parent AuditProof signed
+//! when an cross-org chain references a parent AuditProof signed
 //! under a different Nanorix customer account OR an offline/air-gap
 //! environment where `/v1/keys/:id` lookup is unavailable.
 //!
-//! Per `feedback_narrowness_is_the_moat_resist_receipt_enrichment.md`: this
+//! This
 //! is a JSON convention + JSON Schema + SDK helper — NOT a new file format
 //! with MIME registration / OS-level associations.
 //!
-//! Per `feedback_open_verifier_bounded_manifest.md`: the bundle algorithm is
+//! The bundle algorithm is
 //! open + portable; the trust root (publisher pubkey) is bounded out-of-band
 //! by the verifier. Mirror of OpenPGP / X.509 / C2PA pattern: algorithm
 //! openness + identity boundedness.
@@ -32,20 +32,21 @@
 //! mutation of an existing bundle. Old AuditProofs signed under rotated keys
 //! must remain verifiable in perpetuity (healthcare 7-30 year retention).
 
+use crate::ed25519_strict::VerifyCanonicalStrict;
 use base64::Engine;
 use chrono::{DateTime, Utc};
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};
 
 use crate::strip_base64_prefix;
 
 /// Mandatory bundle disclaimer — factual language only, no compliance verdicts.
 ///
-/// Vocabulary discipline per `regulatory_context` rules + CONVENTIONS.md:
+/// Vocabulary discipline per `regulatory_context` rules + the project vocabulary:
 /// forbidden words include `COMPLIANT`, `SATISFIED`, `PASSED`, `MEETS`.
 pub const PORTABLE_PUBKEY_BUNDLE_DISCLAIMER: &str = "This Portable Pubkey Bundle is a key-discovery aid for cross-org chain verification. The bundle_signature confirms publisher integrity. The bundle issuer attests that the listed pubkeys were valid as of generated_at; subsequent key rotation or revocation MUST be verified out-of-band by the consuming party.";
 
-/// Wave B Item 8 — Portable Pubkey Bundle wire shape.
+/// Portable Pubkey Bundle wire shape.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PortablePubkeyBundle {
     pub bundle_version: String,
@@ -193,7 +194,7 @@ pub fn verify_pubkey_bundle(
     let canonical = canonical_bytes_for_signing(&canonical_input)?;
 
     publisher_pubkey
-        .verify(&canonical, &signature)
+        .verify_canonical_strict(&canonical, &signature)
         .map_err(|_| PubkeyBundleError::BundleSignatureFailed)?;
 
     Ok(())

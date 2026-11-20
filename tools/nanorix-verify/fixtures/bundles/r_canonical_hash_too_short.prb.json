@@ -1,0 +1,27 @@
+{
+  "bundle_version": "1.0",
+  "bundle_type": "receipt",
+  "generated_at": "2026-10-01T00:00:01Z",
+  "receipt": {
+    "record_index": 0,
+    "record_id": "rec_0",
+    "record_input_hash": "sha512:8f4e09d5fd0d6752b9fc2fdccf2666a8e3042bcbde57d0d29946bccddeb9be2e4bc4f0a44e34e0169b7c5c93e56c4bc42395ba9161c2e1f909b47a757d383396",
+    "record_output_hash": "sha512:d22f3f4a80cb29f8634ba39b279875ffe37130f1cbd9f15ca465a6c9fb6493478387593ae97e179a1ff351df982a197c9e055733805c76228510b25c782e78c2",
+    "record_chain_hash": "sha512:670e8639adef52456f6adf80dffacb24e59c7e7c0adbf16871c15fd63e08a9485e5bf1a5b959d54ad59299a8b056177ef8b6e50e261ee6ba33d9a2a58d848578",
+    "merkle_inclusion_proof": [
+      "c33f59a56ba6be7b00e7c563eb3406bba08a3f7be4ccc5483b9b464ba4cbc1fbc96a71c0ed6f1fcbed94c2c38fbef500496f2990ef5dcc09c30e67932b812853"
+    ]
+  },
+  "audit_proof_anchors": {
+    "capsule_id": "cap_fixture_bundle_n2_v2",
+    "key_id": "nrx-verify-fixture-test-only",
+    "verification_key": "UaMb7s4rCJwxgWqYmNN5WTbBwQZ9wd4mJwHhrazFZus=",
+    "step_8_chain_hash": "ae48f9f55bcc8d1db97336c9ae61a993570e6f5370bec98cb3f00085b6974bd09cc79d83892225879c884d8e91b488e01354d80541bc5301066a5de13c0e68ca",
+    "signature": "RcnCMM5JMEWBx88liVaNy7P9SlmeGen8iwX9BZxM9vP44WRvQPe2XLW/hB6MOjtr2Bn/Yt0dEwpJZAKux1WvBA==",
+    "record_receipts_merkle_root": "sha512:a68e8cc58087f4aac51d1763cd4e05115e3ee7bfb9aa87e9dd2137857f06fe57a0595c4551622e89cab20686e39d6ff6f7f18df63e669793aa9ea12a46db0310",
+    "timestamp": "2026-10-01T00:00:00Z",
+    "signature_target": "document_canonical_hash",
+    "document_canonical_hash": "d4acbc4c1be44068b6e8d419c8ef3cc06ec2c01839483b48bf438551b3c36427b990019617174f658a6739a69dbc009ffcaf41a901b29e2c46bf228cf096085"
+  },
+  "disclaimer": "This Portable Receipt Bundle carries cryptographic evidence of one record's structural execution. Verifying party uses the audit_proof_anchors to verify the receipt's merkle inclusion + outer Ed25519 signature. Control framework references are NOT included in this bundle; consult the mapping artifact at https://nanorix.io/v1/control-map?framework_version={framework_version} to apply current control mappings at consumption time."
+}

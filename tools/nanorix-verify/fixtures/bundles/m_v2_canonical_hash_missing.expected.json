@@ -1,0 +1,4 @@
+{
+  "description": "Document target declared without the hash.",
+  "outcome": "missing_canonical_hash_anchor"
+}

@@ -3,7 +3,8 @@
     "reason": "does_not_verify",
     "type": "signature_mismatch"
   },
-  "note": "Supported version, so the version gate passes; the downgrade is caught at the signature stage because the signed message differs per version.",
+  "note": "Supported version, so the version gate lets it through; the downgrade is caught at the signature stage because the 1.0 signed message is the document's own recomputed final chain hash, which the 2.1 signature was not made over.",
   "stage_reached": 7,
+  "status": "not_verified",
   "valid": false
 }

@@ -1,0 +1,7 @@
+{
+  "failure_reason": null,
+  "note": "A streamed response stopped on the relay's size budget: started, the two chunks read before the break, a streaming_policy_violation naming the third chunk, and no streaming_egress_completed. A streaming Merkle root is recomputed only at a completed event, so the stopped stream's leaves are carried past rather than failed, and the trail is signed like any other.",
+  "stage_reached": 7,
+  "status": "not_anchored",
+  "valid": true
+}

@@ -1,0 +1,6 @@
+{
+  "description": "Genuine legacy bundle carrying receipts and parent-proofs roots, record index 1.",
+  "outcome": "valid",
+  "signature_authentic": true,
+  "receipt_bound": true
+}

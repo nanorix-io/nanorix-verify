@@ -1,0 +1,9 @@
+{
+  "failure_reason": null,
+  "policy": {
+    "required_authority_id": "us-kms-nanorix-v1"
+  },
+  "stage_reached": 7,
+  "status": "not_anchored",
+  "valid": true
+}

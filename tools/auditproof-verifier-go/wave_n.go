@@ -1,13 +1,13 @@
-// the receipt pipeline (the per-record receipt specification + the receipt-batching specification) per-record receipt + parent-proof composition
+// The receipt pipeline per-record receipt + parent-proof composition
 // math — Go port mirroring the reference chain implementation byte-for-byte.
 //
-// Forever-Standard discipline (the Forever-Standard wire discipline): every primitive in this file is
+// Forever-Standard discipline: every primitive in this file is
 // part of the cryptographic-attestation contract. Cross-impl byte-equivalence
 // with the canonical Rust implementation is mandatory; any divergence is a
 // P0 finding.
 //
 // Cross-impl reference vectors anchored against the Rust output of
-// `governance/rzl/examples/gen_wave_n_vectors`:
+// the reference chain implementation:
 //
 //   GENESIS_SHA512_HEX = cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e
 //   merkle_pair_hash("aaa", "bbb") =
@@ -33,14 +33,14 @@ import (
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
-// the receipt pipeline types — mirror the reference chain implementation{RecordReceipt, ParentProofLink}`.
+// The receipt pipeline types — mirror `RecordReceipt` and `ParentProofLink` in the reference chain implementation.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // RecordReceipt mirrors the Rust struct field-for-field. JSON tags use
 // snake_case to byte-match Rust serde output (`rename_all = "snake_case"` at
 // the wave-N-types level).
 //
-// Forever-Standard discipline (the Forever-Standard wire discipline): field shape is permanent. New
+// Forever-Standard discipline: field shape is permanent. New
 // fields land as additive optional (`json:",omitempty"`) — existing fields
 // NEVER renamed, NEVER removed, NEVER repurposed.
 type RecordReceipt struct {
@@ -54,8 +54,7 @@ type RecordReceipt struct {
 	MerkleInclusionProof []string `json:"merkle_inclusion_proof"`
 }
 
-// ParentProofLink mirrors the Rust struct. Cross-org chain composition primitive
-// (the receipt-batching specification).
+// ParentProofLink mirrors the Rust struct. Cross-org chain composition primitive.
 type ParentProofLink struct {
 	ParentChainHash       string  `json:"parent_chain_hash"`
 	ParentKeyID           string  `json:"parent_key_id"`
@@ -65,11 +64,11 @@ type ParentProofLink struct {
 	ParentOrganizationTag *string `json:"parent_organization_tag,omitempty"`
 }
 
-// PARENT_PROOF_MAX_DEPTH per the receipt-batching specification § "Depth limit". V1: 32.
+// PARENT_PROOF_MAX_DEPTH. V1: 32.
 const PARENT_PROOF_MAX_DEPTH = 32
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Pattern tag closed-enum (the per-record receipt specification + the specification).
+// Pattern tag closed-enum.
 //
 // Wire form snake_case per Rust serde. The 15 variants are append-only;
 // existing variants NEVER renamed or removed.
@@ -101,8 +100,8 @@ var PatternTagWireForm = map[string]bool{
 // ─────────────────────────────────────────────────────────────────────────────
 
 // MerklePairHash computes `SHA-512(left ‖ \x00 ‖ right)` where both inputs are
-// interpreted as their hex-string byte values (per the per-record receipt specification §"Sibling pair
-// hashing rule"). Either input MAY carry a `sha512:` prefix; stripped before
+// interpreted as their hex-string byte values.
+// Either input MAY carry a `sha512:` prefix; stripped before
 // hashing.
 //
 // Output: lowercase 128-char hex (no prefix). Cross-impl byte-equivalent with
@@ -119,7 +118,7 @@ func MerklePairHash(left, right string) string {
 }
 
 // MerkleRootSHA512NullSeparated builds the canonical Merkle root over an
-// ordered slice of SHA-512 leaf hashes per the per-record receipt specification §"Merkle tree construction".
+// ordered slice of SHA-512 leaf hashes.
 //
 //   - leaves.len() == 0 → returns ("", false)
 //   - leaves.len() == 1 → returns (leaves[0] with prefix stripped, true)
@@ -144,7 +143,7 @@ func MerkleRootSHA512NullSeparated(leaves []string) (string, bool) {
 				next = append(next, MerklePairHash(level[i], level[i+1]))
 				i += 2
 			} else {
-				// Odd-level last node: duplicate per the per-record receipt specification.
+				// Odd-level last node: duplicate.
 				next = append(next, MerklePairHash(level[i], level[i]))
 				i++
 			}
@@ -154,10 +153,10 @@ func MerkleRootSHA512NullSeparated(leaves []string) (string, bool) {
 	return level[0], true
 }
 
-// ComputeRecordReceiptsMerkleRoot — public the per-record receipt specification surface for receipt root.
+// ComputeRecordReceiptsMerkleRoot — public the surface for receipt root.
 //
 //   - Empty slice → ("", false) — None equivalent.
-//   - Otherwise → ("sha512:{hex}", true) per the per-record receipt specification wire form.
+//   - Otherwise → ("sha512:{hex}", true) per the wire form.
 //
 // Cross-impl byte-equivalent with Rust `compute_record_receipts_merkle_root`.
 func ComputeRecordReceiptsMerkleRoot(receipts []RecordReceipt) (string, bool) {
@@ -175,7 +174,7 @@ func ComputeRecordReceiptsMerkleRoot(receipts []RecordReceipt) (string, bool) {
 	return "sha512:" + root, true
 }
 
-// ComputeParentProofsMerkleRoot — public the receipt-batching specification surface for parent root.
+// ComputeParentProofsMerkleRoot — public the surface for parent root.
 func ComputeParentProofsMerkleRoot(parents []ParentProofLink) (string, bool) {
 	if len(parents) == 0 {
 		return "", false
@@ -304,7 +303,7 @@ func ComputeActivityRoot(trail []any) string {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Record chain hash (the per-record receipt specification per-record chain hash formula)
+// Record chain hash (per-record chain hash formula)
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ComputeRecordChainHash mirrors Rust `compute_record_chain_hash`:
@@ -318,7 +317,7 @@ func ComputeActivityRoot(trail []any) string {
 // `patternTagWire` is the snake_case wire string exactly as serialized in the
 // receipt JSON `pattern_tag` field. The trailing `\x00 ‖ pattern_tag_wire`
 // segment is appended ONLY when the receipt declares a tag (nil = untagged;
-// the per-record receipt specification — the tag is a signed primitive, so it must be bound here, not
+// The tag is a signed primitive, so it must be bound here, not
 // merely carried in the JSON). Domain separation is sound because
 // `activity_root_or_genesis` is always exactly 128 stripped hex chars: a
 // tagged preimage is strictly longer than every untagged preimage, so the
@@ -385,21 +384,21 @@ func ComputeStep8Base(prevHash, timestamp string) string {
 	)
 }
 
-// ComputeStep8Amended implements the per-record receipt specification + the receipt-batching specification presence-conditional
+// ComputeStep8Amended implements the presence-conditional
 // 4-arm Step 8 formula:
 //
 //	let base = SHA-512(prev_hash ‖ \x00 ‖ "capsule_destroy" ‖ \x00 ‖ "destroy" ‖ \x00 ‖ "capsule_lifecycle_verification" ‖ \x00 ‖ timestamp);
 //	match (rrmr, ppmr) {
 //	    (None, None)       => base,                                  // pre-the receipt pipeline: byte-identical
-//	    (Some(rr), None)   => SHA-512(base ‖ \x00 ‖ rr),             // the per-record receipt specification only
-//	    (None, Some(pp))   => SHA-512(base ‖ \x00 ‖ pp),             // the receipt-batching specification only
+//	    (Some(rr), None)   => SHA-512(base ‖ \x00 ‖ rr),             // Only
+//	    (None, Some(pp))   => SHA-512(base ‖ \x00 ‖ pp),             // Only
 //	    (Some(rr), Some(pp)) => SHA-512(base ‖ \x00 ‖ rr ‖ \x00 ‖ pp), // both
 //	}
 //
 // `rrmr` and `ppmr` are encoded as nil = None; non-nil = Some. Either input
 // MAY carry `sha512:` prefix; stripped before hashing.
 //
-// Forever-Standard byte-equivalence (the Forever-Standard wire discipline): the (nil, nil) branch
+// Forever-Standard byte-equivalence: the (nil, nil) branch
 // returns `ComputeStep8Base` unmodified — byte-identical to every pre-the receipt pipeline
 // production AuditProof. Pinned by `TestStep8AmendedNoneNoneByteEquivalence`.
 func ComputeStep8Amended(prevHash, timestamp string, rrmr, ppmr *string) string {
@@ -446,7 +445,7 @@ func strPtrLocal(s string) *string { return &s }
 // Cycle prevention + depth-cap-32
 // ─────────────────────────────────────────────────────────────────────────────
 
-// DetectParentProofCycle rejects cycles per the receipt-batching specification §"Cycle prevention".
+// DetectParentProofCycle rejects cycles.
 // Returns the index of the cyclic parent if any `parent_chain_hash` equals
 // `selfChainHash`; returns -1 if no cycle. Both inputs prefix-tolerant.
 func DetectParentProofCycle(parents []ParentProofLink, selfChainHash string) int {
@@ -463,14 +462,14 @@ func DetectParentProofCycle(parents []ParentProofLink, selfChainHash string) int
 // `PARENT_PROOF_MAX_DEPTH` of 32.
 func EnforceDepthCap(parents []ParentProofLink) error {
 	if len(parents) > PARENT_PROOF_MAX_DEPTH {
-		return fmt.Errorf("parent chain depth %d exceeds PARENT_PROOF_MAX_DEPTH=%d (the receipt-batching specification)",
+		return fmt.Errorf("parent chain depth %d exceeds PARENT_PROOF_MAX_DEPTH=%d",
 			len(parents), PARENT_PROOF_MAX_DEPTH)
 	}
 	return nil
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Standalone receipt verification (Mode B — the per-record receipt specification)
+// Standalone receipt verification (Mode B)
 // ─────────────────────────────────────────────────────────────────────────────
 
 // VerifyRecordReceiptOptions bundles the outer-context inputs needed to verify
@@ -495,7 +494,7 @@ type VerifyRecordReceiptOptions struct {
 	OuterPublicKey ed25519.PublicKey
 }
 
-// VerifyRecordReceipt — Mode B (standalone) verification per the per-record receipt specification:
+// VerifyRecordReceipt — Mode B (standalone) verification
 //
 //  1. Recompute the receipt's `record_chain_hash` from its fields (capsule_id
 //     comes from the outer context).
@@ -552,7 +551,7 @@ func VerifyRecordReceipt(receipt RecordReceipt, opts VerifyRecordReceiptOptions)
 			len(opts.OuterPublicKey), ed25519.PublicKeySize)
 	}
 	chainHashAscii := StripHashPrefix(opts.OuterChainHash)
-	if !ed25519.Verify(opts.OuterPublicKey, []byte(chainHashAscii), sigBytes) {
+	if !verifyEd25519Strict(opts.OuterPublicKey, []byte(chainHashAscii), sigBytes) {
 		return fmt.Errorf("outer Ed25519 signature does NOT verify against outer chain_hash")
 	}
 
@@ -560,15 +559,15 @@ func VerifyRecordReceipt(receipt RecordReceipt, opts VerifyRecordReceiptOptions)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// the receipt pipeline JSON inflation (Mode A — full AuditProof + receipts + parents)
+// The receipt pipeline JSON inflation (Mode A — full AuditProof + receipts + parents)
 // ─────────────────────────────────────────────────────────────────────────────
 
-// VerifyFullAuditProofWaveN runs the verification pipeline with the receipt-batching specification
+// VerifyFullAuditProofWaveN runs the verification pipeline with the
 // parent-proof depth cap enforced, on top of everything `Verify` does:
 // `record_receipts` + Merkle root, `parent_proof_hashes` + Merkle root, the
 // `ComputeStep8Amended` chain walk, and the stage 5-7 signature check.
 //
-// the receipt pipeline handling is no longer exclusive to this entry point — it lives in the
+// The receipt pipeline handling is no longer exclusive to this entry point — it lives in the
 // shared ladder, so `Verify` and this function cannot drift apart on chain
 // semantics or on whether the signature gets checked. The only difference is
 // the depth cap. Pre-the receipt pipeline proofs (no receipts / no parents) verify
@@ -611,7 +610,7 @@ func verifyRecordReceiptsArray(receipts []interface{}, capsuleID string, claimed
 			activityRoot = ComputeActivityRoot(trail)
 		}
 
-		// the per-record receipt specification: a declared pattern_tag is a signed primitive — bind its
+		// A declared pattern_tag is a signed primitive — bind its
 		// wire form into the recompute (mirrors nanorix-verify lib.rs).
 		var patternTag *string
 		if tag, ok := receiptMap["pattern_tag"].(string); ok {

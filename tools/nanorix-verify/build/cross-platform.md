@@ -22,23 +22,16 @@ GitHub Actions runners support it natively.
 
 ## Toolchain pin
 
-The release builds against **Rust 1.93 stable** to match the production
-Cloud Build constraint (per `feedback_cargo_msrv_ceiling.md`). Newer
-compilers may produce more efficient binaries but introduce reproducibility
-variance — pinning to 1.93 keeps every release binary identical across
-regenerations and aligned with the production API container.
-
-The release workflow (`.github/workflows/release-nanorix-verify.yml`) sets
-`RUST_TOOLCHAIN: "1.93"` at the env level and feeds that to
-`dtolnay/rust-toolchain@master` via the `toolchain:` input on every job.
-The Dockerfile's `lukemathwalker/cargo-chef:latest-rust-1.93-bookworm` base
-image is the matching production anchor; verifier binary and API binary
-build against the same compiler.
+Release binaries, when there are any, are built with **Rust 1.93 stable**.
+Newer compilers may produce more efficient binaries but introduce
+reproducibility variance, so pinning to 1.93 keeps every release binary
+identical across regenerations.
 
 ## Reproducible-build pattern
 
 Reproducibility goal: any release engineer with the same Rust toolchain,
-same `Cargo.lock`, and same source tree produces a byte-identical binary.
+this repository's tree and its own `Cargo.lock` produces a byte-identical
+binary.
 
 Three pillars:
 
@@ -133,7 +126,7 @@ Each target produces a tarball (or zip on Windows) containing:
 
 - The binary (`nanorix-verify` or `nanorix-verify.exe`).
 - The `README.md` (verifier usage doc).
-- The `LICENSE` file (proprietary terms).
+- The `LICENSE` file from this repository (Apache-2.0).
 - A `SHA256SUMS` file with the SHA-256 of the binary.
 
 Naming pattern: `nanorix-verify-<version>-<target>.tar.gz` (or `.zip` on
@@ -279,10 +272,12 @@ the verifier? The answer is layered:
 
 1. **Open source** — the verifier source is available; an auditor reviews
    it before trusting it.
-2. **Reproducible build** — the auditor builds from source with `cargo
-   build --locked` and compares the binary's SHA-256 to the published
-   release. Match → the published binary corresponds to the public source.
-3. **Signed release** — the published binary carries a code signature
+2. **Reproducible build** — the auditor builds from this repository's tree
+   and its own `Cargo.lock` with the recipe above (`--locked`), and compares
+   the binary's SHA-256 with a release binary. The comparison holds only for a
+   release binary built the same way, from this repository's tree and its own
+   `Cargo.lock`. No release carries binaries yet.
+3. **Signed release** (planned) — a published binary will carry a code signature
    from a key whose fingerprint is published statically. Signature
    verification confirms the binary came from the official release
    pipeline.
@@ -297,10 +292,7 @@ deployment.
 
 ## Release cadence
 
-The verifier follows the Forever-Standard discipline: new versions are
-strictly additive. A v0.2.0 verifier verifies every v0.1.0 AuditProof
-identically. The cross-platform release event is gated on the broader
-schema-publishing event (release-event-gated); when the gate clears,
-the recipe above produces the binaries and the distribution channels go
-live.
-
+A new version can refuse a document an earlier one accepted, rename an
+output key or change an exit code when the earlier result was wrong; the
+release notes of each version list such changes. No release carries binaries yet; when
+one does, the recipe above produces them.

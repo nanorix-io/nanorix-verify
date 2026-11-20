@@ -5,7 +5,8 @@
 // byte-equivalence artifact: it is what a skeptic runs first, and it is the
 // oracle both verifiers are held to. Every fixture must produce the same
 // `valid` / `stage_reached` / `failure_reason` in Go as the committed verdict
-// the Rust verifier produces, under the policy the fixture itself declares.
+// the Rust verifier produces, and the `status` the fixture pins from Status(),
+// under the policy the fixture itself declares.
 //
 // A divergence here is a P0 finding per the module contract in `go.mod`.
 
@@ -79,7 +80,10 @@ func policyFromExpected(expected map[string]interface{}) VerifierPolicy {
 		s, _ := p[key].(string)
 		return s
 	}
+	p, _ := expected["policy"].(map[string]interface{})
+	rejectDiagnostic, _ := p["reject_diagnostic"].(bool)
 	return VerifierPolicy{
+		RejectDiagnostic:    rejectDiagnostic,
 		RequiredRegion:      pin("required_region"),
 		RequiredAuthorityID: pin("required_authority_id"),
 	}
@@ -136,6 +140,13 @@ func TestEveryCorpusFixtureVerifiesToItsCommittedVerdict(t *testing.T) {
 		if result.Valid != wantValid {
 			divergences = append(divergences,
 				rel+": valid — expected "+boolStr(wantValid)+", got "+boolStr(result.Valid))
+			fixtureDiverged = true
+		}
+
+		wantStatus, _ := expected["status"].(string)
+		if result.Status() != wantStatus {
+			divergences = append(divergences,
+				rel+": status — expected "+wantStatus+", got "+result.Status())
 			fixtureDiverged = true
 		}
 

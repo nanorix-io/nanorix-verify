@@ -1,0 +1,4 @@
+{
+  "description": "(g) signature over a document canonical hash carried as step_8_chain_hash, with receipt content that does not match.",
+  "outcome": "step_8_mismatch"
+}

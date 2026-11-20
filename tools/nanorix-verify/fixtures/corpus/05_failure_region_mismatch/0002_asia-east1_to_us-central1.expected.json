@@ -8,5 +8,6 @@
     "required_region": "us-central1"
   },
   "stage_reached": 2,
+  "status": "not_verified",
   "valid": false
 }

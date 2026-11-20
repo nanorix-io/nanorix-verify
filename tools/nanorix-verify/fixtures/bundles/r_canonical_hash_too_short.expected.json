@@ -1,0 +1,4 @@
+{
+  "description": "Canonical hash one character short.",
+  "outcome": "malformed_canonical_hash_anchor"
+}

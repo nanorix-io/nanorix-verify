@@ -1,0 +1,22 @@
+{
+  "authorities": {
+    "us-kms-nanorix-v1": {
+      "active_versions": [
+        {
+          "effective_from": "2026-11-01T00:00:00Z",
+          "public_key_b64": "11l5O7wTooGagnx2rbb7qKSa7gB/SfLQmS2ZuCWtLEg=",
+          "public_key_fingerprint": "sha256:b14705888f4a68391a09aa5968dd25d16c3bba7bb3b6d15bf354d8dcaae85a47",
+          "signing_key_version": "1"
+        }
+      ],
+      "archived_versions": [],
+      "display_name": "Nanorix default authority",
+      "revoked": true
+    }
+  },
+  "identity_fingerprint": "sha256:3097e2dee2cb4a34b53840cdb705aed71067c36f68db0e0f559c3f3fa043315f",
+  "identity_public_key_b64": "IVL40Zt5HSRFMkLhXy6rbLfP+ntqXtMAl5YOBpiB2xI=",
+  "issued_at": "2026-11-01T00:00:00Z",
+  "manifest_signature": "base64:GzC91pSsOha4A8kauNKTAZtInFKk82H1o3qWUDP3pU6Kvhs/jRO8p7FclbIKwY2j3GVTuK/j1UK3GNLLiybwBA==",
+  "schema_version": "1"
+}

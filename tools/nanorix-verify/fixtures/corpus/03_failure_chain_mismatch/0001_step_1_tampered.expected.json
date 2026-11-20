@@ -5,5 +5,6 @@
     "type": "step_hash_mismatch"
   },
   "stage_reached": 3,
+  "status": "not_verified",
   "valid": false
 }

@@ -1,26 +1,26 @@
-// Portable Receipt Bundle (.prb.json) — Wave B Item 7 surface, Go port.
+// Portable Receipt Bundle (.prb.json) surface, Go port.
 //
 // Mirrors `tools/nanorix-verify/src/bundle.rs` byte-for-byte. Cross-impl
 // byte-equivalence with Rust/Python/TypeScript bundle JSON on the canonical
 // reference vectors.
 //
-// Per feedback_narrowness_is_the_moat_resist_receipt_enrichment.md: this is
+// This is
 // a JSON convention + JSON Schema + SDK helper — NOT a new file format with
 // MIME registration / OS-level associations.
 //
-// Per feedback_narrow_signed_claim_auditor_certifies.md: bundle disclaimer
+// Bundle disclaimer
 // cites; never asserts compliance.
 
 package auditproof
 
 import (
-	"crypto/ed25519"
 	"crypto/sha512"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"time"
 )
@@ -28,7 +28,7 @@ import (
 // PortableReceiptBundleDisclaimer — factual language only. Vocabulary discipline
 // per regulatory_context rules: forbidden words include COMPLIANT, SATISFIED,
 // PASSED, MEETS.
-const PortableReceiptBundleDisclaimer = "This Portable Receipt Bundle carries cryptographic evidence of one record's structural execution. Verifying party uses the audit_proof_anchors to verify the receipt's merkle inclusion + outer Ed25519 signature. Control framework references are NOT included in this bundle; consult the specification mapping artifact at schema.nanorix.com/control-map/{framework_version}.json to apply current control mappings at consumption time."
+const PortableReceiptBundleDisclaimer = "This Portable Receipt Bundle carries cryptographic evidence of one record's structural execution. Verifying party uses the audit_proof_anchors to verify the receipt's merkle inclusion + outer Ed25519 signature. Control framework references are NOT included in this bundle; consult the mapping artifact at https://nanorix.io/v1/control-map?framework_version={framework_version} to apply current control mappings at consumption time."
 
 // signature_target values — which anchor the outer Ed25519 signature covers.
 // An absent signature_target means SignatureTargetStep8ChainHash (legacy
@@ -38,9 +38,9 @@ const (
 	SignatureTargetDocumentCanonicalHash = "document_canonical_hash"
 )
 
-// PortableReceiptBundle — Wave B Item 7 wire shape.
+// PortableReceiptBundle — wire shape.
 //
-// Forever-Standard the Forever-Standard wire discipline: BundleVersion is append-only; the V1.0 shape
+// Forever-Standard: BundleVersion is append-only; the V1.0 shape
 // remains valid forever. Future bundle types land as new wire-format versions,
 // NEVER as breaking-shape changes to V1.0.
 type PortableReceiptBundle struct {
@@ -63,13 +63,47 @@ type AuditProofAnchors struct {
 	Timestamp                string  `json:"timestamp"`
 	FrameworkVersionAtEmit   *string `json:"framework_version_at_emit,omitempty"`
 	// SignatureTarget names the anchor the outer Ed25519 signature covers.
-	// nil = legacy SignatureTargetStep8ChainHash. Additive per the Forever-Standard wire discipline —
+	// nil = legacy SignatureTargetStep8ChainHash. Additive —
 	// legacy bundle JSON is byte-unchanged.
 	SignatureTarget *string `json:"signature_target,omitempty"`
 	// DocumentCanonicalHash is the FullCdp document canonical hash (bare
 	// lowercase 128-char hex) — the signed message when SignatureTarget is
 	// SignatureTargetDocumentCanonicalHash. nil on legacy bundles.
 	DocumentCanonicalHash *string `json:"document_canonical_hash,omitempty"`
+	// ParentProofsMerkleRoot is the parent-proofs Merkle root
+	// ("sha512:"-prefixed). Present only when the source proof has parent
+	// links; the Step 8 amendment commits to it. Omitted when absent, so
+	// bundle JSON from proofs without parent links is byte-unchanged.
+	ParentProofsMerkleRoot *string `json:"parent_proofs_merkle_root,omitempty"`
+}
+
+// BundleVerification is the detailed outcome of VerifyReceiptBundleDetailed.
+//
+// SignatureAuthentic: the outer Ed25519 signature verifies over the anchor
+// named by SignatureTarget. ReceiptBound: the bundle alone ties the receipt to
+// the signed value. True for the legacy target; false for
+// SignatureTargetDocumentCanonicalHash, whose signed value commits to a
+// document the bundle does not carry.
+type BundleVerification struct {
+	SignatureAuthentic bool
+	ReceiptBound       bool
+	SignatureTarget    string
+}
+
+// Valid reports whether the signature is authentic and the receipt is bound.
+//
+// Integrity only: the signature is checked against the key the bundle carries,
+// so true never says who signed. Status says so.
+func (v BundleVerification) Valid() bool { return v.SignatureAuthentic && v.ReceiptBound }
+
+// Status is "not_anchored" when Valid, otherwise "not_verified". Never
+// "verified": no key list is read, so the signing key is only the one the
+// bundle carries.
+func (v BundleVerification) Status() string {
+	if v.Valid() {
+		return "not_anchored"
+	}
+	return "not_verified"
 }
 
 // BundleError — typed bundle extraction / verification error.
@@ -100,9 +134,20 @@ const (
 	// signature_target=document_canonical_hash (CDP v2.1 signing model) but
 	// carries no document_canonical_hash value.
 	BundleErrMissingCanonicalHashAnchor = "missing_canonical_hash_anchor"
+	// BundleErrMalformedCanonicalHashAnchor — document_canonical_hash is not
+	// exactly 128 lowercase hex characters after its sha512: prefix.
+	BundleErrMalformedCanonicalHashAnchor = "malformed_canonical_hash_anchor"
 	// BundleErrUnknownSignatureTarget — signature_target names a target this
 	// verifier does not understand.
 	BundleErrUnknownSignatureTarget = "unknown_signature_target"
+	// BundleErrStep8Mismatch — the Step 8 hash recomputed from the bundle's
+	// timestamp and Merkle roots differs from step_8_chain_hash: the bundled
+	// root is not the one the signed Step 8 value commits to.
+	BundleErrStep8Mismatch = "step_8_mismatch"
+	// BundleErrReceiptNotBound — returned by VerifyReceiptBundle when the
+	// signature is authentic but the bundle alone cannot bind the receipt to
+	// the signed value (signature_target=document_canonical_hash).
+	BundleErrReceiptNotBound = "receipt_not_bound"
 )
 
 // ExtractReceiptBundle extracts a single receipt + outer anchors into a
@@ -188,6 +233,11 @@ func ExtractReceiptBundle(auditProof []byte, recordIndex uint32) (*PortableRecei
 		return nil, &BundleError{Kind: BundleErrMissingField, Reason: "chain[last].chain_hash"}
 	}
 
+	var parentRoot *string
+	if v, ok := doc["parent_proofs_merkle_root"].(string); ok {
+		parentRoot = &v
+	}
+
 	var fvae *string
 	if rc, ok := doc["regulatory_context"].(map[string]interface{}); ok {
 		if fv, ok := rc["framework_version"].(string); ok {
@@ -242,26 +292,75 @@ func ExtractReceiptBundle(auditProof []byte, recordIndex uint32) (*PortableRecei
 			FrameworkVersionAtEmit:   fvae,
 			SignatureTarget:          signatureTarget,
 			DocumentCanonicalHash:    documentCanonicalHash,
+			ParentProofsMerkleRoot:   parentRoot,
 		},
 		Disclaimer: PortableReceiptBundleDisclaimer,
 	}, nil
 }
 
-// VerifyReceiptBundle verifies a Portable Receipt Bundle (Mode B standalone).
+// recomputeStep8 rebuilds the amended Step 8 hash from genesis: Steps 1-7 over
+// the canonical (subsystem, method) table at timestamp, then the Step 8
+// amendment with the receipts root and the optional parent-proofs root.
+func recomputeStep8(timestamp string, recordReceiptsMerkleRoot string, parentProofsMerkleRoot *string) string {
+	prev := NanorixGenesisHash
+	for _, step := range CanonicalChain[:NanorixChainSteps-1] {
+		prev = ComputeStepHash(prev, step.Subsystem, "destroy", step.Method, timestamp)
+	}
+	return ComputeStep8Amended(prev, timestamp, &recordReceiptsMerkleRoot, parentProofsMerkleRoot)
+}
+
+// parseRecordIndex accepts only a real non-negative integer that fits uint32.
+func parseRecordIndex(raw interface{}) (uint32, error) {
+	bad := func(reason string) (uint32, error) {
+		return 0, &BundleError{Kind: BundleErrShape, Reason: "receipt.record_index " + reason}
+	}
+	switch v := raw.(type) {
+	case float64:
+		if v != math.Trunc(v) || v < 0 || v > math.MaxUint32 {
+			return bad("is not an integer in range")
+		}
+		return uint32(v), nil
+	case int:
+		if v < 0 || int64(v) > math.MaxUint32 {
+			return bad("is not an integer in range")
+		}
+		return uint32(v), nil
+	case json.Number:
+		n, err := v.Int64()
+		if err != nil || n < 0 || n > math.MaxUint32 {
+			return bad("is not an integer in range")
+		}
+		return uint32(n), nil
+	default:
+		return bad("wrong type")
+	}
+}
+
+// VerifyReceiptBundleDetailed verifies a Portable Receipt Bundle (Mode B
+// standalone) and reports both whether the signature is authentic and whether
+// the receipt is bound.
 //
 // Steps:
 //  1. Recompute the receipt's record_chain_hash from its fields.
 //  2. Verify Merkle inclusion proof binds receipt to record_receipts_merkle_root.
-//  3. Verify outer Ed25519 signature over step_8_chain_hash ASCII-hex using
-//     verification_key.
+//  3. Recompute Steps 1-7 from genesis at the bundle timestamp, then the
+//     amended Step 8 with record_receipts_merkle_root (and
+//     parent_proofs_merkle_root when present); require equality with
+//     step_8_chain_hash.
+//  4. Verify the outer Ed25519 signature over the ASCII-hex bytes of the
+//     anchor named by signature_target, using verification_key.
 //
-// Returns nil on success, BundleError on failure.
-func VerifyReceiptBundle(bundle *PortableReceiptBundle) error {
+// For the legacy target ReceiptBound is true (the signed Step 8 hash was
+// recomputed from the bundled root). For document_canonical_hash it is false:
+// the signed value commits to a document the bundle does not carry.
+//
+// Returns a BundleError on failure.
+func VerifyReceiptBundleDetailed(bundle *PortableReceiptBundle) (*BundleVerification, error) {
 	if bundle.BundleVersion != "1.0" {
-		return &BundleError{Kind: BundleErrShape, Reason: "unsupported bundle_version: " + bundle.BundleVersion}
+		return nil, &BundleError{Kind: BundleErrShape, Reason: "unsupported bundle_version: " + bundle.BundleVersion}
 	}
 	if bundle.BundleType != "receipt" {
-		return &BundleError{Kind: BundleErrShape, Reason: "wrong bundle_type for receipt bundle: " + bundle.BundleType}
+		return nil, &BundleError{Kind: BundleErrShape, Reason: "wrong bundle_type for receipt bundle: " + bundle.BundleType}
 	}
 
 	anchors := bundle.AuditProofAnchors
@@ -269,30 +368,22 @@ func VerifyReceiptBundle(bundle *PortableReceiptBundle) error {
 	// (1) Recompute record_chain_hash.
 	recordIndexRaw, ok := bundle.Receipt["record_index"]
 	if !ok {
-		return &BundleError{Kind: BundleErrShape, Reason: "receipt.record_index missing"}
+		return nil, &BundleError{Kind: BundleErrShape, Reason: "receipt.record_index missing"}
 	}
-	var recordIndex uint32
-	switch v := recordIndexRaw.(type) {
-	case float64:
-		recordIndex = uint32(v)
-	case int:
-		recordIndex = uint32(v)
-	case json.Number:
-		n, _ := v.Int64()
-		recordIndex = uint32(n)
-	default:
-		return &BundleError{Kind: BundleErrShape, Reason: "receipt.record_index wrong type"}
+	recordIndex, err := parseRecordIndex(recordIndexRaw)
+	if err != nil {
+		return nil, err
 	}
 
 	recordID, _ := bundle.Receipt["record_id"].(string)
 	if recordID == "" {
-		return &BundleError{Kind: BundleErrShape, Reason: "receipt.record_id missing"}
+		return nil, &BundleError{Kind: BundleErrShape, Reason: "receipt.record_id missing"}
 	}
 	inH, _ := bundle.Receipt["record_input_hash"].(string)
 	outH, _ := bundle.Receipt["record_output_hash"].(string)
 	claimedChainHash, _ := bundle.Receipt["record_chain_hash"].(string)
 	if claimedChainHash == "" {
-		return &BundleError{Kind: BundleErrShape, Reason: "receipt.record_chain_hash missing"}
+		return nil, &BundleError{Kind: BundleErrShape, Reason: "receipt.record_chain_hash missing"}
 	}
 
 	activityRoot := NanorixGenesisHash
@@ -300,7 +391,7 @@ func VerifyReceiptBundle(bundle *PortableReceiptBundle) error {
 		activityRoot = computeActivityRootLocal(trail)
 	}
 
-	// the per-record receipt specification: a declared pattern_tag is a signed primitive — bind its wire
+	// A declared pattern_tag is a signed primitive — bind its wire
 	// form into the recompute.
 	var patternTag *string
 	if tag, ok := bundle.Receipt["pattern_tag"].(string); ok {
@@ -309,7 +400,7 @@ func VerifyReceiptBundle(bundle *PortableReceiptBundle) error {
 
 	recomputed := computeRecordChainHashLocal(anchors.CapsuleID, recordIndex, recordID, inH, outH, activityRoot, patternTag)
 	if recomputed != StripHashPrefix(claimedChainHash) {
-		return &BundleError{
+		return nil, &BundleError{
 			Kind:   BundleErrRecordChainHashMismatch,
 			Reason: fmt.Sprintf("claimed=%s recomputed=%s", claimedChainHash, recomputed),
 		}
@@ -324,39 +415,54 @@ func VerifyReceiptBundle(bundle *PortableReceiptBundle) error {
 		}
 	}
 	if !verifyMerkleInclusionProofLocal(claimedChainHash, int(recordIndex), inclusion, anchors.RecordReceiptsMerkleRoot) {
-		return &BundleError{Kind: BundleErrMerkleInclusionFailed, Reason: anchors.RecordReceiptsMerkleRoot}
+		return nil, &BundleError{Kind: BundleErrMerkleInclusionFailed, Reason: anchors.RecordReceiptsMerkleRoot}
 	}
 
-	// (3) Outer Ed25519 signature over the target named by signature_target.
-	//
-	// The bundle does NOT carry the full 8-step chain or the full signed
-	// document (would defeat portability).
-	//
-	// Legacy target (step8_chain_hash — v1.0/v2.0): the signature over
-	// step_8_chain_hash transitively binds chain + receipt set integrity via
-	// the outer producer's authority.
-	//
-	// v2.1 target (document_canonical_hash): the producer signs the FullCdp
-	// canonical hash. The bundle carries that hash as the signed message.
-	// Binding the bundled record_receipts_merkle_root to the SIGNED document
-	// cannot be established from the bundle alone — the canonical hash is a
-	// commitment over the whole document, which the bundle does not carry.
-	// BundleVerdictText states this plainly; for the full binding the
-	// consumer verifies the source AuditProof.
-	var signedMessage string
+	// (3) Step 8 recompute. The bundle does not carry the 8-step chain, but
+	// every step hashes the same timestamp over the canonical (subsystem,
+	// method) table, so Steps 1-7 are derivable. Requiring the amended Step 8
+	// to equal step_8_chain_hash ties the bundled Merkle root (and the
+	// parent-proofs root, when present) to the Step 8 value. Runs for every
+	// signature_target.
+	step8 := recomputeStep8(anchors.Timestamp, anchors.RecordReceiptsMerkleRoot, anchors.ParentProofsMerkleRoot)
+	if step8 != StripHashPrefix(anchors.Step8ChainHash) {
+		return nil, &BundleError{
+			Kind:   BundleErrStep8Mismatch,
+			Reason: fmt.Sprintf("claimed=%s recomputed=%s", anchors.Step8ChainHash, step8),
+		}
+	}
+
+	// (4) Outer Ed25519 signature over the ASCII-hex bytes of the anchor named
+	// by signature_target.
+	var signedMessage, effectiveTarget string
+	var receiptBound bool
 	switch {
 	case anchors.SignatureTarget == nil, *anchors.SignatureTarget == SignatureTargetStep8ChainHash:
 		signedMessage = StripHashPrefix(anchors.Step8ChainHash)
+		receiptBound = true
+		effectiveTarget = SignatureTargetStep8ChainHash
 	case *anchors.SignatureTarget == SignatureTargetDocumentCanonicalHash:
 		if anchors.DocumentCanonicalHash == nil || *anchors.DocumentCanonicalHash == "" {
-			return &BundleError{
+			return nil, &BundleError{
 				Kind:   BundleErrMissingCanonicalHashAnchor,
 				Reason: "signature_target=document_canonical_hash but no document_canonical_hash value; re-extract the bundle from the source AuditProof with a v2.1-aware extractor",
 			}
 		}
 		signedMessage = StripHashPrefix(*anchors.DocumentCanonicalHash)
+		// The same key signs other message shapes, such as a population head,
+		// so a signature over anything but a bare hash proves nothing here.
+		if !isSHA512LowercaseHex(signedMessage) {
+			return nil, &BundleError{
+				Kind:   BundleErrMalformedCanonicalHashAnchor,
+				Reason: "document_canonical_hash is not 128 lowercase hex characters after its sha512: prefix",
+			}
+		}
+		// The canonical hash commits to the whole source document, which the
+		// bundle does not carry, so the bundle alone cannot bind the receipt.
+		receiptBound = false
+		effectiveTarget = SignatureTargetDocumentCanonicalHash
 	default:
-		return &BundleError{
+		return nil, &BundleError{
 			Kind:   BundleErrUnknownSignatureTarget,
 			Reason: *anchors.SignatureTarget,
 		}
@@ -364,32 +470,63 @@ func VerifyReceiptBundle(bundle *PortableReceiptBundle) error {
 
 	sigBytes, err := base64.StdEncoding.DecodeString(StripBase64Prefix(anchors.Signature))
 	if err != nil {
-		return &BundleError{Kind: BundleErrBase64Decode, Reason: "audit_proof_anchors.signature: " + err.Error()}
+		return nil, &BundleError{Kind: BundleErrBase64Decode, Reason: "audit_proof_anchors.signature: " + err.Error()}
 	}
 	if len(sigBytes) != 64 {
-		return &BundleError{Kind: BundleErrSignatureFailed, Reason: fmt.Sprintf("signature wrong size: %d", len(sigBytes))}
+		return nil, &BundleError{Kind: BundleErrSignatureFailed, Reason: fmt.Sprintf("signature wrong size: %d", len(sigBytes))}
 	}
 	pubBytes, err := base64.StdEncoding.DecodeString(StripBase64Prefix(anchors.VerificationKey))
 	if err != nil {
-		return &BundleError{Kind: BundleErrBase64Decode, Reason: "audit_proof_anchors.verification_key: " + err.Error()}
+		return nil, &BundleError{Kind: BundleErrBase64Decode, Reason: "audit_proof_anchors.verification_key: " + err.Error()}
 	}
 	if len(pubBytes) != 32 {
-		return &BundleError{Kind: BundleErrSignatureFailed, Reason: fmt.Sprintf("verification_key wrong size: %d", len(pubBytes))}
+		return nil, &BundleError{Kind: BundleErrSignatureFailed, Reason: fmt.Sprintf("verification_key wrong size: %d", len(pubBytes))}
 	}
 
-	if !ed25519.Verify(ed25519.PublicKey(pubBytes), []byte(signedMessage), sigBytes) {
-		return &BundleError{Kind: BundleErrSignatureFailed}
+	if !verifyEd25519Strict(pubBytes, []byte(signedMessage), sigBytes) {
+		return nil, &BundleError{Kind: BundleErrSignatureFailed}
 	}
 
+	return &BundleVerification{
+		SignatureAuthentic: true,
+		ReceiptBound:       receiptBound,
+		SignatureTarget:    effectiveTarget,
+	}, nil
+}
+
+// VerifyReceiptBundle verifies a Portable Receipt Bundle (Mode B standalone)
+// and returns nil only when the receipt is bound.
+//
+// It runs VerifyReceiptBundleDetailed. A bundle whose signature is authentic
+// but whose receipt the bundle alone cannot bind (the document_canonical_hash
+// target) returns a BundleError of kind BundleErrReceiptNotBound, so a caller
+// that treats a nil error as "verified" is never told so for an unbound
+// receipt. Use VerifyReceiptBundleDetailed to read the distinction.
+//
+// A nil error is integrity only: the signature is checked against the key the
+// bundle carries, so it never says who signed (the detailed result for the
+// same bundle has Status "not_anchored").
+func VerifyReceiptBundle(bundle *PortableReceiptBundle) error {
+	result, err := VerifyReceiptBundleDetailed(bundle)
+	if err != nil {
+		return err
+	}
+	if !result.ReceiptBound {
+		return &BundleError{
+			Kind: BundleErrReceiptNotBound,
+			Reason: "signature is authentic over the document canonical hash, but the bundle alone " +
+				"cannot bind the receipt to that signed document; verify the source AuditProof",
+		}
+	}
 	return nil
 }
 
 // BundleVerdictText returns the human-readable verdict for a bundle that
-// VerifyReceiptBundle accepted. Never overclaims: the v2.1 wording states the
-// commitment semantics — the signature covers the document canonical hash,
-// and binding the bundled Merkle root to that signed document requires the
-// source AuditProof, which the bundle does not carry. Mirrors the Rust
-// bundle_verdict_text strings verbatim for cross-impl parity.
+// VerifyReceiptBundleDetailed accepted. Never overclaims: the v2.1 wording
+// states the commitment semantics — the signature covers the document
+// canonical hash, and binding the bundled Merkle root to that signed document
+// requires the source AuditProof, which the bundle does not carry. Mirrors the
+// Rust bundle_verdict_text strings verbatim for cross-impl parity.
 func BundleVerdictText(bundle *PortableReceiptBundle) string {
 	if t := bundle.AuditProofAnchors.SignatureTarget; t != nil && *t == SignatureTargetDocumentCanonicalHash {
 		return "Ed25519 signature verified over the document canonical hash (CDP v2.1 signing model). " +
@@ -398,11 +535,14 @@ func BundleVerdictText(bundle *PortableReceiptBundle) string {
 			"the entire source AuditProof document, which this bundle does not carry — so this " +
 			"verification establishes (a) the signature is authentic over the carried canonical " +
 			"hash and (b) the receipt is consistent with the bundled Merkle root. Binding that " +
-			"Merkle root to the SIGNED document requires verifying the source AuditProof."
+			"Merkle root to the SIGNED document requires verifying the source AuditProof; this " +
+			"bundle alone therefore reports the receipt as not bound."
 	}
 	return "Ed25519 signature verified over step_8_chain_hash. The receipt chain hash was " +
 		"recomputed and its Merkle inclusion checked against the bundled " +
-		"record_receipts_merkle_root, which the Step 8 amended hash incorporates."
+		"record_receipts_merkle_root, and Step 8 was recomputed from the canonical chain at the " +
+		"bundle timestamp with that root and found equal to the signed step_8_chain_hash. " +
+		"The signature is checked against the key carried in the bundle; signer identity needs the published trust chain."
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -412,7 +552,7 @@ func BundleVerdictText(bundle *PortableReceiptBundle) string {
 // computeRecordChainHashLocal mirrors `ComputeRecordChainHash` (wave_n.go) but
 // returns bare hex (no `sha512:` prefix). `patternTagWire` follows the same
 // conditional-append rule: the trailing `\x00 ‖ pattern_tag_wire` segment is
-// appended ONLY when non-nil (the per-record receipt specification signed-primitive binding).
+// appended ONLY when non-nil (signed-primitive binding).
 func computeRecordChainHashLocal(capsuleID string, recordIndex uint32, recordID, inH, outH, activityRoot string, patternTagWire *string) string {
 	inHs := StripHashPrefix(inH)
 	outHs := StripHashPrefix(outH)
@@ -499,3 +639,15 @@ func verifyMerkleInclusionProofLocal(leaf string, leafIndex int, proof []string,
 // Static error sentinel — unused but reserved for callers that prefer
 // errors.Is over kind-string comparison.
 var ErrBundleNoReceipts = errors.New("bundle: AuditProof has no record_receipts")
+
+func isSHA512LowercaseHex(s string) bool {
+	if len(s) != 128 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if !(s[i] >= '0' && s[i] <= '9' || s[i] >= 'a' && s[i] <= 'f') {
+			return false
+		}
+	}
+	return true
+}

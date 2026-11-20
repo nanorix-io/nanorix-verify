@@ -1,0 +1,4 @@
+{
+  "description": "Signature over a different message.",
+  "outcome": "signature_failed"
+}

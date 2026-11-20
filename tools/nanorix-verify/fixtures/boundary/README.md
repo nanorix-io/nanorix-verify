@@ -1,13 +1,13 @@
-# BoundaryAttestation fixtures (the boundary-attestation specification)
+# BoundaryAttestation fixtures
 
 `0001_single_signed.json` — a fully signed BoundaryAttestation v1.0 (index 1,
 genesis `prev_attestation_hash`, activity commitment over 2 disclosed events),
-generated **by hand** from the boundary-attestation specification D2 formula with python3 hashlib +
+generated **by hand** from the formula with python3 hashlib +
 `cryptography` — independently of the Rust code it pins. The verifier-side
 recompute (`src/boundary.rs`) must reproduce these bytes; the pinned constants
 live in `tests/boundary_attestation.rs`.
 
-## Formula (the boundary-attestation specification D2 + the reference chain implementation)
+## Formula (the boundary-attestation specification + `compute_activity_root` in the reference chain implementation)
 
 ```text
 genesis              = SHA-512("")  (the CDP/the per-record receipt specification genesis constant)

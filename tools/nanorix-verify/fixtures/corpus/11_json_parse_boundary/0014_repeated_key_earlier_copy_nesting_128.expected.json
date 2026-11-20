@@ -1,0 +1,10 @@
+{
+  "failure_reason": {
+    "field": "json_root",
+    "type": "required_field_missing"
+  },
+  "note": "future_field twice; the earlier copy is 127 nested arrays, 128 containers deep counting the top-level object. serde_json, the parser in front of nanorix-verify, refuses the document, so the CLI exits 1 with no verdict; the other verifiers report this verdict.",
+  "stage_reached": 1,
+  "status": "not_verified",
+  "valid": false
+}

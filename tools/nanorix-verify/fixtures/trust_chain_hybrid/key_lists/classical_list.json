@@ -1,0 +1,22 @@
+{
+  "authorities": {
+    "us-customer-kms-acme-v1": {
+      "active_versions": [
+        {
+          "effective_from": "2026-11-01T00:00:00Z",
+          "public_key_b64": "rwaj4ykXFOTzVsGcmxXNGVHsbmZiqne+B1R/KJODNB0=",
+          "public_key_fingerprint": "sha256:a3c761e56d55f45e06a31c3c7e32f79cfba417d3e2e2397767ef5a453f35ffe7",
+          "signing_key_version": "1"
+        }
+      ],
+      "archived_versions": [],
+      "display_name": "Acme Health signing authority",
+      "revoked": false
+    }
+  },
+  "identity_fingerprint": "sha256:4b735ac174e40636507716ed5c9a8a75fbf6f462357fabb71ac42b7bd502c64a",
+  "identity_public_key_b64": "wFDFY3pE+oYp//PMzOIwDLNipj2Z2V/FQUUmb0MyRFo=",
+  "issued_at": "2026-11-01T00:00:00Z",
+  "manifest_signature": "base64:64aaioT/E0IXOjjxaYOspPW/V6LnHKgWsATBnkQEeZxAmMBrvYr6xFj8MJhal04xDL0uKhIoERgx+e2tp83zBw==",
+  "schema_version": "1"
+}

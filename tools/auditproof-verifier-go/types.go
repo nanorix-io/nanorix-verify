@@ -1,7 +1,7 @@
 // Package auditproof — verification result types mirroring the Rust
 // `nanorix-verify-types` crate at `governance/verify-types/src/lib.rs`.
 //
-// **Forever-Standard discipline (the Forever-Standard wire discipline):** every variant shipped here is
+// **Forever-Standard discipline:** every variant shipped here is
 // permanent. New failure modes ship as ADDITIVE variants. Existing variants
 // NEVER renamed, NEVER removed, NEVER repurposed.
 //
@@ -12,12 +12,12 @@
 // Variant catalog (alphabetical by snake_case wire tag):
 //
 //   - algorithm_unsupported            V1 only supports Ed25519
-//   - authority_id_mismatch            policy-pin failure (the customer-authority specification G7)
+//   - authority_id_mismatch            policy-pin failure
 //   - authority_mode_mismatch          customer-authority Ed25519 verify failure
 //   - authority_revoked                trust-chain marks authority revoked
-//   - cdp_version_unsupported          version not in {1.0, 2.0, 2.1, 2.2}
-//   - customer_declared_activity_root_mismatch  the proof's signed root disagrees with the root recomputed from the supplied record (the specification)
-//   - diagnostic_proof_refused         policy refuses diagnostic-mode (the diagnostic-proof policy)
+//   - cdp_version_unsupported          version not in {1.0, 2.1, 2.2}
+//   - customer_declared_activity_root_mismatch  the proof's signed root disagrees with the root recomputed from the supplied record
+//   - diagnostic_proof_refused         policy refuses diagnostic-mode
 //   - final_hash_mismatch              final_hash != last step's chain_hash
 //   - genesis_hash_mismatch            first step's prev_hash != SHA-512(empty)
 //   - region_mismatch                  region differs from policy-required
@@ -27,6 +27,7 @@
 //   - signing_key_version_unknown      key version not in trust-chain manifest
 //   - step_count_invalid               chain has != 8 steps
 //   - step_hash_mismatch               step's recompute didn't match
+//   - unsigned_field_populated         stage 2: one of the seven reserved attestation slots (customer_attestation, policy_attestation, third_party_attestation, retention_policy_attestation, witness_signatures, pqc_attestation, customer_pqc_attestation) holds a value other than null, or customer_declared_activity_root is present on a cdp_version whose signature does not cover it (1.0)
 //   - chain_step_identity_mismatch     a step names a non-canonical subsystem
 package auditproof
 
@@ -41,7 +42,15 @@ import (
 // Wire form is JSON; field order is irrelevant in JSON but the field set is
 // part of the Forever-Standard contract.
 type AuditProofVerificationResult struct {
-	// Valid is true if and only if every check stage passed.
+	// Valid is true when the chain and the signature hold under the key used,
+	// and says nothing on its own about who signed: it is true at stage 7
+	// (the key the proof carries) and at stage 4, where no signature was
+	// checked. Verified is Valid && StageReached >= 8, with a key list
+	// loaded by LoadTrustChain under a pinned fingerprint. The JSON field
+	// keeps this meaning.
+	//
+	// Deprecated: Valid is not a verdict. Read Status, which is "verified"
+	// only at stage 8, or OK.
 	Valid bool `json:"valid"`
 
 	// FailureReason is populated when Valid is false. Closed-set enum.
@@ -54,11 +63,39 @@ type AuditProofVerificationResult struct {
 	Metadata VerificationMetadata `json:"metadata"`
 }
 
+// Status is the result state shared with nanorix-verify and the SDKs:
+// "verified" only when valid at stage 8 (the key resolved in a key list
+// loaded by LoadTrustChain under a pinned fingerprint), "not_anchored" when
+// valid at stage 7 (the signature holds under the key the proof carries,
+// which a proof signed with a fresh key also does), "not_verified" otherwise,
+// including a reproduced chain with no signature checked (stage 4).
+func (r AuditProofVerificationResult) Status() string {
+	switch {
+	case r.Valid && r.StageReached >= 8:
+		return "verified"
+	case r.Valid && r.StageReached == 7:
+		return "not_anchored"
+	default:
+		return "not_verified"
+	}
+}
+
+// OK is true only when Status is "verified".
+func (r AuditProofVerificationResult) OK() bool {
+	return r.Status() == "verified"
+}
+
 // VerificationMetadata mirrors `tools/nanorix-verify/src/lib.rs::VerificationMetadata`.
 type VerificationMetadata struct {
-	CdpVersion         *string `json:"cdp_version"`
-	CapsuleID          *string `json:"capsule_id"`
-	Region             *string `json:"region"`
+	CdpVersion *string `json:"cdp_version"`
+	CapsuleID  *string `json:"capsule_id"`
+	Region     *string `json:"region"`
+	// SigningKeyVersion is read from `attestation.signing_key_version` when
+	// present, else the top-level `signing_key_version` string, as written.
+	// Outside every signature: the canonical view does not bind
+	// `attestation.signing_key_version`, and it binds the top-level value only
+	// as its integer parse, which AuthoritySigned describes. The issuer does
+	// not write the attestation field.
 	SigningKeyVersion  *string `json:"signing_key_version"`
 	Algorithm          *string `json:"algorithm"`
 	StepCount          *int    `json:"step_count"`
@@ -66,7 +103,7 @@ type VerificationMetadata struct {
 
 	// RecoveredChainTimestamp is set only when the document carried no usable
 	// `destroyed_at` and the chain timestamp was recovered from
-	// `attestation.key_id` (the chain-timestamp recovery rule pre-restoration proofs). Nil means the
+	// `attestation.key_id` (pre-restoration proofs). Nil means the
 	// timestamp came from the document's own field, so an auditor reading a
 	// verdict can always tell which route produced it. Omitted from the wire
 	// form when nil, mirroring the Rust `skip_serializing_if = "Option::is_none"`.
@@ -81,7 +118,7 @@ type VerificationMetadata struct {
 	UnattestedParentAttribution *int `json:"unattested_parent_attribution,omitempty"`
 
 	// CustomerDeclaredActivityRoot is the `customer_declared_activity_root`
-	// the proof carries (the specification), as written. Nil when the proof declares
+	// the proof carries, as written. Nil when the proof declares
 	// none. Disclosed whether or not the record was supplied: a verdict that
 	// stays silent about a declared root invites a reader to assume it was
 	// checked.
@@ -95,11 +132,47 @@ type VerificationMetadata struct {
 	// outside cdp_version 2.1 / 2.2: on any other version a declared root is
 	// unsigned and the proof is rejected before this point.
 	CustomerDeclaredActivityChecked *bool `json:"customer_declared_activity_checked,omitempty"`
+
+	// AuthorityID is the proof's own top-level `authority_id` string, as
+	// written. Nil when the proof has none or a non-string, so a reader can
+	// tell a value the proof carries from the Nanorix default
+	// (DefaultAuthorityID), which the issuer applies only on read; on 2.1 and
+	// 2.2 the canonical view then binds null or that non-string value, not the
+	// default. A verifier output field, not a receipt field.
+	AuthorityID *string `json:"authority_id,omitempty"`
+
+	// AuthoritySigned reports whether the verified signature covers the
+	// proof's top-level `authority_id`, `signing_mode` and
+	// `signing_key_version` as the canonical view binds them (the key version
+	// as its integer parse, 0 when absent or unparseable). It does not extend
+	// to the metadata SigningKeyVersion, which is read from the unsigned
+	// `attestation.signing_key_version` first. True once a
+	// signature verified against the proof's own key on cdp_version 2.1 or
+	// 2.2, whose signed message is the canonical view; false once one verified
+	// on 1.0, which signs `final_hash` only; nil when no signature verified.
+	// Set only from the signature check, never from the version alone.
+	AuthoritySigned *bool `json:"authority_signed,omitempty"`
+
+	// SigningMode is the proof's own top-level `signing_mode` string, as
+	// written. Nil when the proof has none or a non-string; on 2.1 and 2.2 the
+	// canonical view then binds null or that value, while the issuer reads the
+	// default `nanorix_only`.
+	SigningMode *string `json:"signing_mode,omitempty"`
+
+	// TrustChainIdentityFingerprint is the identity fingerprint pinned for the
+	// key list the proof was checked against. Set before the key lookup, so a
+	// failed lookup still reports it. Nil when no key list was supplied; a Go
+	// TrustChain is always checked against its pin when it is loaded.
+	TrustChainIdentityFingerprint *string `json:"trust_chain_identity_fingerprint,omitempty"`
+
+	// TrustChainIssuedAt is the `issued_at` of the key list the proof was
+	// checked against, set at the same point as TrustChainIdentityFingerprint.
+	TrustChainIssuedAt *string `json:"trust_chain_issued_at,omitempty"`
 }
 
-// CdpKind is the specification an earlier release-A reserved-slot scope discriminator
-// (2026-05-10). Forever-stable per the Forever-Standard wire discipline. Mirrors the Rust enum
-// the reference chain implementation.
+// CdpKind is the an earlier release-A reserved-slot scope discriminator
+// (2026-05-10). Forever-stable. Mirrors the Rust enum
+// `CdpKind` in the reference chain implementation.
 //
 // AuditProof scope. V1 always absent in serialized JSON (workload scope is
 // implicit). Future Items 2 (sealed-proxy = "call") and 4 (sealed-middleware
@@ -119,8 +192,8 @@ const (
 	CdpKindBatch    CdpKind = "batch"
 )
 
-// FailureReasonType is the closed-set wire-form discriminator. Forever-stable
-// per the Forever-Standard wire discipline. Additive only — new variants land here without breaking
+// FailureReasonType is the closed-set wire-form discriminator. Forever-stable.
+// Additive only — new variants land here without breaking
 // existing parsers.
 type FailureReasonType string
 
@@ -141,6 +214,7 @@ const (
 	ReasonReserved                             FailureReasonType = "reserved"
 	ReasonSignatureMismatch                    FailureReasonType = "signature_mismatch"
 	ReasonSigningKeyVersionUnknown             FailureReasonType = "signing_key_version_unknown"
+	ReasonSigningModeAuthorityMismatch         FailureReasonType = "signing_mode_authority_mismatch"
 	ReasonStepCountInvalid                     FailureReasonType = "step_count_invalid"
 	ReasonStepHashMismatch                     FailureReasonType = "step_hash_mismatch"
 	ReasonUnsignedFieldPopulated               FailureReasonType = "unsigned_field_populated"
@@ -189,6 +263,8 @@ const (
 //   - algorithm_unsupported:      Found
 //   - authority_mode_mismatch:    ClaimedAuthorityID, ExpectedAlgorithm, ActualAlgorithm
 //   - authority_id_mismatch:      ClaimedAuthorityID*, ExpectedAuthorityID, AuthIDReason
+//   - signing_mode_authority_mismatch: ClaimedAuthorityID* (null when the
+//     proof's authority_id is absent, null or not a string)
 //   - unsigned_field_populated:   Field
 //   - reserved:                   (no fields)
 type FailureReason struct {
@@ -226,7 +302,7 @@ type FailureReason struct {
 // `map[string]interface{}` marshalling sorts keys alphabetically and would
 // drift from Rust's wire form; therefore we hand-emit the bytes here.
 //
-// Forever-Standard discipline (the Forever-Standard wire discipline): the wire form (key ordering, key
+// Forever-Standard discipline: the wire form (key ordering, key
 // names, value encoding) is the cryptographic-attestation contract. Any
 // future change must produce byte-identical output to Rust's `serde_json::
 // to_string(&FailureReason)` on the reference corpus.
@@ -359,8 +435,16 @@ func (r *FailureReason) MarshalJSON() ([]byte, error) {
 		if err := emit("reason", string(r.AuthIDReason)); err != nil {
 			return nil, err
 		}
+	case ReasonSigningModeAuthorityMismatch:
+		var claimed interface{}
+		if r.ClaimedAuthorityID != nil {
+			claimed = *r.ClaimedAuthorityID
+		}
+		if err := emit("claimed_authority_id", claimed); err != nil {
+			return nil, err
+		}
 	default:
-		return nil, fmt.Errorf("unknown FailureReason type %q (closed-set enum violation; Forever-Standard the Forever-Standard wire discipline)", r.Type)
+		return nil, fmt.Errorf("unknown FailureReason type %q (closed-set enum violation; Forever-Standard)", r.Type)
 	}
 	buf.WriteByte('}')
 	return buf.Bytes(), nil
@@ -449,6 +533,10 @@ func (r *FailureReason) UnmarshalJSON(data []byte) error {
 		}
 		if v, ok := raw["actual_algorithm"].(string); ok {
 			r.ActualAlgorithm = &v
+		}
+	case ReasonSigningModeAuthorityMismatch:
+		if v, ok := raw["claimed_authority_id"].(string); ok {
+			r.ClaimedAuthorityID = &v
 		}
 	case ReasonAuthorityIDMismatch:
 		if v, ok := raw["claimed_authority_id"].(string); ok {

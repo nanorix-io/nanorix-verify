@@ -8,8 +8,8 @@
  * walks is how the SDK came to ship one surface that rejected every genuine
  * proof and another that accepted forged signatures.
  *
- * Held to `tools/nanorix-verify/fixtures/corpus/` (100 fixtures, committed
- * `.expected.json` verdicts) by `tests/verifier_corpus.test.ts`.
+ * Held to `tools/nanorix-verify/fixtures/corpus/` (committed `.expected.json`
+ * verdicts) by `corpus-sweep.ts` in this directory.
  *
  * Two facts the wire format does not make obvious, and that every
  * reimplementation has gotten wrong:
@@ -20,9 +20,10 @@
  *    `method`, no `timestamp`. Reading them off the step yields empty strings
  *    and a chain that reproduces nothing.
  * 2. The signed message depends on the CDP version: v1.0 signs `final_hash`,
- *    v2.0 signs `document_hash`, v2.1 and v2.2 `nanorix_only` sign the
- *    the specification Part-3 canonical-view hash. Verifying the wrong message accepts
- *    a downgraded proof. v2.2 (the specification + the specification) changes what a document may
+ *    v2.1 and v2.2 `nanorix_only` and `customer_only` sign the
+ *    canonical-view hash. cdp_version 2.0 is retired and
+ *    refused at the version gate. Verifying the wrong message accepts
+ *    a downgraded proof. v2.2 changes what a document may
  *    carry, not how it is canonicalised, hashed or signed; the version label
  *    is itself inside the canonical view, so a 2.1 document re-labelled 2.2
  *    clears the allowlist and then fails the signature.
@@ -42,13 +43,15 @@ import {
   CustomerDeclaredActivityStatus,
   verifyCustomerDeclaredActivity,
 } from "./customer_activity.js";
+import { hasSmallOrderKeyOrR } from "./_ed25519_strict.js";
+import { HYBRID_RECORD_CHECK_MISSING, isHybridPin, isPinChecked, type TrustChain } from "./trustChain.js";
 
-/** Genesis hash — SHA-512(""). Forever-stable per the Forever-Standard wire discipline. */
+/** Genesis hash — SHA-512(""). Forever-stable. */
 export const GENESIS_HASH =
   "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce" +
   "47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e";
 
-/** Canonical method strings per subsystem. Forever-stable per the Forever-Standard wire discipline. */
+/** Canonical method strings per subsystem. Forever-stable. */
 export const METHOD_MAP: Record<string, string> = {
   eee_namespace: "procfs_verification",
   eee_tmpfs: "mountinfo_verification",
@@ -60,7 +63,7 @@ export const METHOD_MAP: Record<string, string> = {
   capsule_destroy: "capsule_lifecycle_verification",
 };
 
-/** Canonical 8-step subsystem order (must match CHAIN_DEFS in cdp.rs). */
+/** Canonical 8-step subsystem order (must match CHAIN_DEFS in the reference implementation). */
 export const CANONICAL_SUBSYSTEMS = [
   "eee_namespace",
   "eee_tmpfs",
@@ -74,13 +77,12 @@ export const CANONICAL_SUBSYSTEMS = [
 
 export const SUPPORTED_CDP_VERSIONS: ReadonlySet<string> = new Set([
   "1.0",
-  "2.0",
   "2.1",
   "2.2",
 ]);
 
 /**
- * Versions whose signature covers the specification Part-3 canonical-view hash.
+ * Versions whose signature covers the canonical-view hash.
  * `cdp_version` is inside that view, so re-labelling a document across
  * these is accepted by the allowlist and rejected by the signature.
  */
@@ -88,11 +90,34 @@ export const CANONICAL_VIEW_SIGNED_VERSIONS: ReadonlySet<string> = new Set([
   "2.1",
   "2.2",
 ]);
+
+/** Activity event an issuer writes when a capsule ran in diagnostic mode. */
+export const DIAGNOSTIC_MODE_EVENT = "diagnostic_mode_enabled";
+
+/**
+ * Whether the activity trail holds an entry whose `event` is
+ * `DIAGNOSTIC_MODE_EVENT`. The trail is signed only on 2.1 and 2.2 with a
+ * signature, so `false` proves nothing on 1.0 or on an unsigned 2.1 or 2.2
+ * proof; the diagnostic gate refuses those outright for that reason. Mirrors
+ * Rust `records_diagnostic_mode`.
+ */
+function recordsDiagnosticMode(proof: Record<string, unknown>): boolean {
+  const events = proof["activity"];
+  return (
+    Array.isArray(events) &&
+    events.some(
+      (e) =>
+        e !== null &&
+        typeof e === "object" &&
+        (e as Record<string, unknown>)["event"] === DIAGNOSTIC_MODE_EVENT,
+    )
+  );
+}
 export const CHAIN_STEP_COUNT = 8;
 
 /**
- * Reserved attestation slots outside CanonicalCdpView (the specification-I21,
- * I24-I25 + the specification/D3) that no Nanorix signer populates. Every
+ * Reserved attestation slots outside CanonicalCdpView
+ * that no Nanorix signer populates. Every
  * construction site hard-codes them to None, so the signature never covered
  * them and a genuine document never carries them; a populated one was added
  * after signing by someone holding no key, and the signature cannot tell,
@@ -100,8 +125,8 @@ export const CHAIN_STEP_COUNT = 8;
  *
  * `per_event_attestations` is the ninth reserved slot and is deliberately
  * absent: the server drains capsule_event_attestations into it at destroy, so
- * genuine proofs do carry it, and each entry is signed by the customer's own
- * key. Mirrors the Rust, Go and Python verifiers.
+ * genuine proofs do carry it. The slot sits outside the signed hash and is
+ * accepted unchecked: its entries prove nothing about who signed. Mirrors the Rust, Go and Python verifiers.
  */
 export const UNSIGNED_RESERVED_SLOTS: readonly string[] = [
   "customer_attestation",
@@ -121,7 +146,7 @@ const PARENT_ATTRIBUTION_FIELDS: readonly string[] = [
   "parent_organization_tag",
 ];
 
-/** Closed-set failure reason wire types. Forever-stable per the Forever-Standard wire discipline. Additive only. */
+/** Closed-set failure reason wire types. Forever-stable. Additive only. */
 export const FailureReasonType = {
   ALGORITHM_UNSUPPORTED: "algorithm_unsupported",
   AUTHORITY_ID_MISMATCH: "authority_id_mismatch",
@@ -140,6 +165,7 @@ export const FailureReasonType = {
   RESERVED: "reserved",
   SIGNATURE_MISMATCH: "signature_mismatch",
   SIGNING_KEY_VERSION_UNKNOWN: "signing_key_version_unknown",
+  SIGNING_MODE_AUTHORITY_MISMATCH: "signing_mode_authority_mismatch",
   STEP_COUNT_INVALID: "step_count_invalid",
   STEP_HASH_MISMATCH: "step_hash_mismatch",
   STREAMING_MERKLE_ROOT_MISMATCH: "streaming_merkle_root_mismatch",
@@ -197,7 +223,7 @@ export interface VerificationMetadata {
   activityEventCount: number | null;
   /**
    * Set when the document carried no `destroyed_at` and the chain timestamp
-   * was recovered from `attestation.key_id` (the chain-timestamp recovery rule pre-restoration proofs).
+   * was recovered from `attestation.key_id` (pre-restoration proofs).
    * Never silently substituted — an auditor can always tell which route
    * produced the verdict.
    */
@@ -212,7 +238,7 @@ export interface VerificationMetadata {
    */
   unattestedParentAttribution?: number | null;
   /**
-   * the specification. The `customer_declared_activity_root` the proof carries, as
+   * The `customer_declared_activity_root` the proof carries, as
    * written; null when it declares none. Disclosed whether or not the record
    * was supplied — a verdict that stays silent about a declared root invites
    * a reader to assume it was checked.
@@ -228,13 +254,55 @@ export interface VerificationMetadata {
   customerDeclaredActivityChecked?: boolean | null;
 }
 
+/**
+ * The three result states. The names are the same in the Python SDK, the
+ * nanorix-verify `--json` output and the MCP tool.
+ */
+export type VerifyStatus = "verified" | "not_anchored" | "not_verified";
+
+/**
+ * Derive the result state for an offline verdict: `"verified"` only at stage 8
+ * (the signing key resolved in a trust-chain manifest checked against its
+ * pinned identity fingerprint, and the signature verified against that key),
+ * `"not_anchored"` at stage 7 (the signature verified against the key embedded
+ * in the proof), `"not_verified"` for everything else, including a reproduced
+ * chain with no signature checked.
+ */
+export function verificationStatusFor(valid: boolean, stageReached: number): VerifyStatus {
+  if (valid && stageReached >= 8) return "verified";
+  if (valid && stageReached === 7) return "not_anchored";
+  return "not_verified";
+}
+
 /** Result of AuditProof verification. */
 export interface VerificationResult {
+  /**
+   * `"verified"` only at stage 8: the signing key resolved in the signed key
+   * list given as `policy.trustChain`, checked against its pinned identity.
+   * `"not_anchored"` at stage 7 (the signature verified against the key the
+   * proof carries, which a proof signed with a fresh key also does) and
+   * `"not_verified"` for everything else. Gate on this or on `ok`.
+   */
+  status: VerifyStatus;
+  /** True only when `status` is `"verified"`. */
+  ok: boolean;
+  /**
+   * True when the chain and the signature hold under the key used, and on its
+   * own it says nothing about who signed: it is also true at stage 7
+   * (`not_anchored`: the key the proof carries) and at stage 4 (no signature
+   * checked). Read `status` or `ok` instead. The wire field keeps this meaning.
+   *
+   * @deprecated `valid` is not a verdict. Read `status` (`"verified"` only at
+   * stage 8) or `ok`.
+   */
   valid: boolean;
   failure_reason: FailureReason | null;
   stage_reached: number;
   metadata: VerificationMetadata;
 }
+
+/** The ladder's own result, before its status is derived. */
+type LadderResult = Omit<VerificationResult, "status" | "ok">;
 
 /** Wire-form projection matching fixture corpus expected.json. */
 export interface VerificationWireForm {
@@ -242,13 +310,50 @@ export interface VerificationWireForm {
   failure_reason: FailureReason | null;
 }
 
-/** Customer-side policy configuration. Field-additive per the Forever-Standard wire discipline. */
+/** Customer-side policy configuration. Field-additive. */
 export interface VerifierPolicy {
+  /**
+   * Refuse at stage 2, with `diagnostic_proof_refused`, an AuditProof whose
+   * signed activity trail records diagnostic mode (a `diagnostic_mode_enabled`
+   * event), and every AuditProof that cannot show it does not: one whose trail
+   * is unsigned, which is cdp_version 1.0, or 2.1 or 2.2 without a signature,
+   * so the event could be removed and the proof would still verify. Only a
+   * stage 8 (`"verified"`) result ties the trail to a Nanorix key; at stage 7
+   * the key is the one the proof carries. Omitted or false accepts
+   * diagnostic-mode proofs.
+   */
   rejectDiagnostic?: boolean;
+  /**
+   * Compared with the region on the signed `capsule_started` activity event;
+   * a disagreeing proof is refused at stage 2 with `region_mismatch`. A proof
+   * whose trail is unsigned (cdp_version 1.0, or 2.1 or 2.2 without a
+   * signature) is refused with an empty `actual`. Only a stage 8
+   * (`"verified"`) result ties the region to a Nanorix key.
+   */
   requiredRegion?: string;
+  /**
+   * Compared with the proof's top-level `authority_id` (absent means
+   * `us-kms-nanorix-v1`), never with an unsigned `signing_authority`. The
+   * signature covers that field only on cdp_version 2.1 and 2.2; on 1.0 a
+   * string other than `us-kms-nanorix-v1` is refused, so a pin accepts only
+   * the default there, and 2.0 is refused at the version gate before the pin
+   * is read. A pin alone checks only what the proof says about itself; set
+   * `trustChain` as well to resolve the signing key in a signed key list.
+   */
   requiredAuthorityId?: string;
   /**
-   * the specification. The raw bytes of the customer's activity record
+   * A signed key list the proof's signing key is resolved against (stage 8).
+   * Build one with `TrustChain.fromKeyList(keyList, pinnedIdentityFingerprint)`,
+   * which refuses any list the pinned identity did not sign. With one, a proof
+   * whose signature verifies reaches stage 8 only when its
+   * `(authority_id, signing_key_version)` resolves in the list, the signature
+   * verifies against the listed key, and the authority is not revoked. Without
+   * one the ladder ends at stage 7. Mirrors `VerifierPolicy::trust_chain` in the
+   * Rust verifier.
+   */
+  trustChain?: TrustChain;
+  /**
+   * The raw bytes of the customer's activity record
    * (`activity_events.jsonl`), when the reader holds it. Recomputed and
    * compared with the proof's `customer_declared_activity_root`; a record
    * supplied against a proof that declares no root fails closed as
@@ -315,7 +420,7 @@ function base64Decode(b64: string): Uint8Array | null {
 }
 
 /**
- * Reproduce one chain step's SHA-512 hash. Forever-stable per the Forever-Standard wire discipline.
+ * Reproduce one chain step's SHA-512 hash. Forever-stable.
  * Formula: SHA-512(prev || 0x00 || subsystem || 0x00 || "destroy" || 0x00 || method || 0x00 || timestamp)
  */
 export async function computeStepHash(
@@ -354,7 +459,7 @@ export function lookupMethod(subsystem: string): string {
   return METHOD_MAP[subsystem] ?? "";
 }
 
-// ─── Chain timestamp resolution (the chain-timestamp recovery rule) ───────────────────────────────────
+// ─── Chain timestamp resolution ───────────────────────────────────
 
 /**
  * Recover the chain timestamp from an attestation `key_id` of the form
@@ -400,7 +505,7 @@ function isIso8601Shaped(date: string, time: string): boolean {
 
 /**
  * The timestamp the chain walk must use: the document's own `destroyed_at`,
- * or — for pre-the chain-timestamp recovery rule proofs that omit it — the value recovered from
+ * or — for earlier proofs that omit it — the value recovered from
  * `attestation.key_id`. Returns the recovered value separately so the verdict
  * can disclose which route produced it.
  */
@@ -415,10 +520,10 @@ export function resolveChainTimestamp(proof: Record<string, unknown>): {
   return { timestamp: recovered ?? "", recovered };
 }
 
-// ─── the specification Part-3 canonical view ──────────────────────────────────────────
+// ─── canonical view ──────────────────────────────────────────
 
 /**
- * Rebuild the specification Part-3 canonical view from a proof and return its
+ * Rebuild the canonical view from a proof and return its
  * RFC-8785 JCS SHA-512 hex digest — byte-identical to the server's
  * `canonical_hash()` and to the Rust verifier's `recompute_canonical_hash`.
  *
@@ -460,7 +565,7 @@ export async function recomputeCanonicalHash(
 
   insertIfPresent(view, "parent_proofs_merkle_root", proof);
   insertIfPresent(view, "record_receipts_merkle_root", proof);
-  // the specification: a root over bytes the customer wrote and Nanorix never parsed.
+  // A root over bytes the customer wrote and Nanorix never parsed.
   // Same skip-when-absent mechanic as the two Merkle roots, so a proof that
   // did not opt in hashes to exactly what it did before the field existed.
   insertIfPresent(view, "customer_declared_activity_root", proof);
@@ -535,9 +640,9 @@ export type SignatureCheck =
 /**
  * Select the signed message for a proof by version/mode:
  * - `1.0` -> `final_hash`
- * - `2.0` -> `document_hash`
- * - `2.1` / `2.2` + `nanorix_only` -> recomputed canonical hash
- * - `2.1` / `2.2` + `dual_signature` / `tee_attested` -> null (not verifiable here)
+ * - `2.1` / `2.2` + `nanorix_only` or `customer_only` -> recomputed canonical hash
+ *   (the mode decides which authority the proof claims, not which bytes were signed)
+ * - `2.1` / `2.2` + any other mode -> the unsupported-mode sentinel (not verifiable here)
  */
 async function signedMessage(
   proof: Record<string, unknown>,
@@ -546,15 +651,13 @@ async function signedMessage(
   switch (cdpVersion) {
     case "1.0":
       return stripSha512Prefix(strOrEmpty(proof["final_hash"]));
-    case "2.0":
-      return stripSha512Prefix(strOrEmpty(proof["document_hash"]));
     case "2.1":
     case "2.2": {
       const mode = proof["signing_mode"];
       const signingMode = typeof mode === "string" ? mode : "nanorix_only";
       // Any other declared mode is one this build cannot verify. NOT the same as
       // "no signature" — signalled with a sentinel the callers translate.
-      if (signingMode !== "nanorix_only") {
+      if (signingMode !== "nanorix_only" && signingMode !== SIGNING_MODE_CUSTOMER_ONLY) {
         return UNSUPPORTED_MODE_SENTINEL + signingMode;
       }
       return recomputeCanonicalHash(proof);
@@ -565,7 +668,7 @@ async function signedMessage(
 }
 
 /** Decode base64 signature + public key and verify `message` under them. */
-async function verifyMessageWithKey(
+export async function verifyMessageWithKey(
   message: string,
   sigB64: string,
   pubB64: string,
@@ -580,6 +683,10 @@ async function verifyMessageWithKey(
       kind: "failed",
       reason: SignatureFailureReason.PUBLIC_KEY_MALFORMED,
     };
+  }
+
+  if (hasSmallOrderKeyOrR(pubBytes, sigBytes)) {
+    return { kind: "failed", reason: SignatureFailureReason.DOES_NOT_VERIFY };
   }
 
   const subtle = getSubtle();
@@ -616,9 +723,10 @@ async function verifyMessageWithKey(
 
 /**
  * Verify the proof's signature against the public key EMBEDDED in its
- * attestation. Proves integrity (not tampered since signing), NOT
- * authenticity — binding the key to a Nanorix-rooted trust anchor needs the
- * trust-chain manifest, which this SDK surface does not carry.
+ * attestation. Proves integrity (no signed byte changed since signing), NOT
+ * authenticity: a forger signs with a key of their own and embeds it. Binding
+ * the key to a published authority is stage 8, which `verifyAuditProof` does
+ * when its policy carries a `trustChain`.
  */
 export async function verifySignature(
   proof: Record<string, unknown>,
@@ -639,6 +747,129 @@ export async function verifySignature(
     };
   }
   return verifyMessageWithKey(message, rawSig, rawPub);
+}
+
+/**
+ * Verify the proof's signature against a key RESOLVED from a trust chain, not
+ * the key the proof carries. This is what establishes authenticity: a forged
+ * proof carrying its own embedded key passes the embedded-key check and fails
+ * here.
+ */
+async function verifySignatureAgainst(
+  proof: Record<string, unknown>,
+  cdpVersion: string,
+  pubB64: string,
+): Promise<SignatureCheck> {
+  const rawSig = strOrEmpty(pointer(proof, "attestation", "signature"));
+  if (rawSig === "") return { kind: "absent" };
+  const message = await signedMessage(proof, cdpVersion);
+  if (message === null) return { kind: "absent" };
+  if (message.startsWith(UNSUPPORTED_MODE_SENTINEL)) {
+    return {
+      kind: "unsupported",
+      mode: message.slice(UNSUPPORTED_MODE_SENTINEL.length),
+    };
+  }
+  return verifyMessageWithKey(message, rawSig, pubB64);
+}
+
+/**
+ * Stage 8: resolve the signing key in the verified key list and re-check.
+ *
+ * Resolves the proof's `(authority_id, signing_key_version)` in the list
+ * (archived versions resolve too), checks the signature against the LISTED key
+ * rather than the key the proof carries, and refuses a revoked authority.
+ * Mirrors `anchor_to_trust_chain` in the Rust library: a chain that did not
+ * come from `TrustChain.fromKeyList` was not checked against its pin, so a
+ * success ends at stage 7.
+ */
+async function anchorToTrustChain(
+  proof: Record<string, unknown>,
+  cdpVersion: string,
+  chain: TrustChain,
+  meta: VerificationMetadata,
+): Promise<LadderResult> {
+  const authorityId = effectiveAuthorityId(proof);
+  const attestation = pointer(proof, "attestation");
+  const rawVersion =
+    attestation && typeof attestation === "object" && !Array.isArray(attestation) && "signing_key_version" in attestation
+      ? (attestation as Record<string, unknown>)["signing_key_version"]
+      : proof["signing_key_version"];
+  const version = typeof rawVersion === "string" ? rawVersion : "";
+
+  const listed = chain.findKey(authorityId, version);
+  if (listed === null) {
+    return {
+      valid: false,
+      failure_reason: { type: FailureReasonType.SIGNING_KEY_VERSION_UNKNOWN, version },
+      stage_reached: 6,
+      metadata: meta,
+    };
+  }
+  const [publicKeyB64, revoked] = listed;
+
+  const check = await verifySignatureAgainst(proof, cdpVersion, publicKeyB64);
+  if (check.kind === "failed") {
+    return {
+      valid: false,
+      failure_reason: { type: FailureReasonType.SIGNATURE_MISMATCH, reason: check.reason },
+      stage_reached: 7,
+      metadata: meta,
+    };
+  }
+  if (check.kind === "unsupported") {
+    return {
+      valid: false,
+      failure_reason: {
+        type: FailureReasonType.ALGORITHM_UNSUPPORTED,
+        found: `signing_mode=${check.mode}`,
+      },
+      stage_reached: 7,
+      metadata: meta,
+    };
+  }
+  if (check.kind === "absent") {
+    if (isHybridPin(chain.pinnedIdentityFingerprint)) return hybridRecordRefusal(7, meta);
+    return { valid: true, failure_reason: null, stage_reached: 7, metadata: meta };
+  }
+
+  if (revoked) {
+    return {
+      valid: false,
+      failure_reason: { type: FailureReasonType.AUTHORITY_REVOKED },
+      stage_reached: 8,
+      metadata: meta,
+    };
+  }
+  // A 1.0 signature covers final_hash alone, which binds destroyed_at and the
+  // two optional Merkle roots. It does not bind the capsule_id itself (only
+  // through record receipts, which a holder can remove), the region or the key
+  // id. So a key list cannot tie it to a capsule: a 1.0 proof runs the lookup,
+  // the re-verify and the revocation check above as 2.x does, and where 2.x
+  // would reach stage 8 it ends at stage 7, never anchored. Under a hybrid pin
+  // it is refused there, as every record is. Mirrors Rust.
+  if (cdpVersion === "1.0") {
+    if (isHybridPin(chain.pinnedIdentityFingerprint)) return hybridRecordRefusal(7, meta);
+    return { valid: true, failure_reason: null, stage_reached: 7, metadata: meta };
+  }
+  // the hybrid-pin gate: under a hybrid pin a record is
+  // anchored only with its ML-DSA-65 half checked, which this verifier does
+  // not do yet.
+  if (isHybridPin(chain.pinnedIdentityFingerprint)) return hybridRecordRefusal(8, meta);
+  return { valid: true, failure_reason: null, stage_reached: isPinChecked(chain) ? 8 : 7, metadata: meta };
+}
+
+/**
+ * The refusal a record gets under a hybrid pin, at the stage where it would
+ * otherwise have ended valid, signed or unsigned.
+ */
+function hybridRecordRefusal(stage: number, meta: VerificationMetadata): LadderResult {
+  return {
+    valid: false,
+    failure_reason: { type: FailureReasonType.ALGORITHM_UNSUPPORTED, found: HYBRID_RECORD_CHECK_MISSING },
+    stage_reached: stage,
+    metadata: meta,
+  };
 }
 
 // ─── The 8-stage pipeline ───────────────────────────────────────────────────
@@ -725,14 +956,14 @@ export function checkDeclaredActivityRootShape(
 }
 
 /**
- * The pre-chain-walk gate for a declared root (the specification), run at stage 2 in
+ * The pre-chain-walk gate for a declared root, run at stage 2 in
  * the same position and on the same reasoning as the reserved-slot gate.
  *
  * The root is signed only where the signed message is the canonical view
- * (2.1 / 2.2); on 1.0 the message is `final_hash` and on 2.0 the
- * `document_hash` field, so a root there is a value anyone can write and the
- * signature cannot tell — `unsigned_field_populated`. On 2.1 / 2.2 a root of
- * a shape no signer emits is `field_malformed`. Absent or JSON `null` is
+ * (2.1 / 2.2); on 1.0 the message is `final_hash`, so a root there is a
+ * value anyone can write and the signature cannot tell —
+ * `unsigned_field_populated`. On 2.1 / 2.2 a root of a shape no signer emits
+ * is `field_malformed`. Absent or JSON `null` is
  * "did not opt in" and passes. The version gate precedes the shape gate: a
  * root the signature never covered is the more fundamental defect, whatever
  * its shape. Shared with the standalone sidecar check in
@@ -792,6 +1023,55 @@ function declaredNonEd25519Algorithm(proof: Record<string, unknown>): string | n
   return null;
 }
 
+/** The `signing_mode` value for a customer-classified authority. */
+export const SIGNING_MODE_CUSTOMER_ONLY = "customer_only";
+
+/**
+ * The segments that make an authority id customer-classified, the issuer's own
+ * test: any of them anywhere in the id, byte-exact and case-sensitive.
+ */
+export const CUSTOMER_AUTHORITY_SEGMENTS: readonly string[] = [
+  "customer-hsm-",
+  "customer-kms-",
+  "customer-tee-",
+  "customer-byo-",
+];
+
+/** Whether the issuer would treat `authorityId` as a customer authority. */
+export function isCustomerAuthority(authorityId: string): boolean {
+  return CUSTOMER_AUTHORITY_SEGMENTS.some((segment) => authorityId.includes(segment));
+}
+
+/**
+ * The stage-4 consistency gate: on 2.1 and 2.2 a
+ * document whose `signing_mode` is `customer_only`, signed or not, must name a
+ * customer-classified `authority_id`. An absent, null or non-string id is
+ * Nanorix-classified. The two fields are labels; this gate says they disagree,
+ * never who signed.
+ */
+export function signingModeAuthorityMismatch(
+  proof: Record<string, unknown>,
+  cdpVersion: string,
+): FailureReason | null {
+  if (!CANONICAL_VIEW_SIGNED_VERSIONS.has(cdpVersion)) return null;
+  if (proof["signing_mode"] !== SIGNING_MODE_CUSTOMER_ONLY) return null;
+  const claimed = proof["authority_id"];
+  if (typeof claimed === "string" && isCustomerAuthority(claimed)) return null;
+  return {
+    type: FailureReasonType.SIGNING_MODE_AUTHORITY_MISMATCH,
+    claimed_authority_id: typeof claimed === "string" ? claimed : null,
+  };
+}
+
+/** Authority a proof anchors under when it carries no top-level `authority_id`. */
+export const DEFAULT_AUTHORITY_ID = "us-kms-nanorix-v1";
+
+/** The top-level `authority_id`, or DEFAULT_AUTHORITY_ID when absent or not a string. */
+function effectiveAuthorityId(proof: Record<string, unknown>): string {
+  const v = proof["authority_id"];
+  return typeof v === "string" ? v : DEFAULT_AUTHORITY_ID;
+}
+
 function pointer(root: unknown, ...path: string[]): unknown {
   let cur: unknown = root;
   for (const key of path) {
@@ -802,24 +1082,120 @@ function pointer(root: unknown, ...path: string[]): unknown {
 }
 
 /**
+ * serde_json, the parser in front of the reference verifier, starts
+ * remaining_depth at 128 and refuses the container that brings it to zero, so
+ * 127 nested containers parse and 128 do not.
+ */
+const REFERENCE_MAX_DEPTH = 127;
+const LONE_SURROGATE = /[\ud800-\udbff](?![\udc00-\udfff])|(?:^|[^\ud800-\udbff])[\udc00-\udfff]/;
+
+/**
+ * True when `value` holds what serde_json refuses and JSON.parse keeps: a
+ * container nested deeper than REFERENCE_MAX_DEPTH, a string or key holding
+ * half of a surrogate pair, or a number past the float range (JSON.parse
+ * turns 1e400 into Infinity).
+ */
+function beyondReferenceParser(value: unknown, depth = 0): boolean {
+  if (typeof value === "string") return LONE_SURROGATE.test(value);
+  if (typeof value === "number") return !Number.isFinite(value);
+  if (typeof value !== "object" || value === null) return false;
+  if (depth >= REFERENCE_MAX_DEPTH) return true;
+  if (Array.isArray(value)) {
+    return value.some((v) => beyondReferenceParser(v, depth + 1));
+  }
+  return Object.entries(value).some(
+    ([k, v]) => LONE_SURROGATE.test(k) || beyondReferenceParser(v, depth + 1),
+  );
+}
+
+/**
+ * True when well-formed JSON `text` holds what serde_json refuses: nesting
+ * deeper than REFERENCE_MAX_DEPTH, a surrogate escape that is not half of a
+ * pair, or a number token past the float range. It reads every copy of a
+ * repeated key, which JSON.parse does not keep (it keeps the last).
+ */
+function textBeyondReferenceParser(text: string): boolean {
+  let depth = 0;
+  let inString = false;
+  const n = text.length;
+  const hexUnit = (at: number): number => {
+    if (at + 4 > n) return -1;
+    const h = text.slice(at, at + 4);
+    return /^[0-9a-fA-F]{4}$/.test(h) ? parseInt(h, 16) : -1;
+  };
+  for (let i = 0; i < n; i++) {
+    const c = text[i];
+    if (!inString) {
+      if (c === '"') {
+        inString = true;
+      } else if (c === "[" || c === "{") {
+        depth++;
+        if (depth > REFERENCE_MAX_DEPTH) return true;
+      } else if (c === "]" || c === "}") {
+        depth--;
+      } else if (c === "-" || (c >= "0" && c <= "9")) {
+        let j = i + 1;
+        while (j < n && /[0-9.eE+-]/.test(text[j])) j++;
+        if (!Number.isFinite(Number(text.slice(i, j)))) return true;
+        i = j - 1;
+      }
+      continue;
+    }
+    if (c === '"') {
+      inString = false;
+    } else if (c === "\\") {
+      i++;
+      if (text[i] !== "u") continue;
+      const unit = hexUnit(i + 1);
+      if (unit < 0) return true;
+      i += 4;
+      if (unit >= 0xdc00 && unit <= 0xdfff) return true;
+      if (unit >= 0xd800 && unit <= 0xdbff) {
+        if (text[i + 1] !== "\\" || text[i + 2] !== "u") return true;
+        const low = hexUnit(i + 3);
+        if (low < 0xdc00 || low > 0xdfff) return true;
+        i += 6;
+      }
+    }
+  }
+  return false;
+}
+
+/**
  * Verify an AuditProof offline through the full 8-stage pipeline.
  *
  * Mirrors `nanorix_verify::verify_auditproof`. Stage 7 ("chain reproduced and
- * the signature verifies against the embedded key") is the ceiling here:
- * stage 8 requires a trust-chain manifest, which only the auditor CLI carries.
+ * the signature verifies against the embedded key") is the ceiling unless the
+ * policy carries a `trustChain`: with a signed key list and the identity
+ * fingerprint that must have signed it, stage 8 resolves the signing key in the
+ * list and checks the signature against the listed key.
  *
  * @param jsonBytes AuditProof as Uint8Array, Buffer, or already-parsed object.
- * @param policy Optional VerifierPolicy for authority / region pins.
+ *   Give the file's bytes: a parsed object has lost the original bytes and the
+ *   earlier copies of a repeated key, so a document the reference refuses can
+ *   verify.
+ * @param policy Optional VerifierPolicy for the authority and region pins,
+ *   the `rejectDiagnostic` setting, and `trustChain` for stage 8.
  */
 export async function verifyAuditProof(
   jsonBytes: Uint8Array | ArrayBufferView | Record<string, unknown>,
   policy?: VerifierPolicy,
 ): Promise<VerificationResult> {
+  const result = await runLadder(jsonBytes, policy);
+  const status = verificationStatusFor(result.valid, result.stage_reached);
+  return { status, ok: status === "verified", ...result };
+}
+
+async function runLadder(
+  jsonBytes: Uint8Array | ArrayBufferView | Record<string, unknown>,
+  policy?: VerifierPolicy,
+): Promise<LadderResult> {
   const pol = policy ?? {};
   const meta = makeEmptyMetadata();
 
   // Stage 0: parse
   let proof: Record<string, unknown>;
+  let parsed = true;
   if (ArrayBuffer.isView(jsonBytes)) {
     try {
       const bytes = new Uint8Array(
@@ -827,27 +1203,34 @@ export async function verifyAuditProof(
         jsonBytes.byteOffset,
         jsonBytes.byteLength,
       );
-      proof = JSON.parse(new TextDecoder().decode(bytes)) as Record<
-        string,
-        unknown
-      >;
+      // fatal: invalid UTF-8 is refused, not replaced. ignoreBOM: a BOM stays
+      // in the text, where JSON.parse refuses it as the reference does.
+      const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+      proof = JSON.parse(text) as Record<string, unknown>;
+      if (textBeyondReferenceParser(text)) throw new Error("beyond the reference parser");
     } catch {
-      return {
-        valid: false,
-        failure_reason: {
-          type: FailureReasonType.REQUIRED_FIELD_MISSING,
-          field: "json_root",
-        },
-        stage_reached: 1,
-        metadata: meta,
-      };
+      parsed = false;
+      proof = {};
     }
   } else {
     proof = jsonBytes;
   }
+  if (!parsed || beyondReferenceParser(proof)) {
+    return {
+      valid: false,
+      failure_reason: {
+        type: FailureReasonType.REQUIRED_FIELD_MISSING,
+        field: "json_root",
+      },
+      stage_reached: 1,
+      metadata: meta,
+    };
+  }
 
-  // Stage 1: cdp_version present
-  const cdpVersion = proof["cdp_version"];
+  // Stage 1: cdp_version present. A top-level value that is not an object
+  // has none, as in the reference.
+  const cdpVersion =
+    typeof proof === "object" && proof !== null ? proof["cdp_version"] : undefined;
   if (typeof cdpVersion !== "string") {
     return {
       valid: false,
@@ -893,7 +1276,7 @@ export async function verifyAuditProof(
     };
   }
 
-  // the specification gate on `customer_declared_activity_root`, same position and
+  // Gate on `customer_declared_activity_root`, same position and
   // same reasoning as the reserved-slot gate: a root on a version that does
   // not sign it, or of a shape no signer emits, is named here before any
   // recompute consumes it so the verdict blames the field and not the
@@ -908,16 +1291,30 @@ export async function verifyAuditProof(
     };
   }
 
-  if (typeof proof["capsule_id"] === "string")
+  // The metadata names a capsule and a region only on a version whose
+  // signature covers them. A 1.0 signature covers final_hash alone, which binds
+  // destroyed_at and the two optional Merkle roots. It does not bind the
+  // capsule_id itself (only through record receipts, which a holder can
+  // remove), the region or the key id, so on 1.0 neither is reported. The
+  // record-receipt check below hashes the capsule id as the document states
+  // it, on every version.
+  const documentCapsuleId = typeof proof["capsule_id"] === "string" ? proof["capsule_id"] : "";
+  const namesSignedFields = CANONICAL_VIEW_SIGNED_VERSIONS.has(cdpVersion);
+  // The region is read from the activity trail, so it is reported only when
+  // the signature step below will check a signature over that trail: on a
+  // proof without a signature or key, no return names it. Mirrors Rust.
+  const trailChecked = namesSignedFields && (await verifySignature(proof, cdpVersion)).kind !== "absent";
+  if (typeof proof["capsule_id"] === "string" && namesSignedFields)
     meta.capsuleId = proof["capsule_id"];
-  // Region resolves from the SIGNED capsule_started activity event only.
-  // The activity trail is inside CanonicalCdpView, so a region there cannot be
-  // altered without breaking the signature. `environment.region` and top-level
+  // Region resolves from the capsule_started activity event only, on 2.1 and
+  // 2.2 carrying a signature. There the activity trail is inside
+  // CanonicalCdpView, so a region there cannot be altered without breaking the
+  // signature; an unsigned 2.1 or 2.2 proof reports no region. `environment.region` and top-level
   // `region` are both outside the canonical hash — reading either let an
   // outsider satisfy a residency pin by appending a region to a genuine signed
   // proof, with no key. Mirrors the Rust and Go verifiers.
   const regionEvents = proof["activity"];
-  if (Array.isArray(regionEvents)) {
+  if (Array.isArray(regionEvents) && trailChecked) {
     const started = regionEvents.find(
       (e) => e && typeof e === "object" && (e as Record<string, unknown>)["event"] === "capsule_started",
     ) as Record<string, unknown> | undefined;
@@ -930,31 +1327,36 @@ export async function verifyAuditProof(
   const algo = pointer(proof, "attestation", "algorithm");
   if (typeof algo === "string") meta.algorithm = algo;
 
-  // Policy-pin gate (the customer-authority specification G7 / VP Security F4.3). Runs BEFORE the chain
-  // walk: the policy decision is independent of chain validity, so a customer
-  // who pinned the wrong authority learns it without a 7-step SHA-512 walk.
+  // Policy-pin gate. Runs BEFORE the chain walk: the policy decision
+  // is independent of chain validity, so a customer who pinned the wrong
+  // authority learns it without a 7-step SHA-512 walk.
+  //
+  // The pin is compared with the top-level `authority_id`; absent or
+  // non-string means DEFAULT_AUTHORITY_ID. Only cdp_version 2.1 and 2.2 sign
+  // that field (the canonical view binds it): 1.0 signs final_hash, so on 1.0
+  // a top-level string other than DEFAULT_AUTHORITY_ID (the empty string
+  // included) is refused first, claimed = that value, and the effective
+  // authority can only be the default. 2.0 never reaches this gate: the
+  // version gate above refuses it first. An unsigned
+  // `signing_authority.authority_id` that differs from it is refused
+  // (claimed = that value) and can never make a proof match; `signing_authority`
+  // absent, null or without `authority_id` is ignored. With the top-level
+  // field absent, a non-matching pin reports claimed null and the has-none
+  // reason. A pin alone checks only what the proof says about itself; the
+  // key-list check at stage 8 (`pol.trustChain`) is the full check.
   if (pol.requiredAuthorityId) {
-    const claimed = pointer(proof, "signing_authority", "authority_id");
-    const claimedId = typeof claimed === "string" ? claimed : null;
-    if (claimedId === null) {
+    const topLevel = proof["authority_id"];
+    const effective = effectiveAuthorityId(proof);
+    if (
+      !CANONICAL_VIEW_SIGNED_VERSIONS.has(cdpVersion) &&
+      typeof topLevel === "string" &&
+      topLevel !== DEFAULT_AUTHORITY_ID
+    ) {
       return {
         valid: false,
         failure_reason: {
           type: FailureReasonType.AUTHORITY_ID_MISMATCH,
-          claimed_authority_id: null,
-          expected_authority_id: pol.requiredAuthorityId,
-          reason: "verifier_policy_demands_customer_hsm_audit_proof_has_none",
-        },
-        stage_reached: 2,
-        metadata: meta,
-      };
-    }
-    if (claimedId !== pol.requiredAuthorityId) {
-      return {
-        valid: false,
-        failure_reason: {
-          type: FailureReasonType.AUTHORITY_ID_MISMATCH,
-          claimed_authority_id: claimedId,
+          claimed_authority_id: topLevel,
           expected_authority_id: pol.requiredAuthorityId,
           reason: "verifier_policy_authority_id_mismatch",
         },
@@ -962,13 +1364,54 @@ export async function verifyAuditProof(
         metadata: meta,
       };
     }
+    const unsigned = pointer(proof, "signing_authority", "authority_id");
+    if (typeof unsigned === "string" && unsigned !== effective) {
+      return {
+        valid: false,
+        failure_reason: {
+          type: FailureReasonType.AUTHORITY_ID_MISMATCH,
+          claimed_authority_id: unsigned,
+          expected_authority_id: pol.requiredAuthorityId,
+          reason: "verifier_policy_authority_id_mismatch",
+        },
+        stage_reached: 2,
+        metadata: meta,
+      };
+    }
+    if (effective !== pol.requiredAuthorityId) {
+      const hasTopLevel = typeof topLevel === "string";
+      return {
+        valid: false,
+        failure_reason: {
+          type: FailureReasonType.AUTHORITY_ID_MISMATCH,
+          claimed_authority_id: hasTopLevel ? topLevel : null,
+          expected_authority_id: pol.requiredAuthorityId,
+          reason: hasTopLevel
+            ? "verifier_policy_authority_id_mismatch"
+            : "verifier_policy_demands_customer_hsm_audit_proof_has_none",
+        },
+        stage_reached: 2,
+        metadata: meta,
+      };
+    }
   }
 
-  // Residency-pin gate (the specification G1 / the region policy). A proof carrying no region at
+  // The residency pin and the diagnostic gate read the activity trail, so
+  // each trusts it only when the signature step below will check a signature
+  // over it: the version's signed message is the canonical view (2.1 / 2.2)
+  // and that step does not end as "absent". A 1.0 trail, and the trail of a
+  // 2.1 or 2.2 proof without a signature or key, is unsigned: anyone could add
+  // a region equal to the pin, or delete a diagnostic_mode_enabled event, and
+  // the proof would still verify. Computed only under a policy that reads the
+  // trail. Mirrors Rust.
+  const trailSigned = (pol.requiredRegion !== undefined || Boolean(pol.rejectDiagnostic)) && trailChecked;
+
+  // Residency-pin gate. A proof carrying no region at
   // all cannot satisfy a residency pin — rejected with an empty `actual`, so
-  // the pin fails closed.
+  // the pin fails closed. Only a signed region counts: on an unsigned trail
+  // the pin reads no region and refuses.
   if (pol.requiredRegion !== undefined) {
-    const actual = meta.region ?? "";
+    const actual = trailSigned ? (meta.region ?? "") : "";
     if (actual !== pol.requiredRegion) {
       return {
         valid: false,
@@ -981,6 +1424,20 @@ export async function verifyAuditProof(
         metadata: meta,
       };
     }
+  }
+
+  // Diagnostic-mode gate, after the residency pin and before the
+  // chain walk, like the other policy pins. A proof whose trail is unsigned
+  // (1.0, or 2.1 or 2.2 without a signature) cannot show it was not run in
+  // diagnostic mode, since the event could be deleted and the proof would
+  // still verify: the setting refuses every one. Mirrors Rust.
+  if (pol.rejectDiagnostic && (!trailSigned || recordsDiagnosticMode(proof))) {
+    return {
+      valid: false,
+      failure_reason: { type: FailureReasonType.DIAGNOSTIC_PROOF_REFUSED },
+      stage_reached: 2,
+      metadata: meta,
+    };
   }
 
   // Stage 3: chain reproducibility
@@ -1017,8 +1474,8 @@ export async function verifyAuditProof(
   const { timestamp, recovered } = resolveChainTimestamp(proof);
   meta.recoveredChainTimestamp = recovered;
 
-  // the per-record receipt specification + the receipt-batching specification the receipt pipeline — optional Merkle roots for the Step 8 amendment.
-  // Absent on pre-the receipt pipeline proofs, where both branches collapse to the legacy
+  // Optional Merkle roots for the Step 8 amendment.
+  // Absent on legacy proofs, where both branches collapse to the legacy
   // formula (byte-identical chain walk).
   const rrmr =
     typeof proof["record_receipts_merkle_root"] === "string"
@@ -1083,12 +1540,12 @@ export async function verifyAuditProof(
     prevHash = recomputed;
   }
 
-  // the per-record receipt specification receipt-set verification (Mode A step 3).
+  // Receipt-set verification (Mode A step 3).
   const receipts = proof["record_receipts"];
   if (Array.isArray(receipts)) {
     const failure = await verifyRecordReceipts(
       receipts,
-      meta.capsuleId ?? "",
+      documentCapsuleId,
       rrmr,
     );
     if (failure) {
@@ -1101,7 +1558,7 @@ export async function verifyAuditProof(
     }
   }
 
-  // the receipt-batching specification parent-proof-set verification.
+  // Parent-proof-set verification.
   const parents = proof["parent_proof_hashes"];
   if (Array.isArray(parents)) {
     const failure = await verifyParentProofs(parents, ppmr);
@@ -1136,7 +1593,7 @@ export async function verifyAuditProof(
     }
   }
 
-  // the specification customer-declared activity root. The stage-2 gate has already
+  // Customer-declared activity root. The stage-2 gate has already
   // rejected a root on a version that does not sign it and a root of any
   // shape no signer emits, so a root read here is a well-formed string on
   // 2.1 / 2.2 and is canonical-bound: the signature stages below bind it to
@@ -1186,7 +1643,7 @@ export async function verifyAuditProof(
     };
   }
 
-  // Algorithm dispatch precedes byte-shape checks (the specification C.1): a proof
+  // Algorithm dispatch precedes byte-shape checks: a proof
   // declaring a non-Ed25519 signature algorithm fails typed as
   // algorithm_unsupported here — it must never fall through to the 64/32-byte
   // decode gates and report as "malformed". Absent or "Ed25519" proceeds
@@ -1199,6 +1656,16 @@ export async function verifyAuditProof(
         type: FailureReasonType.ALGORITHM_UNSUPPORTED,
         found: declaredAlgorithm,
       },
+      stage_reached: 4,
+      metadata: meta,
+    };
+  }
+
+  const modeMismatch = signingModeAuthorityMismatch(proof, cdpVersion);
+  if (modeMismatch !== null) {
+    return {
+      valid: false,
+      failure_reason: modeMismatch,
       stage_reached: 4,
       metadata: meta,
     };
@@ -1237,6 +1704,13 @@ export async function verifyAuditProof(
   if (sig.kind === "absent") {
     // Chain reproduced but no signature this build can check. Honest: this is
     // NOT a full cryptographic verification, and the stage number says so.
+    // Under a hybrid pin it is refused there instead.
+    if (pol.trustChain !== undefined && isHybridPin(pol.trustChain.pinnedIdentityFingerprint)) {
+      return hybridRecordRefusal(4, meta);
+    }
+    // No signature covers the activity trail here, so the region read from it
+    // is not reported.
+    meta.region = null;
     return {
       valid: true,
       failure_reason: null,
@@ -1245,8 +1719,11 @@ export async function verifyAuditProof(
     };
   }
 
-  // Stage 8 needs a trust-chain manifest to anchor the embedded key to the
-  // Nanorix trust root; without one the honest ceiling is integrity-only.
+  // Stage 8 anchors the key in a signed key list; without one the honest
+  // ceiling is integrity-only.
+  if (pol.trustChain !== undefined) {
+    return anchorToTrustChain(proof, cdpVersion, pol.trustChain, meta);
+  }
   return {
     valid: true,
     failure_reason: null,
@@ -1256,7 +1733,7 @@ export async function verifyAuditProof(
 }
 
 /**
- * Verify the receipt set per the per-record receipt specification Mode A step 3 — each receipt's chain hash
+ * Verify the receipt set (Mode A step 3) — each receipt's chain hash
  * must roundtrip and the Merkle root must match the claimed root. Returns null
  * when every receipt verifies (or no root is claimed).
  */
@@ -1322,7 +1799,7 @@ async function verifyRecordReceipts(
   return null;
 }
 
-/** Verify the parent-proof-set Merkle root per the receipt-batching specification. */
+/** Verify the parent-proof-set Merkle root. */
 async function verifyParentProofs(
   parents: readonly unknown[],
   claimedRoot: string | null,

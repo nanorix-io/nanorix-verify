@@ -1,4 +1,4 @@
-// the specification — `customer_declared_activity_root`: recompute the customer's
+// `customer_declared_activity_root`: recompute the customer's
 // activity-record commitment from the raw record bytes and compare it with the
 // root the proof carries. Go peer of `tools/nanorix-verify/src/customer_activity.rs`.
 //
@@ -17,7 +17,7 @@
 //     lines. Nothing is trimmed: a leading space is content; an empty line in
 //     the middle is a leaf.
 //  2. Leaf = lowercase SHA-512 hex of the line's raw bytes.
-//  3. m = the per-record receipt specification null-separated Merkle root over the leaves in order
+//  3. m = the null-separated Merkle root over the leaves in order
 //     (MerkleRootSHA512NullSeparated — pairs hashed as
 //     SHA-512(left_hex || 0x00 || right_hex), odd last node duplicated), or
 //     the genesis hash (SHA-512 of the empty string) for zero lines.
@@ -72,8 +72,8 @@ const (
 
 // VersionSignsActivityRoot reports whether cdpVersion signs the canonical
 // view, which is the only place the root is bound. In 1.0 the signed message
-// is final_hash and in 2.0 the document_hash field, so a root on either is a
-// value anyone holding the document can write.
+// is final_hash, so a root there is a value anyone holding the document can
+// write. cdp_version 2.0 is refused at the version gate before this check.
 func VersionSignsActivityRoot(cdpVersion string) bool {
 	return cdpVersion == "2.1" || cdpVersion == "2.2"
 }
